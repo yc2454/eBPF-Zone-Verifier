@@ -24,6 +24,14 @@ pub struct InsnAuxData {
     /// (bpf_loop / bpf_for_each_map_elem / bpf_user_ringbuf_drain),
     /// and may_goto instructions.
     pub force_checkpoint: bool,
+    /// Kernel `insn_aux_data[i].scc` (verifier.c v6.15 ~L25775). SCC
+    /// identifier (1+) assigned by Tarjan's algorithm in compute_scc;
+    /// 0 means the insn is a singleton SCC without self-edge
+    /// (kernel convention — "not in SCC" for the purposes of
+    /// `bpf_scc_callchain`). Read by maybe_enter_scc /
+    /// maybe_exit_scc / add_scc_backedge / incomplete_read_marks
+    /// to identify SCC membership for `propagate_backedges`.
+    pub scc_id: u32,
 }
 
 /// per-cached-state hit/miss counters for explored-states
@@ -103,6 +111,12 @@ pub struct PruningStats {
     /// these monotonic counters give the true picture.
     pub lifetime_hits: u64,
     pub lifetime_misses: u64,
+    /// Number of times a cached state was skipped in `handle_standard_pruning`
+    /// because it had `children_unsafe=true` (i.e., an earlier BCF
+    /// path-unreachable discharge invalidated it for subsumption).
+    /// Counts the SUBSUMPTION ATTEMPTS that were short-circuited; not
+    /// the number of distinct invalidated cache entries.
+    pub children_unsafe_skips: u64,
 }
 
 impl SubsumptionMissReason {
@@ -148,6 +162,15 @@ impl SubsumptionMissReason {
 pub struct VerifierEnv<'a> {
     pub ctx: &'a ExecContext,
     pub explored_states: HashMap<usize, Vec<State>>,
+    /// Mapping from an iter_next kfunc call pc to the iter slot it
+    /// operates on `(frame_idx, stack_offset)`. Populated lazily by
+    /// `iter_next_fork` on first visit. Read by iter-loop pruning
+    /// (`handle_loop_pruning`) to identify which iter slot's
+    /// `iter.depth` to inspect when deciding whether to defer the
+    /// back-edge target prune in an iter loop body — the iter slot
+    /// belonging to THIS loop's iter_next, not unrelated iters that
+    /// happen to be active in some outer/inner nesting.
+    pub iter_pc_slot: HashMap<usize, (usize, i16)>,
     /// parallel to `explored_states`. `state_metrics[pc][i]`
     /// holds the hit/miss counters for `explored_states[pc][i]`. Drop
     /// the same index from both vectors on eviction.
@@ -203,6 +226,19 @@ pub struct VerifierEnv<'a> {
 
     // --- Dynamic State ---
     pub insn_processed: usize,
+    /// Kernel `bpf_verifier_env::jmps_processed` (verifier.c v6.15
+    /// L19553). Incremented once per BPF_JMP/JMP32-class insn. Used by
+    /// the `add_new_state` sparse-cache heuristic.
+    pub jmps_processed: usize,
+    /// Snapshots at the most recent cache event (kernel
+    /// `prev_jmps_processed` / `prev_insn_processed` L19260-L19261).
+    pub prev_jmps_processed: usize,
+    pub prev_insn_processed: usize,
+    /// Per-PC visit counter (only populated when `ZOVIA_DUMP_VISITS=1`).
+    /// Bumped once per non-pruned state expansion. Used by the per-PC
+    /// audit dump to localize path-explosion hotspots vs the kernel
+    /// verifier's per-PC visit count from the log_level-2 trace.
+    pub pc_visit_count: HashMap<usize, u64>,
     /// Holds the FIRST critical failure encountered.
     /// If this is Some, the analysis should halt immediately.
     pub error: Option<VerificationError>,
@@ -279,6 +315,20 @@ pub struct VerifierEnv<'a> {
     /// site via the cached `scalar_ids` map: the widener checks the
     /// reg's id against all regs in cur/prev that share that id.
     pub precise_pcs: HashSet<(usize, Reg)>,
+
+    /// Mirror of kernel `env->scc_info` / per-callchain `bpf_scc_visit`
+    /// (verifier.c v6.15 ~L2165, include/linux/bpf_verifier.h L717).
+    /// Keyed by `SccCallchain`: callsites of outer frames + scc_id of
+    /// the innermost SCC-bearing frame. Lifecycle:
+    ///   * `maybe_enter_scc` (called on each cache event) populates
+    ///     the visit and records the FIRST cur cache_id as
+    ///     `entry_state_cache_id` if not yet set.
+    ///   * `add_scc_backedge` (called from handle_loop_pruning on a
+    ///     RANGE_WITHIN hit) appends backedge snapshots.
+    ///   * `maybe_exit_scc` (called from complete_dfs_branch when the
+    ///     entry state's branches → 0) drains backedges into
+    ///     propagate_backedges and clears `entry_state_cache_id`.
+    pub scc_visits: crate::analysis::flow::scc::SccVisitMap,
 }
 
 impl<'a> VerifierEnv<'a> {
@@ -290,6 +340,7 @@ impl<'a> VerifierEnv<'a> {
         VerifierEnv {
             ctx,
             explored_states: HashMap::new(),
+            iter_pc_slot: HashMap::new(),
             state_metrics: HashMap::new(),
             subsumption_misses: HashMap::new(),
             pruning_stats: PruningStats::default(),
@@ -300,6 +351,10 @@ impl<'a> VerifierEnv<'a> {
             cb_body_store_offsets: compute_cb_body_store_offsets(prog),
             cb_body_can_reinit_dynptr: compute_cb_body_can_reinit_dynptr(prog, &ctx.btf),
             insn_processed: 0,
+            jmps_processed: 0,
+            prev_jmps_processed: 0,
+            prev_insn_processed: 0,
+            pc_visit_count: HashMap::new(),
             error: None,
             history: History::new(),
             certificate,
@@ -307,6 +362,7 @@ impl<'a> VerifierEnv<'a> {
             next_cache_id: 0,
             cache_loc_by_id: HashMap::new(),
             precise_pcs: HashSet::new(),
+            scc_visits: crate::analysis::flow::scc::SccVisitMap::new(),
             bcf_proofs: Vec::new(),
             bcf_size_reg: None,
             bcf_path_unreachable: false,
@@ -413,7 +469,19 @@ impl<'a> VerifierEnv<'a> {
                 let parent_idx = step.parent_idx;
                 let instr_copy = step.instr;
                 let step_pc = step.pc;
+                let step_linked = step.linked_regs.clone();
+                // Kernel `bt_sync_linked_regs` (verifier.c L4116-4147),
+                // called BEFORE the per-insn backtrack (L4187): if any reg
+                // in this conditional's recorded id-linked class is
+                // already precise, all become precise. Mirrors the
+                // forward `collect_linked_regs`/`push_insn_history`.
+                bt_sync_linked_regs(&mut frontier, &step_linked);
                 update_frontier(&mut frontier, &instr_copy, &caller_saved);
+                // Kernel `bt_sync_linked_regs` is invoked AGAIN after
+                // `backtrack_insn` (L4440) — the conditional-jump BPF_X
+                // arm may have just added the other operand, which must
+                // also propagate across the linked class.
+                bt_sync_linked_regs(&mut frontier, &step_linked);
                 // Mirror frontier marks into `precise_pcs` at every
                 // history step the walker traverses. The widening site
                 // checks (pc, scalar_id) regardless of whether a
@@ -437,12 +505,29 @@ impl<'a> VerifierEnv<'a> {
             // frontier we've evolved back to its perspective. Per-path:
             // only this cached state, not all states at its PC.
             if let Some((pc, idx)) = parent_loc {
+                // Linked-scalar precision propagation: marking a scalar
+                // precise also marks every reg sharing its scalar id IN
+                // THIS cached state precise. Mirrors kernel
+                // `mark_chain_precision`'s linked-regs handling (Eduard
+                // Zingerman, "bpf: propagate precision in
+                // mark_chain_precision for linked scalars") — the exact
+                // mechanism verifier_scalar_ids.c::check_ids_in_regsafe*
+                // / linked_regs_* exercise. Without it, regsafe's
+                // `scalar_ids_subsumed_by` only checks the directly-marked
+                // reg's id and misses the id-linkage inconsistency between
+                // a checkpoint where two scalars share an id and a sibling
+                // path where they do not, wrongly subsuming the unsafe
+                // path. `State::mark_reg_precise` performs the in-state
+                // id-class propagation; collect the resulting set so the
+                // eviction-resistant `precise_pcs` mirror stays consistent.
+                let mut marked: Vec<Reg> = Vec::new();
                 if let Some(states) = self.explored_states.get_mut(&pc)
                     && let Some(s) = states.get_mut(idx)
                 {
                     for &r in &frontier {
-                        s.precise_regs.insert(r);
+                        s.mark_reg_precise(r);
                     }
+                    marked = s.precise_regs.iter().copied().collect();
                 }
                 // Mirror the marks into the eviction-resistant
                 // `precise_pcs` set. Cache eviction
@@ -452,6 +537,9 @@ impl<'a> VerifierEnv<'a> {
                 // still consult them, even after the specific cached
                 // state that recorded the mark is gone.
                 for &r in &frontier {
+                    self.precise_pcs.insert((pc, r));
+                }
+                for r in marked {
                     self.precise_pcs.insert((pc, r));
                 }
             }
@@ -486,6 +574,493 @@ impl<'a> VerifierEnv<'a> {
         }
     }
 
+    /// Mirror of kernel `maybe_enter_scc` (verifier.c v6.15 L2228).
+    /// Called on every cache event (right after `record_state` mints
+    /// a new cache_id). If the new state's frame chain leads into an
+    /// SCC, ensure a `SccVisit` entry exists for its callchain; if
+    /// the visit is fresh (no entry_state recorded yet), assign
+    /// `entry_state_cache_id = cid` so we know which cached state to
+    /// pair with `maybe_exit_scc` when its DFS subtree drains.
+    pub fn maybe_enter_scc(&mut self, state: &State, cid: u32) {
+        let Some(callchain) =
+            crate::analysis::flow::scc::compute_scc_callchain(state, &self.insn_aux_data)
+        else {
+            return;
+        };
+        let visit = self.scc_visits.entry(callchain).or_default();
+        if visit.entry_state_cache_id.is_none() {
+            visit.entry_state_cache_id = Some(cid);
+        }
+    }
+
+    /// Mirror of kernel `maybe_exit_scc` (verifier.c v6.15 L2253).
+    /// Called from `complete_dfs_branch` when a cached state's
+    /// `branches` first hits 0. If that state was the SCC visit's
+    /// `entry_state`, the visit is now done — flush backedges via
+    /// `propagate_backedges` (landed in step 3) and clear
+    /// `entry_state_cache_id` so a later re-entry creates a fresh
+    /// visit.
+    ///
+    pub fn maybe_exit_scc(&mut self, cid: u32) {
+        // Identify the callchain belonging to `cid`'s cached state.
+        let Some(&(pc, idx)) = self.cache_loc_by_id.get(&cid) else {
+            return;
+        };
+        // Snapshot the State so we can compute the callchain without
+        // holding a long mutable borrow.
+        let state_snapshot = match self
+            .explored_states
+            .get(&pc)
+            .and_then(|v| v.get(idx))
+        {
+            Some(s) => s.clone(),
+            None => return,
+        };
+        let Some(callchain) =
+            crate::analysis::flow::scc::compute_scc_callchain(&state_snapshot, &self.insn_aux_data)
+        else {
+            return;
+        };
+        // Check entry + take backedges out without holding a long borrow.
+        let backedges = {
+            let Some(visit) = self.scc_visits.get_mut(&callchain) else {
+                return;
+            };
+            if visit.entry_state_cache_id != Some(cid) {
+                return;
+            }
+            visit.entry_state_cache_id = None;
+            std::mem::take(&mut visit.backedges)
+        };
+        // Kernel `propagate_backedges` (verifier.c v6.15 L20079):
+        // iterate the backedges list, calling propagate_precision on
+        // each until fixpoint or MAX_BACKEDGE_ITERS. Each iteration
+        // propagates precision marks from equal_state into the
+        // backedge state's lineage. Kernel caps at 64; beyond that
+        // it falls back to mark_all_scalars_precise on every
+        // backedge (conservative).
+        const MAX_BACKEDGE_ITERS: usize = 64;
+        if backedges.is_empty() {
+            return;
+        }
+        for _ in 0..MAX_BACKEDGE_ITERS {
+            let mut changed = false;
+            for be in &backedges {
+                // Look up equal_state by cache_id; if evicted, skip
+                // this backedge.
+                let Some(&(epc, eidx)) = self.cache_loc_by_id.get(&be.equal_state_cache_id) else {
+                    continue;
+                };
+                let Some(equal_state) = self
+                    .explored_states
+                    .get(&epc)
+                    .and_then(|v| v.get(eidx))
+                    .cloned()
+                else {
+                    continue;
+                };
+                // propagate_precision(cur=be.state, old=equal_state)
+                // — pull equal_state's precise_regs into be.state's
+                // ancestor lineage (parent_cache_id chain). The
+                // method already exists for the same purpose in
+                // standard subsumption hits; here we run it
+                // post-hoc per backedge.
+                let precise: Vec<Reg> = equal_state.precise_regs.iter().copied().collect();
+                if precise.is_empty() {
+                    continue;
+                }
+                if let Some(hidx) = be.state.history_idx {
+                    let before = self.precise_pcs.len();
+                    for r in precise {
+                        self.mark_chain_precision_backward(hidx, be.state.parent_cache_id, r);
+                    }
+                    if self.precise_pcs.len() != before {
+                        changed = true;
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+    }
+
+    /// Mirror of kernel `incomplete_read_marks` (verifier.c v6.15
+    /// L2327). Returns true iff the cached state's SCC visit has any
+    /// pending backedges (i.e., the SCC hasn't yet been processed by
+    /// `propagate_backedges`). Used in step 4 to gate
+    /// RANGE_WITHIN vs NOT_EXACT subsumption strictness — replaces
+    /// zovia's current `prev.branches > 0` approximation.
+    pub fn incomplete_read_marks(&self, state: &State) -> bool {
+        let Some(callchain) =
+            crate::analysis::flow::scc::compute_scc_callchain(state, &self.insn_aux_data)
+        else {
+            return false;
+        };
+        self.scc_visits
+            .get(&callchain)
+            .map(|v| !v.backedges.is_empty())
+            .unwrap_or(false)
+    }
+
+    /// Add a backedge to the SCC visit owning `equal_state_cache_id`'s
+    /// callchain. Called from handle_loop_pruning at the hit point
+    /// when the cached state belongs to an open SCC visit. Mirror of
+    /// kernel `add_scc_backedge` (verifier.c v6.15 L2295).
+    pub fn add_scc_backedge(
+        &mut self,
+        cur: &State,
+        equal_state_cache_id: u32,
+        insn_idx: usize,
+    ) {
+        // The kernel keys add_scc_backedge on `sl->state` (the cached
+        // state we hit against) — same callchain as cur because both
+        // are in the same SCC visit instance.
+        let Some(&(epc, eidx)) = self.cache_loc_by_id.get(&equal_state_cache_id) else {
+            return;
+        };
+        let Some(equal_state) = self.explored_states.get(&epc).and_then(|v| v.get(eidx)) else {
+            return;
+        };
+        let Some(callchain) =
+            crate::analysis::flow::scc::compute_scc_callchain(equal_state, &self.insn_aux_data)
+        else {
+            return;
+        };
+        let Some(visit) = self.scc_visits.get_mut(&callchain) else {
+            return;
+        };
+        // Don't accumulate if the visit is closed (no entry_state).
+        if visit.entry_state_cache_id.is_none() {
+            return;
+        }
+        visit.backedges.push(crate::analysis::flow::scc::SccBackedge {
+            state: cur.clone(),
+            equal_state_cache_id,
+            insn_idx,
+        });
+    }
+
+    /// Read a cached state's (branches, dfs_depth, loop_entry_cache_id)
+    /// without holding a borrow on env.explored_states. Returns None if
+    /// the cache_id has been evicted.
+    fn cached_scc_info(&self, cid: u32) -> Option<(u32, u32, Option<u32>)> {
+        let &(pc, idx) = self.cache_loc_by_id.get(&cid)?;
+        let st = self.explored_states.get(&pc)?.get(idx)?;
+        Some((st.branches, st.dfs_depth, st.loop_entry_cache_id))
+    }
+
+    /// Mirror of kernel `get_loop_entry` (verifier.c v6.15 L1919). Walks
+    /// the loop_entry chain to the OUTERMOST loop entry. Returns the
+    /// final cache_id (or `None` if `start` has no loop_entry).
+    pub fn get_loop_entry(&self, start_cache_id: u32) -> Option<u32> {
+        let (_, _, mut le) = self.cached_scc_info(start_cache_id)?;
+        let mut steps: u32 = 0;
+        while let Some(cid) = le {
+            // Defensive bound: walks deeper than max plausible DFS depth
+            // indicate a cycle in the loop_entry chain (a bug).
+            steps += 1;
+            if steps > 4096 {
+                break;
+            }
+            match self.cached_scc_info(cid) {
+                Some((_, _, Some(next))) => le = Some(next),
+                _ => return Some(cid),
+            }
+        }
+        // Edge: start had loop_entry=Some(cid) but that cid had no entry
+        // → outermost was `cid`.
+        self.cached_scc_info(start_cache_id)
+            .and_then(|(_, _, le)| le)
+    }
+
+    /// Mirror of kernel `update_loop_entry` (verifier.c v6.15 L1934).
+    /// If `hdr_cache_id`'s branches > 0 (hdr's DFS is still open / hdr is
+    /// on the current DFS path) AND hdr's dfs_depth is less than
+    /// `cur`'s effective loop_entry depth, set cur.loop_entry = hdr.
+    /// `cur` here is a worklist state (not yet cached), so we mutate it
+    /// directly.
+    pub fn update_loop_entry(&self, cur: &mut State, hdr_cache_id: u32) {
+        let Some((hdr_br, hdr_depth, _)) = self.cached_scc_info(hdr_cache_id) else {
+            return;
+        };
+        if hdr_br == 0 {
+            return;
+        }
+        // Effective depth: cur.loop_entry's depth if set, else cur's own.
+        let cur_eff_depth = match cur.loop_entry_cache_id {
+            Some(le_cid) => self
+                .cached_scc_info(le_cid)
+                .map(|(_, d, _)| d)
+                .unwrap_or(cur.dfs_depth),
+            None => cur.dfs_depth,
+        };
+        if hdr_depth < cur_eff_depth {
+            cur.loop_entry_cache_id = Some(hdr_cache_id);
+        }
+    }
+
+    /// Decrement-and-walk on `parent_cache_id` lineage: mirrors kernel
+    /// `update_branch_counts` (verifier.c L1955). Called when a worklist
+    /// state's DFS exploration terminates (pruned/exit/reject/forked).
+    /// `start_cache_id` is the parent_cache_id of the completing state.
+    /// At each cached parent:
+    /// - branches -= 1
+    /// - if branches becomes 0 AND this state has a loop_entry, propagate
+    ///   it to the grandparent via update_loop_entry
+    /// - if branches > 0, stop (other DFS paths through parent still open)
+    /// - else continue walking up
+    pub fn complete_dfs_branch(&mut self, start_cache_id: Option<u32>) {
+        let mut next = start_cache_id;
+        let mut budget: u32 = 16_384;
+        while let Some(cid) = next {
+            if budget == 0 {
+                break;
+            }
+            budget -= 1;
+            let Some(&(pc, idx)) = self.cache_loc_by_id.get(&cid) else {
+                break;
+            };
+            let Some(st) = self.explored_states.get_mut(&pc).and_then(|v| v.get_mut(idx)) else {
+                break;
+            };
+            if st.branches > 0 {
+                st.branches -= 1;
+            }
+            // Kernel-faithful dfs_paths decrement (parallel counter, see
+            // State::dfs_paths). Walks the SAME chain as branches but
+            // its 0-floor is what the inf-loop trap gate consults.
+            if st.dfs_paths > 0 {
+                st.dfs_paths -= 1;
+            }
+            let still_open = st.branches > 0;
+            let st_parent = st.parent_cache_id;
+            let st_loop_entry = st.loop_entry_cache_id;
+            if !still_open {
+                // This cached state's DFS subtree just completed. Mirror
+                // kernel `clean_live_states` -> `clean_verifier_state`
+                // (verifier.c v6.15 L19528 / L19482): mutate the cached
+                // state to drop dead regs / dead stack slots, making
+                // future subsumption against it looser.
+                self.clean_verifier_state(cid);
+                // Kernel `maybe_exit_scc` (verifier.c L2253, called
+                // from update_branch_counts when branches→0): if this
+                // cached state is the entry of an SCC visit, the
+                // visit is now done — propagate_backedges fires and
+                // the visit is reset. Step 2 (current): backedges
+                // list is empty; this is a no-op. Step 3 wires
+                // propagate_backedges into maybe_exit_scc proper.
+                self.maybe_exit_scc(cid);
+            }
+            if still_open {
+                // Other DFS paths through this parent still open ⇒ stop.
+                // Still propagate the loop_entry hint if applicable.
+                if let (Some(le), Some(parent_cid)) = (st_loop_entry, st_parent) {
+                    // Read le's info first (immutable borrow), then mutate
+                    // parent record. Cloning the &(ppc,pidx) tuple makes
+                    // the lookup borrow short.
+                    let hdr_info = self.cached_scc_info(le);
+                    let parent_loc = self.cache_loc_by_id.get(&parent_cid).copied();
+                    if let (Some((hbr, hd, _)), Some((ppc, pidx))) = (hdr_info, parent_loc)
+                        && let Some(p) = self
+                            .explored_states
+                            .get_mut(&ppc)
+                            .and_then(|v| v.get_mut(pidx))
+                    {
+                        let p_eff_depth = match p.loop_entry_cache_id {
+                            Some(_) => p.dfs_depth, // approximation; chain-walk skipped to avoid re-borrow
+                            None => p.dfs_depth,
+                        };
+                        if hbr > 0 && hd < p_eff_depth {
+                            p.loop_entry_cache_id = Some(le);
+                        }
+                    }
+                }
+                break;
+            }
+            next = st_parent;
+        }
+    }
+
+    /// Kernel-aligned `clean_verifier_state` (verifier.c v6.15 L19482)
+    /// + `clean_func_state` (L19433). Called when a cached state's
+    /// `branches` first hits 0 in `complete_dfs_branch`: its DFS
+    /// subtree is complete, so future visits will only COMPARE
+    /// against it, never extend through it. At that point dead regs
+    /// and dead stack slots are mutated away so a later cur's
+    /// subsumption check against this state has fewer comparand
+    /// relations to satisfy.
+    ///
+    /// Per frame `i`, the kernel cleans against `frame_insn_idx(i)`:
+    /// the innermost frame at the state's pc, caller frames at the
+    /// next-inner frame's `return_pc`. Regs not in
+    /// `live_regs_before[frame_ip]` are reset to `NotInit`; stack
+    /// slots not in `live_slots[frame_ip]` are dropped (kernel's
+    /// `STACK_INVALID` equivalent — zovia stores slots sparsely in a
+    /// `BTreeMap`, so removal == invalidation).
+    ///
+    /// **Soundness:** zovia's existing subsumption already filters
+    /// dead regs/slots out of the comparison via the same
+    /// `live_regs` / `live_slots` sets (see `domain_subsumed_by`,
+    /// `stack_subsumed_by`); this mutation just bakes in the same
+    /// filter so the cached state object literally carries less
+    /// relation state. The hit/miss verdict for any cur is identical
+    /// to the pre-mutation case (live-only compare returns the same
+    /// boolean on a subset where the dead slots have been removed).
+    ///
+    /// **Exempt:** ITER / DYNPTR / IRQ stack slots are NEVER cleaned
+    /// — they carry semantic side effects (ref counts, slot ownership)
+    /// independent of read-liveness. Kernel `bpf_stack_slot_alive`
+    /// has analogous exemptions.
+    ///
+    /// Idempotent: skipped on already-cleaned states (kernel L19542
+    /// `sl->state.cleaned` guard).
+    pub fn clean_verifier_state(&mut self, cid: u32) {
+        let Some(&(pc, idx)) = self.cache_loc_by_id.get(&cid) else {
+            return;
+        };
+
+        // Snapshot the frame ips + their live sets BEFORE taking the
+        // mutable borrow on explored_states (insn_aux_data lookup
+        // borrows env immutably).
+        let frame_ips: Vec<usize> = {
+            let Some(st) = self.explored_states.get(&pc).and_then(|v| v.get(idx)) else {
+                return;
+            };
+            if st.cleaned {
+                return;
+            }
+            let n = st.frames.depth();
+            (0..n)
+                .map(|i| {
+                    if i + 1 == n {
+                        st.pc
+                    } else {
+                        st.frames
+                            .get(crate::analysis::machine::frame_stack::FrameLevel::from_index(i + 1))
+                            .return_pc
+                    }
+                })
+                .collect()
+        };
+        let frame_live: Vec<(HashSet<Reg>, HashSet<i16>)> = frame_ips
+            .iter()
+            .map(|&fip| match self.insn_aux_data.get(fip) {
+                Some(aux) => (aux.live_regs.clone(), aux.live_slots.clone()),
+                None => (HashSet::new(), HashSet::new()),
+            })
+            .collect();
+
+        // Mutate. Full clean (kernel `clean_func_state` faithful):
+        // both stack slots AND register state. Per-frame live_regs /
+        // live_slots comes from static MAY-liveness (matches the
+        // kernel's `live_regs_before`).
+        //
+        // ITER/DYNPTR/IRQ stack slots are NEVER cleaned — they carry
+        // semantic side effects beyond read-liveness. Kernel
+        // `bpf_stack_slot_alive` has analogous exemptions.
+        use crate::analysis::machine::frame_stack::FrameLevel;
+        use crate::analysis::machine::reg_types::RegType;
+        let Some(st) = self
+            .explored_states
+            .get_mut(&pc)
+            .and_then(|v| v.get_mut(idx))
+        else {
+            return;
+        };
+        let n_frames = st.frames.depth();
+        // Snapshot slot_anchored BEFORE any slot cleaning (subsequent
+        // per-frame loop drops dead slots).
+        let mut slot_anchored: std::collections::HashSet<Reg> = std::collections::HashSet::new();
+        for fi in 0..n_frames {
+            let frame = st.frames.get(FrameLevel::from_index(fi));
+            for off in frame.stack.slot_offsets() {
+                if let Some(slot) = frame.stack.get_slot(off)
+                    && let Some(src) = slot.source_reg
+                {
+                    slot_anchored.insert(src);
+                }
+            }
+        }
+        for (i, (live_regs, live_slots)) in frame_live.iter().enumerate() {
+            let level = FrameLevel::from_index(i);
+            let frame = st.frames.get_mut(level);
+            // Slot clean.
+            let off_to_clean: Vec<i16> = frame
+                .stack
+                .slot_offsets()
+                .into_iter()
+                .filter(|off| !live_slots.contains(off))
+                .filter(|&off| {
+                    if let Some(slot) = frame.stack.get_slot(off) {
+                        slot.iterator.is_none()
+                            && slot.dynptr.is_none()
+                            && slot.irq_flag.is_none()
+                    } else {
+                        true
+                    }
+                })
+                .collect();
+            for off in off_to_clean {
+                frame.stack.slots.remove(&off);
+            }
+            // Caller-frame reg snapshot clean (only for non-innermost
+            // frames; innermost frame's regs live in top-level
+            // st.types, handled below).
+            if i + 1 < n_frames {
+                for r in Reg::ALL {
+                    if r == Reg::R10 || r == Reg::Zero {
+                        continue;
+                    }
+                    if !live_regs.contains(&r) {
+                        frame.caller_types.set(r, RegType::NotInit);
+                    }
+                }
+            }
+        }
+        // Innermost frame: regs in st.types. Don't clean a reg whose
+        // value is currently anchored to a spilled scalar slot via
+        // `source_reg` — the spill/fill chain depends on the reg's
+        // value being recoverable from the slot, and the kernel's
+        // `clean_func_state` is sound here only because
+        // `bpf_live_stack_query_init` propagates per-path read marks
+        // we don't yet mirror. Carve-out preserves
+        // `tracking_for_u32_spill_fill`-style soundness without
+        // requiring the full per-path liveness port.
+        let inner_live = frame_live
+            .last()
+            .map(|(r, _)| r.clone())
+            .unwrap_or_default();
+        for r in Reg::ALL {
+            if r == Reg::R10 || r == Reg::Zero {
+                continue;
+            }
+            if !inner_live.contains(&r) && !slot_anchored.contains(&r) {
+                st.types.set(r, RegType::NotInit);
+                st.tnums.remove(&r);
+                st.scalar_ids.remove(&r);
+                st.precise_regs.remove(&r);
+            }
+        }
+        // Audit dump (ZOVIA_DUMP_CLEAN=1): which regs got reset to
+        // NotInit at this cached state's pc. Used to diagnose
+        // tracking_for_u32_spill_fill-style FAs where the static
+        // MAY-liveness incorrectly marks a reg dead.
+        if std::env::var("ZOVIA_DUMP_CLEAN").ok().as_deref() == Some("1") {
+            let cleaned_regs: Vec<usize> = (0..10)
+                .filter(|i| !inner_live.iter().any(|r| {
+                    crate::analysis::machine::reg::reg_to_index(*r) == Some(*i)
+                }))
+                .collect();
+            eprintln!(
+                "[clean] pc={} cid={} cleaned_innermost_regs={:?} (live_regs={:?})",
+                pc, cid, cleaned_regs, inner_live
+            );
+        }
+
+        st.cleaned = true;
+    }
+
     /// Mirror of kernel `bcf_refine`'s parent-marking
     /// (verifier.c:24580-81: `for i in 0..vstate_cnt-1:
     /// parents[i]->children_unsafe = true`). After a path-unreachable
@@ -511,6 +1086,10 @@ impl<'a> VerifierEnv<'a> {
     pub fn mark_path_children_unsafe(&mut self, cur: &State, base_pc: Option<usize>) {
         let mut id = cur.parent_cache_id;
         let mut budget: usize = 16_384;
+        let dump = std::env::var("ZOVIA_DUMP_DISCHARGE").ok().as_deref() == Some("1");
+        let mut marked = 0usize;
+        let mut first_pc: Option<usize> = None;
+        let mut last_pc: Option<usize> = None;
         while let Some(cid) = id {
             if budget == 0 {
                 break;
@@ -540,7 +1119,16 @@ impl<'a> VerifierEnv<'a> {
                 break;
             }
             s.children_unsafe = true;
+            marked += 1;
+            if first_pc.is_none() { first_pc = Some(pc); }
+            last_pc = Some(pc);
             id = s.parent_cache_id;
+        }
+        if dump {
+            eprintln!(
+                "[disc] marked {} ancestors  pc=[{:?}..{:?}]  base_pc={:?}",
+                marked, last_pc, first_pc, base_pc
+            );
         }
     }
 
@@ -586,7 +1174,12 @@ impl<'a> VerifierEnv<'a> {
         target_regs: &[Reg],
     ) -> Option<usize> {
         let debug = std::env::var("ZOVIA_BCF_TRACK_DEBUG").is_ok();
+        let probe = std::env::var("ZOVIA_DUMP_DISCHARGE").ok().as_deref() == Some("1");
+        if probe {
+            eprintln!("[bcf-track-start] history_idx={} targets={:?}", history_idx, target_regs);
+        }
         if target_regs.is_empty() {
+            if probe { eprintln!("[bcf-track-none] reason=EMPTY_TARGETS history_idx={}", history_idx); }
             return None;
         }
         // Initial precision lives in the reject state's call frame. zovia
@@ -599,6 +1192,7 @@ impl<'a> VerifierEnv<'a> {
             bt.set_reg(start_depth, r);
         }
         if bt.is_empty() {
+            if probe { eprintln!("[bcf-track-none] reason=BT_INIT_EMPTY"); }
             return None;
         }
         if debug {
@@ -612,6 +1206,8 @@ impl<'a> VerifierEnv<'a> {
         let mut current_parent_id: Option<u32> = parent_cache_id;
         let mut budget: usize = 16_384;
         let mut skip_first = true;
+        let mut last_pc_walked: Option<usize> = None;
+        let mut first_pc_walked: Option<usize> = None;
 
         'outer: loop {
             let parent_loc = current_parent_id
@@ -650,6 +1246,8 @@ impl<'a> VerifierEnv<'a> {
                 let step_pc = step.pc;
                 let step_depth = step.depth;
                 let step_stack_access = step.stack_access;
+                if first_pc_walked.is_none() { first_pc_walked = Some(step_pc); }
+                last_pc_walked = Some(step_pc);
 
                 if !skip_first {
                     if backtrack_insn_step(&mut bt, &instr_copy, step_depth, step_stack_access).is_err() {
@@ -664,6 +1262,7 @@ impl<'a> VerifierEnv<'a> {
                                 step_pc, instr_copy
                             );
                         }
+                        if probe { eprintln!("[bcf-track-none] reason=BACKTRACK_INSN_ERR pc={} instr={:?} regs={:?} stack={:?}", step_pc, instr_copy, bt.reg_masks, bt.stack_masks); }
                         return None;
                     }
                     if debug {
@@ -676,12 +1275,16 @@ impl<'a> VerifierEnv<'a> {
                         if debug {
                             eprintln!("[bcf-track] bt empty at pc={}", step_pc);
                         }
-                        // Base reached. The kernel's `bcf_track` re-runs
-                        // the suffix starting at the parent state — i.e.
-                        // from `step_pc` forward. Branches emitted in
-                        // the suffix get tagged with their JMP PC, all
-                        // ≥ `step_pc`. Return that as the cutoff.
-                        return Some(step_pc);
+                        // Kernel `backtrack_states` L24578-L24584 on
+                        // bt_empty: `base = st->parent`. zovia's analog
+                        // is `parent_loc` (the cached state at the
+                        // current parent_cache_id, i.e. `st->parent` at
+                        // this outer-iter level). Return its PC, NOT
+                        // step_pc (which is kernel's `i`, the per-insn
+                        // walk variable). Under sparse caching
+                        // (`ZOVIA_KERNEL_ENGINE=1`), this yields a
+                        // base_pc that matches the kernel's chain.
+                        return parent_loc.map(|(pc, _)| pc);
                     }
                 } else if debug {
                     eprintln!(
@@ -700,7 +1303,59 @@ impl<'a> VerifierEnv<'a> {
             current_history = parent_history_stop;
         }
 
+        // Kernel-faithful program-entry termination. If the walker reached
+        // pc 0 (the BPF program's first insn — clang's `r9 = r1` ctx-arg
+        // capture is the canonical case) and the only remaining bits in
+        // `bt` are BPF input arg regs (R1..R5) in the entry frame, those
+        // regs are defined by the caller (the BPF runtime), not by any
+        // in-program insn. The kernel's `backtrack_states` handles this
+        // implicitly because input-arg precision is satisfied at frame
+        // entry; the kernel's `bt_reg_mask(bt) & BPF_REGMASK_ARGS` is the
+        // exact analog of `BacktrackState::args_set`.
+        //
+        // Without this drain, every BCF discharge that walks back to pc 0
+        // returns `None`, which `mark_path_children_unsafe` interprets as
+        // "no suffix bound — mark the whole lineage `children_unsafe`."
+        // That over-marking is what blows calico_tc_main from 1,801 insns
+        // (base verifier, no --bcf) to 1M timeout (with --bcf):
+        // 750 discharges × ~73 ancestors marked each, 96% of subsumption
+        // attempts short-circuit on poisoned cache entries.
+        if last_pc_walked == Some(0) {
+            for arg in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+                bt.clear_reg(start_depth, arg);
+            }
+            if bt.is_empty() {
+                if probe {
+                    eprintln!("[bcf-track-entry-drain] succeeded → returning Some(0)");
+                }
+                return Some(0);
+            }
+        }
+
+        if probe {
+            eprintln!(
+                "[bcf-track-none] reason=WALKED_WHOLE_HISTORY budget_used={} first_pc={:?} last_pc={:?} regs_still_in_bt={:?} stack_still_in_bt={:?}",
+                16_384 - budget, first_pc_walked, last_pc_walked, bt.reg_masks, bt.stack_masks
+            );
+        }
         None
+    }
+}
+
+/// Kernel `bt_sync_linked_regs` (verifier.c L4116-4147): the breadcrumb
+/// for a conditional jump records the scalar registers that shared the
+/// compared register's scalar id (`collect_linked_regs`). If ANY of them
+/// is currently in the precision frontier, ALL of them must be — the
+/// kernel propagates a refined range across the whole id class, so a
+/// precision requirement on one is a precision requirement on all.
+fn bt_sync_linked_regs(frontier: &mut HashSet<Reg>, linked: &[Reg]) {
+    if linked.len() < 2 {
+        return;
+    }
+    if linked.iter().any(|r| frontier.contains(r)) {
+        for &r in linked {
+            frontier.insert(r);
+        }
     }
 }
 
@@ -777,6 +1432,23 @@ fn update_frontier(
             // kernel's per-frame `mark_chain_precision` but matches
             // our linear-history walker's structure.
             frontier.remove(&Reg::R0);
+        }
+        Instr::If { left, right, .. } => {
+            // Kernel `backtrack_insn` conditional-jump arm
+            // (verifier.c L4407-4424):
+            //   BPF_X (`dreg <cond> sreg`): if NEITHER operand needs
+            //     precision, the jump is irrelevant — no change. If
+            //     EITHER does, BOTH operands needed precision before
+            //     this insn (the branch outcome depended on both), so
+            //     add both.
+            //   BPF_K (`dreg <cond> K`): only dreg still needs
+            //     precision, which is already reflected — nothing new.
+            if let Operand::Reg(s) = right
+                && (frontier.contains(left) || frontier.contains(s))
+            {
+                frontier.insert(*left);
+                frontier.insert(*s);
+            }
         }
         _ => {}
     }

@@ -1,6 +1,7 @@
 // src/analysis/transfer/branch/constraints.rs
 
 use crate::analysis::machine::reg::Reg;
+use crate::analysis::machine::reg_types::RegType;
 use crate::analysis::machine::state::State;
 use crate::ast::{CmpOp, Width};
 use crate::domains::numeric::NumericDomain;
@@ -47,6 +48,28 @@ pub fn apply_jmp_constraints(
 ) {
     if op == CmpOp::Test {
         apply_test_constraints(then_s, else_s, left, width, right);
+        return;
+    }
+
+    // Kernel `reg_set_min_max` (verifier.c v6.15 L16082) returns early
+    // without refining numeric bounds when either operand is a pointer.
+    // Narrowly mirror that for the PtrToCtx-vs-Imm case: ctx is a
+    // non-nullable, non-arithmetic pointer with no useful numeric value
+    // to refine. zovia's unconditional refinement was the missing piece
+    // behind the conditional_loop FA (verifier_cfg.c): visit-2 of the
+    // loop head had r1=PtrToCtx refined to [0,0] (taken edge of
+    // `r1 == 0`) while cached visit-1 kept r1 unrefined, so the
+    // inf-loop trap missed the recurrence. Suppressing the refinement
+    // here keeps both visits' r1 byte-identical and lets the trap fire.
+    //
+    // Scoped narrowly to PtrToCtx-vs-Imm rather than all pointer-vs-Imm:
+    // cilium has many null-checks on PtrToMapValueOrNull / acquired-ref
+    // kinds whose downstream type-promotion (refine_branch) is
+    // intertwined with the numeric refinement, and a broader guard
+    // regresses cilium CA dramatically. PtrToCtx is unique in being
+    // non-nullable with no map-value-style type transition, so
+    // suppressing its refinement has no downstream consumer.
+    if matches!(right, Either::Right(_)) && matches!(then_s.types.get(left), RegType::PtrToCtx) {
         return;
     }
 

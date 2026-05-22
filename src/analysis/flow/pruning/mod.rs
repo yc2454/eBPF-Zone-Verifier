@@ -6,7 +6,7 @@
 // Subsumption predicates live in subsumption.rs.
 
 mod subsumption;
-mod widening;
+pub(crate) mod widening;
 
 use std::collections::HashSet;
 
@@ -15,16 +15,25 @@ use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::state::State;
 use crate::ast::{Instr, Program};
 use crate::common::config::VerifierConfig;
-use crate::domains::tnum::Tnum;
-use subsumption::state_subsumed_by;
+use subsumption::{iter_active_depths_differ, state_exact_equal, state_subsumed_by};
 use widening::{
-    apply_loop_bound, apply_slot_loop_bound, apply_widening, body_feeds_other_live_reg_from,
-    body_uses_reg_only_in_branches, check_loop_convergence, CounterDirection, dbm_diverging_regs,
-    demote_body_written_scalar_slots, detect_loop_bound, detect_slot_counter,
-    find_counter_fed_regs, is_at_loop_point, is_prune_point, is_pure_accumulator,
-    loop_body_implied_bound, loop_body_tests_reg, loop_has_conditional_exit, loop_has_if_exit,
-    precise_domain_diverging_regs, singleton_strict_direction,
+    arrived_via_back_edge, is_at_loop_point, is_prune_point, loop_body_has_force_checkpoint,
+    loop_has_conditional_exit, loop_has_if_exit, this_loop_iter_pre_widening,
 };
+
+/// Mirrors the kernel's "skip_inf_loop_check" paths in `is_state_visited`
+/// (verifier.c v6.15 L19073 / L19111): the inf-loop trap doesn't fire at
+/// iter_next kfunc call sites (those are handled by `process_iter_next_call`
+/// + iter_active_depths_differ) or at sync-callback-call helper sites
+/// (bpf_loop / bpf_for_each_map_elem / bpf_timer_set_callback — the
+/// callback's own iteration accounting drives convergence). zovia flags
+/// both classes via `force_checkpoint=true` set at the `Call` insn. We
+/// gate on the insn kind plus the flag so MayGoto pcs (also
+/// force-checkpoint) still run the inf-loop check, matching the kernel's
+/// fall-through at L19103-L19109.
+fn is_inf_loop_skip_pc(prog: &Program, pc: usize) -> bool {
+    matches!(prog.instrs.get(pc), Some(Instr::Call { .. }))
+}
 
 /// Handle pruning decision at a loop point.
 /// Returns Some(true) to prune, Some(false) to continue, None if no previous states.
@@ -34,6 +43,7 @@ fn handle_loop_pruning(
     pc: usize,
     prog: &Program,
     live_regs: &HashSet<Reg>,
+    frame_live_slots: &[Option<HashSet<i16>>],
     config: &VerifierConfig,
 ) -> bool {
     // Loops without conditional exits are infinite - let complexity limit catch them
@@ -43,45 +53,105 @@ fn handle_loop_pruning(
     }
     env.pruning_stats.loop_walks_attempted += 1;
 
-    let loop_bound = detect_loop_bound(env, state, pc, prog);
-
-    // Apply bound before subsumption check
-    apply_loop_bound(state, loop_bound);
-
-    // Stack-spilled counter widening: covers `volatile __u64 i` patterns
-    // (loop3::while_true) where the counter lives entirely on the stack
-    // and never gets a persistent register at the loop top. The detector
-    // requires a load-add-store triple targeting the same slot —
-    // structurally distinct from the register-only oscillating /
-    // constant counterexamples (`infinite_loop_three_jump_trick` etc).
-    if let Some(slot_info) = detect_slot_counter(env, state, pc, prog) {
-        apply_slot_loop_bound(state, slot_info);
-        demote_body_written_scalar_slots(env, state, pc, prog, slot_info.slot_offset);
+    // Kernel-faithful iter-loop convergence: in an iterator-style loop
+    // (body contains a force-checkpoint), the kernel converges at the
+    // iter_next pc itself via `process_iter_next_call` →
+    // `widen_imprecise_scalars`. zovia's kfunc-site widening
+    // (kfunc.rs::iter_next_fork) is the analog. BUT zovia's
+    // `is_at_loop_point` makes EVERY back-edge target a pruning point —
+    // a strict superset of kernel's `init_explored_state`'d pcs. If we
+    // prune at a non-checkpoint back-edge target before the looped-back
+    // state can re-reach the iter_next pc, the kfunc widening never
+    // sees a second iter_next visit (`prev_found=false`) and the
+    // delayed_precision_mark / loop_state_deps FAs slip through.
+    //
+    // Defer pruning at non-force-checkpoint pcs INSIDE iter bodies
+    // ONLY while iter_next widening hasn't yet fired on at least one
+    // active iter slot (depth<2: still on the very first iter_next
+    // call). Once widening has fired (depth>=2 on every active iter),
+    // resume normal pruning so legitimate iter loops still converge
+    // (iter_while_loop / clean_live_states / widen_spill rely on
+    // back-edge target subsumption AFTER the widened state stabilises).
+    // Unconditional skip breaks those legitimate loops; conditional
+    // skip only opens the gate long enough for widening to fire.
+    let pc_is_force_checkpoint = env
+        .insn_aux_data
+        .get(pc)
+        .map(|a| a.force_checkpoint)
+        .unwrap_or(false);
+    // Defer only at an actual back-edge TARGET (kernel-style:
+    // `init_explored_state`'d loop head), not at every in-loop body
+    // pc — otherwise the body's paths can't prune and the worklist
+    // explodes (clean_live_states / iter_nested_deeply_iters with 7
+    // nested levels saw 10k+ widening events without convergence).
+    if !pc_is_force_checkpoint
+        && arrived_via_back_edge(env, state, pc, prog)
+        && loop_body_has_force_checkpoint(env, state, pc)
+        && this_loop_iter_pre_widening(env, state, pc)
+    {
+        return false;
     }
 
-    // Walk prev_states once, recording the first hit (if any) and all
-    // walked-past indices. We hold the borrow only inside this scope so
-    // the metrics-update at the end can take `&mut env` cleanly.
-    let (hit_idx, miss_idxs, miss_reasons, prev_first_budget, prev_last_budget, prev_states_len): (
+    // Pure-subsumption loop pruning: walk prev_states, prune on first
+    // hit (kernel `is_state_visited` analog at the loop head). The
+    // kernel-absent general-loop widening (per-shape detectors,
+    // counter-widening, force_widen_for_may_goto, tnum-only widening,
+    // check_loop_convergence) is DELETED — the kernel converges loops
+    // via imprecise-scalar-as-wildcard in regsafe + iter-next widening
+    // (kfunc.rs::iter_next_fork). For non-iter loops without a
+    // wildcard fixpoint, complexity-limit terminates them — matching
+    // the kernel's actual behavior (e.g. test_verif_scale_loop3
+    // is `should_fail`).
+    let (hit_idx, miss_idxs, miss_reasons): (
         Option<usize>,
         Vec<usize>,
         Vec<SubsumptionMissReason>,
-        Option<u32>,
-        Option<u32>,
-        usize,
     ) = if let Some(prev_states) = env.explored_states.get(&pc) {
         let mut h = None;
         let mut m: Vec<usize> = Vec::new();
         let mut r: Vec<SubsumptionMissReason> = Vec::new();
-        // Branchy loop tops can hold multiple cached states; match the
-        // first that subsumes (kernel `is_state_visited` walks the
-        // explored_state list, verifier.c v6.15 ~L19018).
         for (i, prev) in prev_states.iter().enumerate() {
             // Kernel children_unsafe (bcf_refine, verifier.c:24580-81).
             if prev.children_unsafe {
                 continue;
             }
-            match state_subsumed_by(state, prev, live_regs, config) {
+            // SCC force_exact: prev is on the current DFS path iff its
+            // branches > 0 (cached but DFS through it not yet finished).
+            // The kernel uses `get_loop_entry(sl)->branches > 0`; the
+            // simpler "prev itself open" approximation captures the
+            // load-bearing case for loop-state-deps and avoids the
+            // multi-hop chain walk on the hot path.
+            // Kernel `force_exact = loop_entry && loop_entry->branches > 0`
+            // (verifier.c L19175): walk prev's loop_entry chain to its
+            // outermost loop header, then check whether THAT header is
+            // still on the DFS path. The simpler `prev.branches > 0`
+            // misses cases where prev itself has finished but is part of
+            // a still-open enclosing SCC (e.g. inner-loop body state in
+            // loop_state_deps2). We also keep `prev.branches > 0` as a
+            // direct trigger: prev itself open ⇒ enclosing loop open.
+            let force_exact = prev.branches > 0
+                || prev
+                    .cache_id
+                    .and_then(|cid| env.get_loop_entry(cid))
+                    .and_then(|lcid| env.cache_loc_by_id.get(&lcid).copied())
+                    .and_then(|(lpc, lidx)| {
+                        env.explored_states
+                            .get(&lpc)
+                            .and_then(|v| v.get(lidx))
+                            .map(|s| s.branches > 0)
+                    })
+                    .unwrap_or(false)
+                // Kernel `incomplete_read_marks` (verifier.c v6.15
+                // L2327) — true iff prev's SCC visit has pending
+                // backedges (collected on prior loop-pruning hits,
+                // not yet flushed by propagate_backedges at SCC
+                // exit). Additive: catches the rare case where
+                // prev.branches has hit 0 but the propagate_backedges
+                // fixpoint hasn't run yet (e.g. an inner SCC closed
+                // while an outer is still in flight), so we want
+                // RANGE_WITHIN strictness anyway.
+                || env.incomplete_read_marks(prev);
+            match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
                 Ok(()) => {
                     h = Some(i);
                     break;
@@ -92,9 +162,7 @@ fn handle_loop_pruning(
                 }
             }
         }
-        let f = prev_states.first().map(|s| s.goto_budget);
-        let l = prev_states.last().map(|s| s.goto_budget);
-        (h, m, r, f, l, prev_states.len())
+        (h, m, r)
     } else {
         env.pruning_stats.loop_walks_no_prev += 1;
         return false;
@@ -102,404 +170,53 @@ fn handle_loop_pruning(
 
     if let Some(idx) = hit_idx {
         env.pruning_stats.loop_walks_hit += 1;
-        // Record hit BEFORE check_loop_convergence — eviction won't
-        // touch the just-hit entry, but cleaner ordering.
         record_pruning_hit(env, pc, idx);
         // Kernel-aligned propagate_precision (verifier.c v6.15 L18828):
         // pull cached's precise-mark set into cur's parent-cache lineage
         // so the path's continuation tracks the same precision contract.
         if let Some(prev) = env.explored_states.get(&pc).and_then(|v| v.get(idx)).cloned() {
             env.propagate_precision(state, &prev);
+            // SCC: at a force_exact hit, propagate prev's loop_entry to
+            // cur (verifier.c L19178). cur is about to be pruned and
+            // complete_dfs_branch will walk up; carrying the loop_entry
+            // lets the propagation reach the parent chain. We also seed
+            // from prev's cache_id when prev itself is the entry.
+            if prev.branches > 0 {
+                let le = prev
+                    .cache_id
+                    .and_then(|cid| env.get_loop_entry(cid))
+                    .or(prev.cache_id);
+                if let Some(lcid) = le {
+                    env.update_loop_entry(state, lcid);
+                }
+            }
+            // Kernel `add_scc_backedge` (verifier.c v6.15 L20506):
+            // when a loop-pruning hit happens at a cached state that
+            // belongs to an OPEN SCC visit (prev.branches > 0 ⇒
+            // visit's entry hasn't exited), save cur as a backedge.
+            // `propagate_backedges` at SCC exit will replay
+            // propagate_precision until fixpoint, ensuring the
+            // RANGE_WITHIN convergence's precision marks are
+            // complete.
+            //
+            // Slightly more permissive than the kernel (which gates
+            // on `incomplete_read_marks`, i.e. visit.backedges
+            // non-empty). Overcollecting is sound — extra backedges
+            // just re-run propagate_precision (already-fixed-points
+            // exit the loop quickly via the `changed` flag).
+            if prev.branches > 0
+                && let Some(prev_cid) = prev.cache_id
+            {
+                env.add_scc_backedge(state, prev_cid, pc);
+            }
         }
-        // For convergence we still need the full prev_states list.
-        let prev_states = env
-            .explored_states
-            .get(&pc)
-            .cloned()
-            .unwrap_or_default();
-        if check_loop_convergence(
-            env,
-            state,
-            pc,
-            prog,
-            &prev_states,
-            live_regs,
-            loop_bound,
-            config,
-        ) {
-            env.pruning_stats.loop_walks_pruned_via_convergence += 1;
-            return true;
-        }
-        // Subsumed but convergence not yet provable (widening not
-        // effective on live regs OR exit path not yet explored). Apply
-        // widening against the cached state we just hit so the next
-        // iteration's cached entry covers a strictly wider scalar
-        // range than this one — eventually widening_was_effective
-        // fires and the loop converges. Without this, tight scalar
-        // loops where every iteration subsumes via `!precise → accept`
-        // (e.g. `verifier_bounds.c::crossing_64_bit_signed_boundary_2`)
-        // never converge: subsumption succeeds but widening only fires
-        // on misses, so the cached state never widens.
-        if let Some(prev_states) = env.explored_states.get(&pc)
-            && let Some(old) = prev_states.get(idx).cloned().as_ref()
-        {
-            apply_widening(state, old, live_regs, loop_bound);
-        }
-        return false;
+        env.pruning_stats.loop_walks_pruned_via_convergence += 1;
+        return true;
     }
 
     env.pruning_stats.loop_walks_miss += 1;
-    // Not subsumed: record misses + maybe evict, then apply widening.
     record_pruning_misses(env, pc, &miss_idxs);
     record_subsumption_miss_reasons(env, pc, &miss_reasons);
-
-    let only_may_goto_exit = !loop_has_if_exit(env, state, pc, prog);
-    let may_goto_progress = prev_first_budget
-        .zip(prev_last_budget)
-        .map(|(f, l)| f > l)
-        .unwrap_or(false);
-    let force_widen_for_may_goto =
-        only_may_goto_exit && loop_bound.is_none() && may_goto_progress;
-    // Tnum-only divergence at a back-edge: a counter scalar incrementing
-    // each iteration produces tnum-precise values that never subsume,
-    // even though the *interval* domain happily widens. Apply tnum
-    // widening here so non-iter / non-may_goto goto-loops with scalar
-    // counters can converge — without affecting tests that miss for
-    // other reasons (stack/types/domain). Pattern observed in
-    // verifier_bounds.c::crossing_64_bit_signed_boundary_2 (counter r0
-    // incrementing in [S64_MIN, ...] until SLt branch exits).
-    let only_tnum_misses = !miss_reasons.is_empty()
-        && miss_reasons
-            .iter()
-            .all(|r| *r == SubsumptionMissReason::Tnum);
-    // Domain-only divergence at a back-edge whose diverging precise
-    // scalars are loop counters with body-implied bounds. For each
-    // diverging reg we check independently:
-    //   - it has a body-resident `If reg cmp imm` branch (gives the
-    //     widening cap),
-    //   - the most-recent cached state vs arrival shows
-    //     singleton-precise + strict positive progress
-    //     (`old_min == old_max`, `cur_min == cur_max`, `cur_min > old_min`),
-    //   - it is not linked via `scalar_ids` to another live reg
-    //     (linkage signals the reg is an alias for a downstream-needed
-    //     value; widening it drops the sibling's bound).
-    //   - the SAME set of regs diverges across every cached state
-    //     (different cache slots agreeing on which regs are the
-    //     counters).
-    //
-    // This `for(i=0; i<N; i++ [, j+=K])` pattern matches:
-    //   - test_bpf_ma macro expansion (single `i` counter),
-    //   - bloom_filter_bench (`for(i=0; i<1024; i++, index += value_size)`,
-    //     two precise diverging counters per iter).
-    //
-    // Filters out:
-    //   - load-bearing precise regs that aren't counters (would FR
-    //     `bpf_iter_task_stack::dump_task_stack`) — the singleton +
-    //     scalar_id-link gates catch them,
-    //   - oscillating counters in genuinely infinite loops with a
-    //     bound-shaped exit branch (`infinite_loop_three_jump_trick`,
-    //     where `r0 = (r0+1) & 1` joins to `r0 ∈ [0,1]` non-singleton).
-    //
-    // Critically this does NOT extend `detect_loop_bound`, which would
-    // make `apply_loop_bound` set tnum=UNKNOWN unconditionally and
-    // unsoundly subsume infinite-loop tests whose multi-branch body has
-    // a per-branch comparison shaped like a bound.
-    // (counter_widen_set, demote_set): counters to widen with their
-    // bound, plus non-counter precise diverging regs whose precision
-    // mark we can safely drop on the live state (kernel rule
-    // `!precise → accept` will then cover them on subsumption against
-    // the cached widened state). Both empty means we don't fire.
-    let (counter_widen_set, demote_set): (Vec<(Reg, i64)>, Vec<Reg>) = if !miss_reasons
-        .is_empty()
-        && miss_reasons
-            .iter()
-            .all(|r| *r == SubsumptionMissReason::Domain)
-    {
-        env.explored_states.get(&pc).cloned().map(|prev_states| {
-            if prev_states.len() < 4 {
-                return (Vec::new(), Vec::new());
-            }
-            let first_set: Vec<Reg> = precise_domain_diverging_regs(
-                &state.domain,
-                &prev_states[0].domain,
-                live_regs,
-                &prev_states[0].precise_regs,
-            );
-            if first_set.is_empty() {
-                return (Vec::new(), Vec::new());
-            }
-            // Every cached state must produce the SAME diverging set.
-            let same_set_everywhere = prev_states.iter().all(|prev| {
-                let s = precise_domain_diverging_regs(
-                    &state.domain,
-                    &prev.domain,
-                    live_regs,
-                    &prev.precise_regs,
-                );
-                s == first_set
-            });
-            if !same_set_everywhere {
-                return (Vec::new(), Vec::new());
-            }
-            // Additionally collect non-precise live regs whose DBM
-            // cells advance — they block `zone_subsumed_by` even when
-            // their precision marks are absent. Same-set requirement
-            // applies. Pattern from `test_parse_tcp_hdr_opt_dynptr`'s
-            // R6 (byte_offset accumulator).
-            let dbm_extra: Vec<Reg> = {
-                let first_dbm = dbm_diverging_regs(
-                    &state.domain, &prev_states[0].domain, live_regs);
-                let same_dbm = prev_states.iter().all(|prev| {
-                    dbm_diverging_regs(&state.domain, &prev.domain, live_regs) == first_dbm
-                });
-                if same_dbm {
-                    first_dbm
-                        .into_iter()
-                        .filter(|r| !first_set.contains(r))
-                        .collect()
-                } else {
-                    Vec::new()
-                }
-            };
-            let last = prev_states.last().unwrap();
-            let mut bounded: Vec<(Reg, i64)> = Vec::new();
-            let mut demote: Vec<Reg> = Vec::new();
-            // Process the non-precise DBM-diverging regs first: they
-            // can ONLY be demoted (no counter widening since they're
-            // not precise so wouldn't enter the singleton-direction
-            // logic meaningfully, and we want to leave their value
-            // tracking alone if branch-only). Demotion here clears
-            // their DBM cells so `zone_subsumed_by` stops blocking.
-            for &r in &dbm_extra {
-                if state.scalar_id(r).is_none()
-                    && body_uses_reg_only_in_branches(env, state, pc, prog, r, live_regs)
-                {
-                    demote.push(r);
-                } else {
-                    return (Vec::new(), Vec::new());
-                }
-            }
-            for &r in &first_set {
-                // Try to classify as counter first. Counter pattern:
-                //   - no scalar_id link,
-                //   - body has `If r cmp imm` test,
-                //   - doesn't feed an accumulator (`dst := dst OP r`),
-                //   - singleton-precise strict direction on last slot,
-                //   - has a cap (asc: body bound; desc: max observed).
-                // The counter widening branch unconditionally calls
-                // `assume_ge_imm(r, 0)` and sets tnum to `[0, upper]`,
-                // which is unsound when the reg's interval crosses
-                // zero (e.g. the signed-boundary tests in
-                // verifier_bounds.c::crossing_*_signed_boundary_*
-                // operate in the negative half of i64). Gate counter
-                // classification on `cur_lo >= 0` so the unsound apply
-                // step never fires for these. Mirrors the same gate
-                // in `detect_loop_bound` (`if lo >= 0`).
-                let (cur_lo, _) = state.domain.get_interval(r);
-                let basic_counter_shape = cur_lo >= 0
-                    && state.scalar_id(r).is_none()
-                    && loop_body_tests_reg(env, state, pc, prog, r);
-                let feeds_others = body_feeds_other_live_reg_from(env, state, pc, prog, r, live_regs);
-                // Extended counter shape: counter feeds one or more live
-                // accumulators (`A := A OP counter` or `A := counter OP B`).
-                // Allowed when every fed-target is a "pure accumulator"
-                // (no memory base / branch use, only arithmetic
-                // self-feedback or cross-feed within the accumulator
-                // closure). Loop1 pattern: inner counter `i` (R3) feeds
-                // `sum` (R0/R5) which is itself only used in further
-                // accumulation and the function's exit value.
-                //
-                // Soundness sketch: widening counter to [0, K] sets the
-                // cached counter range so subsequent iters subsume on it.
-                // The fed accumulators get their precision marks dropped
-                // (kernel `!precise → accept` rule); their values stay
-                // imprecise across iters, but since they're not used as
-                // memory bases or branch operands their imprecision is
-                // dispensable for verifying memory safety / control flow.
-                // Restrict the accumulator-aware extension to ASCENDING
-                // counters. Descending shapes (`r -= 1; if r != 0`)
-                // worked pre-extension by allowing the accumulator gate
-                // to bail (no widening); allowing the extension here
-                // regressed `verifier_loops1::back_jump_to_1st_insn_2`
-                // because the descending widening drops r to `[0, max]`
-                // including a value below the smallest singleton ever
-                // observed at the loop top, and the post-`r -= 1` body
-                // produces a negative r that branches under `if r != 0`
-                // explosively. Ascending counters don't have this
-                // issue: the widening floor `assume_ge_imm(0)` matches
-                // the natural [0, k-1] range from `i++ < k` patterns.
-                let dir_for_ext = singleton_strict_direction(&state.domain, &last.domain, r);
-                let is_ascending = matches!(dir_for_ext, Some(CounterDirection::Ascending));
-                let extended_counter_shape = if basic_counter_shape && feeds_others && is_ascending {
-                    let fed = find_counter_fed_regs(env, state, pc, prog, r, live_regs);
-                    // Transitively expand the candidate set: any live reg
-                    // that an accumulator feeds becomes part of the
-                    // closure (loop1's `R5 = R0; R0 = R0 + R5` cycle).
-                    // Stop when the set stops growing or we observe a
-                    // disqualifying use (memory base / branch / scalar_id
-                    // link).
-                    let mut closure: HashSet<Reg> = fed.iter().copied().collect();
-                    closure.insert(r);
-                    loop {
-                        let mut grew = false;
-                        let snapshot: Vec<Reg> = closure.iter().copied().collect();
-                        for &a in &snapshot {
-                            if a == r {
-                                continue;
-                            }
-                            for tgt in find_counter_fed_regs(env, state, pc, prog, a, live_regs) {
-                                if closure.insert(tgt) {
-                                    grew = true;
-                                }
-                            }
-                        }
-                        if !grew {
-                            break;
-                        }
-                    }
-                    !fed.is_empty()
-                        && closure.iter().filter(|&&a| a != r).all(|&a| {
-                            state.scalar_id(a).is_none()
-                                && is_pure_accumulator(env, state, pc, prog, a, &closure, live_regs)
-                        })
-                } else {
-                    false
-                };
-                let is_counter_shape =
-                    basic_counter_shape && (!feeds_others || extended_counter_shape);
-                if extended_counter_shape {
-                    // Queue the entire accumulator closure for demotion
-                    // alongside counter widening below.
-                    let fed = find_counter_fed_regs(env, state, pc, prog, r, live_regs);
-                    let mut closure: HashSet<Reg> = fed.iter().copied().collect();
-                    loop {
-                        let mut grew = false;
-                        let snapshot: Vec<Reg> = closure.iter().copied().collect();
-                        for &a in &snapshot {
-                            for tgt in find_counter_fed_regs(env, state, pc, prog, a, live_regs) {
-                                if tgt != r && closure.insert(tgt) {
-                                    grew = true;
-                                }
-                            }
-                        }
-                        if !grew {
-                            break;
-                        }
-                    }
-                    for a in closure {
-                        if !demote.contains(&a) {
-                            demote.push(a);
-                        }
-                    }
-                }
-                if is_counter_shape {
-                    if let Some(dir) =
-                        singleton_strict_direction(&state.domain, &last.domain, r)
-                    {
-                        let cap_opt: Option<i64> = match dir {
-                            CounterDirection::Ascending => {
-                                loop_body_implied_bound(env, state, pc, prog, r)
-                            }
-                            CounterDirection::Descending => {
-                                let mut max_seen = state.domain.get_interval(r).1;
-                                for ps in &prev_states {
-                                    let (_, pm) = ps.domain.get_interval(r);
-                                    if pm > max_seen {
-                                        max_seen = pm;
-                                    }
-                                }
-                                if max_seen > 0 { Some(max_seen) } else { None }
-                            }
-                        };
-                        if let Some(cap) = cap_opt {
-                            bounded.push((r, cap));
-                            continue;
-                        }
-                    }
-                }
-                // Not a counter — try demotion. A precise scalar that
-                // only ever drives a branch (no memory access, no
-                // arithmetic feeding another reg, no helper-call
-                // arg) can have its cached-side precise mark dropped:
-                // the kernel `!precise → accept` rule then covers it,
-                // so future arrivals subsume against the cached
-                // widened state regardless of this reg's value.
-                // Pattern observed in `test_parse_tcp_hdr_opt`'s R4
-                // (`bytes_remaining` loaded from stack, only used in
-                // `if !bytes_remaining break`).
-                if state.scalar_id(r).is_none()
-                    && body_uses_reg_only_in_branches(env, state, pc, prog, r, live_regs)
-                {
-                    demote.push(r);
-                    continue;
-                }
-                // Neither counter nor demotable — bail.
-                return (Vec::new(), Vec::new());
-            }
-            // At least one counter must be widening for the firing
-            // to make sense. Pure demotion (no widening) was tried
-            // and introduced an FA in
-            // `verifier_search_pruning::short_loop1` and a regression
-            // in `bpf_iter_task_stack` — without a forced-progress
-            // signal, demoting precision marks alone allows
-            // converging loops we shouldn't.
-            if bounded.is_empty() {
-                return (Vec::new(), Vec::new());
-            }
-            (bounded, demote)
-        }).unwrap_or((Vec::new(), Vec::new()))
-    } else {
-        (Vec::new(), Vec::new())
-    };
-    let domain_widen_loop_counter_only = !counter_widen_set.is_empty();
-    if (config.use_widening
-        || force_widen_for_may_goto
-        || only_tnum_misses
-        || domain_widen_loop_counter_only)
-        && prev_states_len > 0
-    {
-        // Re-fetch the last cached state for widening (after eviction
-        // it may have shifted; take the last surviving one).
-        if let Some(prev_states) = env.explored_states.get(&pc)
-            && let Some(old) = prev_states.last().cloned().as_ref()
-        {
-            if !counter_widen_set.is_empty() {
-                // Targeted per-counter widening + non-counter demotion.
-                for (counter, upper) in &counter_widen_set {
-                    state.domain.forget(*counter);
-                    state.domain.assume_le_imm(*counter, *upper);
-                    state.domain.assume_ge_imm(*counter, 0);
-                    state.set_tnum(*counter, Tnum::from_range(0, *upper as u64));
-                }
-                // Demote precision marks AND forget DBM cells for
-                // non-counter precise diverging regs classified as
-                // branch-only. Two complementary effects:
-                //
-                //   1. `precise_regs.remove` drops the kernel-rule
-                //      `precise → range_within` check on this reg
-                //      (`!precise → accept` covers it). Mirrors lazy
-                //      mark_chain_precision.
-                //   2. `domain.forget` clears the reg's DBM cells.
-                //      Without this, `zone_subsumed_by`'s live-reg
-                //      pair check (`old_dbm.get(r, a) >= cur_dbm.get`)
-                //      keeps blocking subsumption even with the
-                //      precise mark gone, because DBM cells are
-                //      checked unconditionally for live regs.
-                //
-                // Pattern from `test_parse_tcp_hdr_opt`'s R4
-                // (byte_offset accumulator) — it's not a counter
-                // (interval grows each iter, not singleton) but only
-                // drives an `If R4 cmp imm` body branch, so the
-                // precision is dispensable for verification.
-                for r in &demote_set {
-                    state.precise_regs.remove(r);
-                    state.domain.forget(*r);
-                }
-            } else {
-                apply_widening(state, old, live_regs, loop_bound);
-            }
-        }
-    }
 
     false
 }
@@ -510,20 +227,53 @@ fn handle_standard_pruning(
     state: &State,
     pc: usize,
     live_regs: &HashSet<Reg>,
+    frame_live_slots: &[Option<HashSet<i16>>],
     config: &VerifierConfig,
 ) -> bool {
     let mut hit_idx: Option<usize> = None;
     let mut miss_idxs: Vec<usize> = Vec::new();
     let mut miss_reasons: Vec<SubsumptionMissReason> = Vec::new();
+    let mut local_children_unsafe_skips: u64 = 0;
     if let Some(prev_states) = env.explored_states.get(&pc) {
         for (i, prev) in prev_states.iter().enumerate() {
             // Kernel children_unsafe (bcf_refine, verifier.c:24580-81):
             // a path-unreachable refinement marked this cached ancestor
             // not-prune-safe. Don't let it subsume a later arrival.
             if prev.children_unsafe {
+                local_children_unsafe_skips += 1;
                 continue;
             }
-            match state_subsumed_by(state, prev, live_regs, config) {
+            // Kernel `force_exact = loop_entry && loop_entry->branches > 0`
+            // (verifier.c L19175): walk prev's loop_entry chain to its
+            // outermost loop header, then check whether THAT header is
+            // still on the DFS path. The simpler `prev.branches > 0`
+            // misses cases where prev itself has finished but is part of
+            // a still-open enclosing SCC (e.g. inner-loop body state in
+            // loop_state_deps2). We also keep `prev.branches > 0` as a
+            // direct trigger: prev itself open ⇒ enclosing loop open.
+            let force_exact = prev.branches > 0
+                || prev
+                    .cache_id
+                    .and_then(|cid| env.get_loop_entry(cid))
+                    .and_then(|lcid| env.cache_loc_by_id.get(&lcid).copied())
+                    .and_then(|(lpc, lidx)| {
+                        env.explored_states
+                            .get(&lpc)
+                            .and_then(|v| v.get(lidx))
+                            .map(|s| s.branches > 0)
+                    })
+                    .unwrap_or(false)
+                // Kernel `incomplete_read_marks` (verifier.c v6.15
+                // L2327) — true iff prev's SCC visit has pending
+                // backedges (collected on prior loop-pruning hits,
+                // not yet flushed by propagate_backedges at SCC
+                // exit). Additive: catches the rare case where
+                // prev.branches has hit 0 but the propagate_backedges
+                // fixpoint hasn't run yet (e.g. an inner SCC closed
+                // while an outer is still in flight), so we want
+                // RANGE_WITHIN strictness anyway.
+                || env.incomplete_read_marks(prev);
+            match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
                 Ok(()) => {
                     hit_idx = Some(i);
                     break;
@@ -535,6 +285,8 @@ fn handle_standard_pruning(
             }
         }
     }
+    env.pruning_stats.children_unsafe_skips =
+        env.pruning_stats.children_unsafe_skips.saturating_add(local_children_unsafe_skips);
     if let Some(idx) = hit_idx {
         record_pruning_hit(env, pc, idx);
         // Kernel-aligned propagate_precision (per-path lineage walk).
@@ -599,9 +351,27 @@ pub fn should_prune(
 
     let in_loop = is_at_loop_point(env, state, pc, prog);
 
+    // iter_next call sites are virtual loop heads: the kernel's
+    // is_state_visited runs the RANGE_WITHIN + active-iter check at
+    // the iter_next CALL pc (verifier.c v6.15 L19078-L19101), and the
+    // cached state at this pc is the convergence target for the loop.
+    // Mirror that by NOT shortcut-skipping on `is_on_path && !in_loop`
+    // when this pc is a force-checkpointed Call (force_checkpoint at
+    // a Call instruction = iter_next or sync-callback helper site).
+    // Without this, under ZOVIA_KERNEL_ENGINE=1's sparse caching the
+    // iter loop's back-edge target (a body pc) isn't cached, the
+    // iter_next call site IS cached but pruning short-circuits via
+    // on_path → bpf_iter_num loops never converge → timeout.
+    let pc_is_iter_next_call = matches!(prog.instrs.get(pc), Some(Instr::Call { .. }))
+        && env
+            .insn_aux_data
+            .get(pc)
+            .map(|a| a.force_checkpoint)
+            .unwrap_or(false);
+
     // Re-entry to a PC from a different depth (e.g. repeated call in a loop).
     // Must continue to reach the actual loop back-edge.
-    if is_on_path && !in_loop {
+    if is_on_path && !in_loop && !pc_is_iter_next_call {
         env.pruning_stats.on_path_skip += 1;
         return false;
     }
@@ -623,6 +393,128 @@ pub fn should_prune(
     }
 
     let live_regs = env.insn_aux_data[pc].live_regs.clone();
+    // clean_verifier_state analog: the kernel zeroes dead stack slots
+    // (clean_func_state → STACK_INVALID) so stacksafe never compares
+    // them. zovia's static `live_slots` (sound over-approx MAY-liveness)
+    // is the equivalent; threaded into `stack_subsumed_by` so a dead
+    // scratch slot can't block a prune (mirrors the existing
+    // `live_regs` filtering in types/domain subsumption).
+    // Per-frame clean_verifier_state: the kernel cleans EVERY frame at
+    // its own ip (clean_func_state via frame_insn_idx, verifier.c:19463),
+    // not just the innermost. The innermost frame's ip is `pc`; a caller
+    // frame i is paused at its call and resumes at frame[i+1].return_pc,
+    // so its slots are dead iff unread from there. `None` = liveness
+    // unknown for that frame ⇒ DON'T skip (full compare — the sound
+    // direction). Built once (cur's frame shape is fixed; old zips 1:1
+    // by callsite).
+    let nframes = state.frames.depth();
+    let frame_live_slots: Vec<Option<HashSet<i16>>> = (0..nframes)
+        .map(|i| {
+            let fpc = if i + 1 == nframes {
+                pc
+            } else {
+                state
+                    .frames
+                    .get(crate::analysis::machine::frame_stack::FrameLevel::from_index(i + 1))
+                    .return_pc
+            };
+            env.insn_aux_data.get(fpc).map(|a| a.live_slots.clone())
+        })
+        .collect();
+
+    // Kernel-faithful infinite-loop trap (verifier.c v6.15 L19114-L19127,
+    // `is_state_visited`'s inf-loop check). For any cached state at this
+    // pc whose topmost-frame regs are bytewise identical to cur AND whose
+    // full state matches EXACT AND iter active depths don't differ AND
+    // may_goto_depth matches ⇒ "infinite loop detected".
+    //
+    // Skipped at iter_next call sites and sync-callback-call helper sites
+    // (kernel `is_iter_next_insn` / `calls_callback` short-circuits at
+    // L19073 / L19111). MayGoto is NOT skipped: the may_goto_depth
+    // equality gate inside the check naturally lets it through (the
+    // taken edge bumps the depth, so a recurrence with same depth means
+    // no progress on the may_goto counter ⇒ stuck).
+    // Only run the inf-loop trap at actual back-edge TARGETS (loop heads).
+    // The kernel's is_state_visited fires at every prune point, but
+    // zovia's per-state liveness/precision bookkeeping isn't granular
+    // enough to mirror the kernel's `live`-flag discrimination — so at
+    // mid-loop convergence prune points (`is_at_loop_point=false`) the
+    // check over-fires on legitimate cilium loops whose iterations
+    // happen to produce byte-identical zovia abstract states even
+    // though the kernel sees per-iter progress. Restricting to true
+    // loop heads keeps the trap narrow enough to detect genuine
+    // verifier-divergent infinite loops (the conditional_loop /
+    // infinite_loop_* / mov64sx_s32_varoff_1 family) while avoiding
+    // the cilium FR-regression.
+    // Additionally skip when ANY frame has an active iterator: the kernel
+    // gates iter-loop convergence on `iter_active_depths_differ` + SCC
+    // (`loop_entry` / `dfs_depth` / `branches`, verifier.c L1885+). zovia
+    // tracks depth-differ but not SCC, so at body pcs inside an iter
+    // loop where the depth has stabilized (legit pruning iteration), the
+    // EXACT check fires on byte-identical body states that the kernel
+    // distinguishes via SCC's per-state `branches` count. Skipping at
+    // any-active-iter avoids the false-reject regression on
+    // verifier_bits_iter.c::max_words and the like; iter_next sites
+    // themselves are already covered by `is_inf_loop_skip_pc` for the
+    // kernel's `is_iter_next_insn` short-circuit.
+    let any_active_iter = state
+        .frames
+        .iter()
+        .any(|f| f.stack.has_active_iterators());
+    if in_loop
+        && !any_active_iter
+        && pc < prog.instrs.len()
+        && let Some(prev_states) = env.explored_states.get(&pc).cloned()
+        && !is_inf_loop_skip_pc(prog, pc)
+    {
+        for prev in prev_states.iter() {
+            // Kernel-faithful gate (verifier.c v6.15 L19024): the entire
+            // inf-loop check is wrapped in `if (sl->state.branches)`. A
+            // cached state with branches==0 (kernel semantics) has had
+            // its entire downstream DFS completed — a second arrival
+            // that byte-matches it is the normal subsumption case, NOT
+            // a stuck loop. Without this gate zovia false-rejects
+            // programs like pro_epilogue_goto_start where the first
+            // back-edge arrival at the loop head takes a terminating
+            // branch (e.g. r1=0 → if r1==0 → exit) and fully completes
+            // before a second back-edge arrival via a different
+            // predecessor path lands at the same state.
+            //
+            // Zovia checks `dfs_paths` instead of `branches` because
+            // zovia's `branches` field has different (per-push)
+            // accounting than the kernel's `branches`; changing it to
+            // kernel semantics broke ~125 selftests (iters.c family
+            // etc.). `dfs_paths` is the parallel kernel-faithful
+            // counter dedicated to this gate. See State::dfs_paths.
+            if prev.dfs_paths == 0 {
+                continue;
+            }
+            if prev.may_goto_depth != state.may_goto_depth {
+                continue;
+            }
+            if iter_active_depths_differ(prev, state) {
+                continue;
+            }
+            if state_exact_equal(prev, state) {
+                env.fail(crate::analysis::machine::error::VerificationError::InfiniteLoopDetected {
+                    pc,
+                });
+                return true;
+            }
+        }
+    }
+
+    // Under BPF_F_TEST_STATE_FREQ, bypass all subsumption-hit pruning
+    // (may_goto RANGE_WITHIN, loop pruning, standard pruning). The
+    // inf-loop trap above already ran. Kernel verifier.c L18998 sets
+    // `force_new_state=true` under this flag — every visit gets cached
+    // as a fresh entry and explored to completion. This is the
+    // load-bearing mechanism for iters.c::loop_state_deps1/2: their
+    // unsafe paths are reached only when each iteration's r6/r7 state
+    // is tracked distinctly rather than collapsed by subsumption.
+    if env.ctx.has_flag(crate::common::constants::F_TEST_STATE_FREQ) {
+        return false;
+    }
 
     // may_goto-specific RANGE_WITHIN prune class.
     if pc < prog.instrs.len()
@@ -630,16 +522,18 @@ pub fn should_prune(
         && let Some(prev_states) = env.explored_states.get(&pc)
     {
         let is_may_goto = matches!(prog.instrs[pc], Instr::MayGoto { .. });
-        if is_may_goto && may_goto_range_within_prune(state, prev_states, &live_regs, config) {
+        if is_may_goto
+            && may_goto_range_within_prune(state, prev_states, &live_regs, &frame_live_slots, config)
+        {
             env.pruning_stats.may_goto_range_within_hits += 1;
             return true;
         }
     }
 
     let pruned = if in_loop {
-        handle_loop_pruning(env, state, pc, prog, &live_regs, config)
+        handle_loop_pruning(env, state, pc, prog, &live_regs, &frame_live_slots, config)
     } else {
-        handle_standard_pruning(env, state, pc, &live_regs, config)
+        handle_standard_pruning(env, state, pc, &live_regs, &frame_live_slots, config)
     };
     pruned
 }
@@ -660,27 +554,31 @@ fn record_pruning_misses(env: &mut VerifierEnv, pc: usize, miss_idxs: &[usize]) 
         .map(|a| a.force_checkpoint)
         .unwrap_or(false);
 
+    // Read `branches` per cached state for the kernel-faithful `n`
+    // formula (verifier.c v6.18-rc4 L20444):
+    //   n = is_force_checkpoint && sl->state.branches > 0 ? 64 : 3
+    // `branches > 0` means the cached state's downstream DFS is still in
+    // progress (it's part of an active SCC iteration); the kernel
+    // protects these from premature eviction at force-checkpoint pcs.
+    let branches_by_idx: std::collections::HashMap<usize, u32> = if let Some(states) =
+        env.explored_states.get(&pc)
+    {
+        miss_idxs
+            .iter()
+            .filter_map(|&i| states.get(i).map(|s| (i, s.branches)))
+            .collect()
+    } else {
+        std::collections::HashMap::new()
+    };
+
     let mut to_evict: Vec<usize> = Vec::new();
     if let Some(metrics) = env.state_metrics.get_mut(&pc) {
         for &i in miss_idxs {
             if let Some(m) = metrics.get_mut(i) {
                 m.miss_cnt = m.miss_cnt.saturating_add(1);
-                // Kernel formula (verifier.c L19222):
-                //   n = is_force_checkpoint && sl->state.branches > 0 ? 64 : 3
-                // We don't track `branches`. Approximate via `hit_cnt`:
-                // cached states that have been hit at least once are
-                // "proven useful"; keep them longer (n=64 at force-
-                // checkpoint pcs). Unhit states use the smaller n,
-                // matching the kernel's `branches == 0` fast-evict.
-                // Non-force-checkpoint pcs use a slightly raised n=8
-                // (vs kernel's n=3) because we always increment miss_cnt
-                // — kernel gates that on the `add_new_state` heuristic
-                // (verifier.c L19141-L19144) which we don't model.
-                let n: u32 = if force {
-                    if m.hit_cnt > 0 { 64 } else { 3 }
-                } else {
-                    8
-                };
+                // Kernel L20444 exactly: n = force_checkpoint && branches>0 ? 64 : 3
+                let branches = branches_by_idx.get(&i).copied().unwrap_or(0);
+                let n: u32 = if force && branches > 0 { 64 } else { 3 };
                 if m.miss_cnt > m.hit_cnt.saturating_mul(n).saturating_add(n) {
                     to_evict.push(i);
                 }
@@ -692,6 +590,15 @@ fn record_pruning_misses(env: &mut VerifierEnv, pc: usize, miss_idxs: &[usize]) 
     }
     // Sort descending so removals don't shift later indices.
     to_evict.sort_unstable_by(|a, b| b.cmp(a));
+    // Collect cache_ids of evicted entries for cache_loc_by_id cleanup.
+    let evicted_ids: Vec<u32> = if let Some(states) = env.explored_states.get(&pc) {
+        to_evict
+            .iter()
+            .filter_map(|&i| states.get(i).and_then(|s| s.cache_id))
+            .collect()
+    } else {
+        Vec::new()
+    };
     if let Some(states) = env.explored_states.get_mut(&pc) {
         for &i in &to_evict {
             if i < states.len() {
@@ -703,6 +610,18 @@ fn record_pruning_misses(env: &mut VerifierEnv, pc: usize, miss_idxs: &[usize]) 
         for &i in &to_evict {
             if i < metrics.len() {
                 metrics.remove(i);
+            }
+        }
+    }
+    // cache_loc_by_id cleanup: drop evicted ids, re-index survivors. Same
+    // invariant as the FIFO drain in `merging::record_state`.
+    for id in evicted_ids {
+        env.cache_loc_by_id.remove(&id);
+    }
+    if let Some(states) = env.explored_states.get(&pc) {
+        for (new_idx, s) in states.iter().enumerate() {
+            if let Some(id) = s.cache_id {
+                env.cache_loc_by_id.insert(id, (pc, new_idx));
             }
         }
     }
@@ -731,6 +650,7 @@ fn may_goto_range_within_prune(
     cur: &State,
     prev_states: &[State],
     live_regs: &HashSet<Reg>,
+    frame_live_slots: &[Option<HashSet<i16>>],
     config: &VerifierConfig,
 ) -> bool {
     // Build a precision-stripped clone of `cur` once. State carries
@@ -758,7 +678,11 @@ fn may_goto_range_within_prune(
         // they would inflate the "stack" / "tnum" buckets with the
         // precision-stripped clone's behaviour, which isn't the same
         // as the standard subsumption pipeline we're trying to measure.
-        if state_subsumed_by(&relaxed, prev, live_regs, config).is_ok() {
+        // may_goto RANGE_WITHIN prune class explicitly relaxes precision;
+        // pass force_exact=false so domain_subsumed_by keeps its NOT_EXACT
+        // semantics for non-precise regs (the relaxed clone has cleared
+        // precise_regs anyway).
+        if state_subsumed_by(&relaxed, prev, live_regs, frame_live_slots, config, false).is_ok() {
             return true;
         }
     }

@@ -89,6 +89,16 @@ pub fn record_state(
     let cache_id = env.next_cache_id;
     env.next_cache_id = env.next_cache_id.wrapping_add(1);
     state.cache_id = Some(cache_id);
+    // SCC bookkeeping: on cache, branches starts at 0 (no children yet
+    // pushed). dfs_depth was already set when the state was created (at
+    // worklist push time, parent.dfs_depth + 1). loop_entry inherited
+    // from the worklist state — typically None unless a back-edge
+    // detected on the way here.
+    state.branches = 0;
+    // Kernel-faithful "open paths" counter, parallel to `branches`. Init
+    // 1 = the single in-flight cur path that just hit this checkpoint.
+    // See State::dfs_paths doc comment for full semantics.
+    state.dfs_paths = 1;
 
     // Kernel-aligned `mark_all_scalars_imprecise` (verifier.c v6.15
     // L4543): cached snapshots are checkpointed in maximally-permissive
@@ -211,6 +221,24 @@ pub fn record_state(
             row.push(format!("{:?}", r));
         }
         flush(cur_pc, &row);
+    }
+
+    // Kernel `maybe_enter_scc` (verifier.c v6.15 L20592 — called from
+    // is_state_visited right after `kzalloc` for a new state list
+    // entry). Ensures a `SccVisit` exists for the new cached state's
+    // callchain and records this state as the visit's entry if it's
+    // the first to reach it on the current path.
+    //
+    // Read the cached state back to compute its callchain (we just
+    // pushed it; the snapshot it points to is the cached form, post
+    // mark_all_scalars_imprecise).
+    if let Some(cached) = env
+        .explored_states
+        .get(&pc)
+        .and_then(|v| v.iter().find(|s| s.cache_id == Some(cache_id)))
+        .cloned()
+    {
+        env.maybe_enter_scc(&cached, cache_id);
     }
 
     cache_id

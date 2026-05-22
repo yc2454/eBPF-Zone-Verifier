@@ -158,6 +158,38 @@ fn visit_insn(pc: usize, prog: &Program, env: &mut VerifierEnv) -> Result<Vec<us
                     env.insn_aux_data[pc].force_checkpoint = true;
                 }
             }
+            // iter_next kfunc call sites are force-checkpoint sites
+            // (kernel `mark_force_checkpoint` at verifier.c L17523, gated
+            // on `is_iter_next_kfunc`). The kernel needs the checkpoint
+            // to guarantee a `parent_state` at the same insn_idx (see
+            // `process_iter_next_call` L8903) and to converge bpf_for /
+            // bpf_iter_num loops quickly. Without CFG-time marking,
+            // the flag was set lazily by the kfunc handler — which is
+            // AFTER the cache decision in `run_worklist` reads it. Under
+            // `ZOVIA_KERNEL_ENGINE=1`, that left iter_next sites
+            // uncached on first visit and the loop never converged
+            // (state explosion → verifier timeout on iters_num /
+            // verifier_bits_iter / iters families).
+            if let CallKind::Kfunc { btf_id, .. } = kind
+                && let Some(name) = env.ctx.btf.kfunc_name(*btf_id)
+                && let Some(proto) =
+                    crate::analysis::transfer::call::signatures::get_kfunc_proto(name)
+                && matches!(
+                    proto.ret,
+                    crate::analysis::transfer::call::signatures::RetKind::IterNextElem { .. }
+                        | crate::analysis::transfer::call::signatures::RetKind::IterNextBtfId { .. }
+                )
+                && pc < env.insn_aux_data.len()
+            {
+                // Mark BOTH prune_point and force_checkpoint, mirroring
+                // verifier.c L17511 (mark_prune_point) + L17523
+                // (mark_force_checkpoint). Need prune_point so the
+                // kernel-engine `outer_gate = at_prune_point` admits the
+                // cache decision; need force_checkpoint so
+                // `add_new_state` fires unconditionally there.
+                env.insn_aux_data[pc].prune_point = true;
+                env.insn_aux_data[pc].force_checkpoint = true;
+            }
             if pc + 1 < n {
                 succs.push(pc + 1);
             }

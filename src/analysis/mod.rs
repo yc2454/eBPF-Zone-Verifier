@@ -7,7 +7,7 @@ pub mod transfer;
 
 use crate::analysis::machine::frame_stack::FrameLevel;
 use crate::analysis::machine::reg::Reg;
-use crate::ast::Program;
+use crate::ast::{Instr, Program};
 use crate::common::config::{DomainMode, VerifierConfig};
 use crate::domains::dbm::Dbm;
 use crate::domains::numeric::NumericDomain;
@@ -17,7 +17,7 @@ use crate::pcc::{
 use log::{debug, error, info};
 use std::collections::{HashMap, VecDeque};
 
-use self::flow::{cfg, liveness, merging, pruning, subprog};
+use self::flow::{cfg, liveness, merging, pruning, scc, subprog};
 use self::machine::context::ExecContext;
 use self::machine::env::VerifierEnv;
 use self::machine::reg_types::RegType;
@@ -153,6 +153,14 @@ pub fn analyze_program_full(
 
     // Compute liveness information for all registers.
     liveness::compute_liveness(prog, &mut env);
+
+    // Compute SCCs over the CFG. Annotates `insn_aux_data[pc].scc_id`
+    // (1+ for multi-vertex SCCs / singletons-with-self-edge, 0
+    // otherwise — kernel convention from `compute_scc`,
+    // verifier.c v6.15 L25809). Read by `maybe_enter_scc` /
+    // `maybe_exit_scc` / `add_scc_backedge` / `incomplete_read_marks`
+    // to drive SCC-scoped backedge precision propagation.
+    scc::compute_scc(prog, &mut env);
 
     // 2. Initialize Entry State based on domain mode
     let pcc_mode = config.certificate_output.is_some()
@@ -316,6 +324,9 @@ pub fn analyze_program_full(
     // workstream.
     if std::env::var("ZOVIA_DUMP_PRUNING").ok().as_deref() == Some("1") {
         dump_subsumption_miss_histogram(&env);
+    }
+    if std::env::var("ZOVIA_DUMP_VISITS").ok().as_deref() == Some("1") {
+        dump_pc_visit_count(&env);
     }
 
     // --- BCF bundle emit ---
@@ -558,6 +569,11 @@ fn run_worklist(
     let mut diag_arrivals: HashMap<usize, usize> = HashMap::new();
 
     while let Some(mut state) = worklist.pop_back() {
+        // Per-path counter bump for the kernel-engine sparse-cache
+        // heuristic (`ZOVIA_KERNEL_ENGINE=1`). Counts THIS path's
+        // progress (not env-wide), so worklist interleaving doesn't
+        // pollute the deltas with other paths' work.
+        state.path_insn_count = state.path_insn_count.saturating_add(1);
         // Per-instruction scope for the BCF `detect_conflict_eq`
         // path-unreachable flag: only the instruction that set it (its
         // own transfer) consumes it. Reset here so a set from a
@@ -620,6 +636,72 @@ fn run_worklist(
             }
         }
 
+        // Audit probe: dump compact state at the requested PC(s). Gated on
+        // `ZOVIA_DUMP_STATES_AT_PC=N[,M,...]`. Used to inspect why many
+        // "equivalent" states accumulate at a single pc (path-explosion
+        // diagnostic). Comma-separated list, e.g.
+        // `ZOVIA_DUMP_STATES_AT_PC=1587,1856`. Each line includes R0..R9 +
+        // their precision marks + a few key stack slot scalars so we can
+        // compare what changes across visits to a loop head.
+        if let Ok(s) = std::env::var("ZOVIA_DUMP_STATES_AT_PC") {
+            let targets: Vec<usize> = s
+                .split(',')
+                .filter_map(|t| t.trim().parse::<usize>().ok())
+                .collect();
+            if targets.iter().any(|&t| t == state.pc) {
+                use crate::analysis::machine::reg_types::RegType;
+                let mut row = format!("pc={} ", state.pc);
+                for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5,
+                          Reg::R6, Reg::R7, Reg::R8, Reg::R9] {
+                    let ty = state.types.get(r);
+                    let (ilo, ihi) = state.domain.get_interval(r);
+                    let sid = state.scalar_ids.get(&r).copied().unwrap_or(0);
+                    let p = if state.precise_regs.contains(&r) { "P" } else { "_" };
+                    // Compact-print: SV[lo..hi]sid=N {P|_}  for scalars,
+                    // or ptr-type tag for pointers.
+                    let tag = match ty {
+                        RegType::ScalarValue => format!("SV[{}..{}]", ilo, ihi),
+                        RegType::PtrToMapValue { offset, map_idx, .. } => {
+                            format!("MV(m{},off={:?})", map_idx, offset)
+                        }
+                        RegType::PtrToCtx => "Ctx".into(),
+                        RegType::PtrToStack { .. } => format!("Stk[{}..{}]", ilo, ihi),
+                        RegType::PtrToPacket => "Pkt".into(),
+                        RegType::PtrToPacketEnd => "PktEnd".into(),
+                        RegType::NotInit => "NI".into(),
+                        _ => format!("{:?}", ty),
+                    };
+                    let r_index = (r as u8).saturating_sub(1);
+                    row.push_str(&format!(
+                        "r{}={}{}sid={} ",
+                        r_index, tag, p, sid,
+                    ));
+                }
+                // Append the top frame's spilled scalar slots (off, bounds,
+                // precise) up to ~10 most-recent for sanity. We're interested
+                // in fp-336 (proto-byte spill) and fp-400 in particular.
+                let frame = state.frames.current();
+                let mut slot_keys: Vec<i16> = frame.stack.slot_offsets().into_iter().collect();
+                slot_keys.sort();
+                let mut sn = 0;
+                for off in slot_keys.iter().rev() {
+                    let Some(slot) = frame.stack.slots.get(off) else { continue; };
+                    if !matches!(slot.reg_type, RegType::ScalarValue) {
+                        continue;
+                    }
+                    row.push_str(&format!(
+                        "fp{}=SV[{}..{}]sid={}{} ",
+                        off, slot.bounds.min, slot.bounds.max,
+                        slot.scalar_id.unwrap_or(0),
+                        if slot.precise { "P" } else { "_" },
+                    ));
+                    sn += 1;
+                    if sn >= 8 { break; }
+                }
+                eprintln!("[STATE@PC] {}", row);
+            }
+        }
+
         // A.b PRUNING CHECK
         if pruning::should_prune(env, &mut state, config, prog) {
             if diag_hit {
@@ -627,21 +709,105 @@ fn run_worklist(
             }
             info!("Pruned state at pc {}", state.pc);
             prune_count += 1;
+            // SCC: this DFS path is done (subsumed by a cached state).
+            // Decrement parent.branches up the chain; if a parent's
+            // branches hits 0 propagate its loop_entry to its parent.
+            env.complete_dfs_branch(state.parent_cache_id);
             continue;
         }
         if diag_hit {
             eprintln!("[DIAG PRUNE] pc={} pruned=false (recorded)", state.pc);
         }
 
-        // A.c RECORD STATE
-        // Cache the cur state and link the continuing state's parent
-        // chain to the just-cached entry. Subsequent path forks
-        // inherit this `parent_cache_id` until the next checkpoint.
-        let cache_id = merging::record_state(env, state.clone(), config.max_states_per_pc);
-        state.parent_cache_id = Some(cache_id);
+        // A.c RECORD STATE — kernel-faithful `is_state_visited` shape.
+        // Gated by `ZOVIA_KERNEL_ENGINE=1`. Two kernel-shape gates layered:
+        //   (1) Outer: cache only at PRUNE POINTS (kernel `do_check` only
+        //       calls `is_state_visited` when is_prune_point fires).
+        //       zovia's dense default mode caches at EVERY popped state;
+        //       that produces a parent_cache_id chain with consecutive-pc
+        //       deltas the kernel never has. Gate fixes that.
+        //   (2) Inner: `add_new_state` heuristic (verifier.c v6.15
+        //       L18998-L19013): force_new_state || (jmps_delta>=2 &&
+        //       insns_delta>=8). Counters are PER-PATH on State.
+        let kernel_engine =
+            std::env::var("ZOVIA_KERNEL_ENGINE").ok().as_deref() == Some("1");
+        let at_prune_point = pruning::widening::is_prune_point(env, state.pc);
+        let insn_aux_force = env
+            .insn_aux_data
+            .get(state.pc)
+            .map(|a| a.force_checkpoint)
+            .unwrap_or(false);
+        // Kernel L18999-L19013 uses ENV-WIDE counters. But zovia's
+        // worklist interleaves paths, so env-wide deltas are noisy:
+        // they can be inflated (other paths' work) OR understated
+        // (after a cache event, the same path may re-pop with no
+        // env increment between). Neither alone exactly matches the
+        // kernel's linear-DFS env behavior. Solution: OR env-wide
+        // and per-path heuristics — fire if EITHER triggers. This
+        // produces a SUPERSET cache pattern (more entries than
+        // either alone), maximising bundle coverage. The kernel
+        // matches by HASH; extra entries are ignored.
+        let env_jmps_delta = env
+            .jmps_processed
+            .saturating_sub(env.prev_jmps_processed);
+        let env_insns_delta = env
+            .insn_processed
+            .saturating_sub(env.prev_insn_processed);
+        let path_jmps_delta = state
+            .path_jmp_count
+            .saturating_sub(state.prev_jmp_at_cache);
+        let path_insns_delta = state
+            .path_insn_count
+            .saturating_sub(state.prev_insn_at_cache);
+        // Kernel L18998-L19000: long-history safety valve. Fire when
+        // either env-wide or per-path window > 40 insns since last
+        // cache event.
+        let long_history = env_insns_delta > 40 || path_insns_delta > 40;
+        let force_new_state = insn_aux_force || long_history;
+        let env_heuristic =
+            env_jmps_delta >= 2 && env_insns_delta >= 8;
+        let path_heuristic =
+            path_jmps_delta >= 2 && path_insns_delta >= 8;
+        // ZOVIA_KERNEL_ENGINE_AND=1 selects the more-restrictive AND
+        // mode: cache only when BOTH env-wide AND per-path heuristics
+        // fire. Default is OR (either fires) — see commit 61d60ac. AND
+        // mode produces MORE bundle entries (sparser caching → more
+        // exploration paths reach each rejection site). The two modes
+        // produce DIFFERENT entry sets that overlap; running both
+        // passes with ZOVIA_BUNDLE_KEEP=1 (main.rs) merges by hash via
+        // the existing write_bundle dedup. 61d60ac measured 20 unique
+        // entries across AND+OR merge for calico_tc_main, covering all
+        // 9 known kernel discharge hashes.
+        let kernel_engine_and =
+            std::env::var("ZOVIA_KERNEL_ENGINE_AND").ok().as_deref() == Some("1");
+        let combined_heuristic = if kernel_engine_and {
+            env_heuristic && path_heuristic
+        } else {
+            env_heuristic || path_heuristic
+        };
+        let outer_gate = !kernel_engine || at_prune_point;
+        let add_new_state = !kernel_engine
+            || force_new_state
+            || combined_heuristic;
+        if outer_gate && add_new_state {
+            let cache_id =
+                merging::record_state(env, state.clone(), config.max_states_per_pc);
+            state.parent_cache_id = Some(cache_id);
+            env.prev_jmps_processed = env.jmps_processed;
+            env.prev_insn_processed = env.insn_processed;
+            state.prev_jmp_at_cache = state.path_jmp_count;
+            state.prev_insn_at_cache = state.path_insn_count;
+        }
 
         // B. Global Complexity Limit (only count non-pruned states)
         env.insn_processed += 1;
+        // Per-PC visit counter (audit hook, ZOVIA_DUMP_VISITS=1). Bumped
+        // ONLY on non-pruned expansions so the count reflects state
+        // expansions per pc, comparable to the kernel verifier's
+        // per-insn visit count in the log_level-2 trace.
+        if std::env::var("ZOVIA_DUMP_VISITS").ok().as_deref() == Some("1") {
+            *env.pc_visit_count.entry(state.pc).or_insert(0) += 1;
+        }
         if env.insn_processed > config.max_insn {
             // We use error! with target="analysis" to auto-trigger the crash dump
             error!(target: "analysis", "[Verifier] Hit complexity limit ({} instructions). Aborting.", config.max_insn);
@@ -718,7 +884,24 @@ fn run_worklist(
 
         // F. Transfer Function
         let diag_cur_pc = state.pc;
+        // SCC: save fields needed after `state` is moved into transfer.
+        let cur_dfs_depth = state.dfs_depth;
+        let cur_parent_cache_id = state.parent_cache_id;
         state.domain.set_current_pc(state.pc);
+        // Kernel `env->jmps_processed++` (verifier.c L19553): bump on
+        // JMP-class insn for the add_new_state sparse-cache heuristic.
+        // Bumped on BOTH env-wide and per-path counters; the heuristic
+        // uses the per-path one. The env-wide field stays for any
+        // downstream consumer that wants the cumulative figure.
+        let is_jmp_class = matches!(
+            instr,
+            Instr::If { .. } | Instr::Jmp { .. } | Instr::MayGoto { .. }
+                | Instr::Call { .. } | Instr::CallRel { .. } | Instr::Exit
+        );
+        if is_jmp_class {
+            env.jmps_processed += 1;
+            state.path_jmp_count = state.path_jmp_count.saturating_add(1);
+        }
         let mut successors = transfer::transfer(env, state, instr);
         if diag_hit {
             let succ_dump: Vec<String> = successors
@@ -790,8 +973,15 @@ fn run_worklist(
         // Prioritize exit-path successors over loop-back successors.
         let mut loop_back = Vec::new();
         let mut other = Vec::new();
+        let succ_count = successors.len();
         for mut succ in successors.into_iter() {
             succ.history_idx = current_step_idx;
+            // SCC: child inherits its DFS depth from parent + 1, and its
+            // initial branches=1 (this one in-flight path through succ).
+            // The parent's branches gets bumped once per pushed successor
+            // below.
+            succ.dfs_depth = cur_dfs_depth.saturating_add(1);
+            succ.branches = 1;
             let is_loop_back = current_step_idx
                 .map(|idx| env.history.is_back_edge(idx, succ.pc, succ.num_frames()))
                 .unwrap_or(false);
@@ -800,6 +990,33 @@ fn run_worklist(
             } else {
                 other.push(succ);
             }
+        }
+        // SCC: bump parent.branches once per pushed successor (kernel
+        // `push_stack` L2045). state.parent_cache_id is the just-recorded
+        // cache_id at this pc (set at A.c above), so each successor is a
+        // new in-flight DFS path through it.
+        //
+        // ALSO bump parent.dfs_paths kernel-faithfully: only by
+        // (succ_count - 1), because the kernel's push_stack is invoked
+        // once per ALT — i.e. once per fork-extra, NOT per total
+        // successor. The cur continuation is already counted by
+        // dfs_paths=1 at cache creation. Linear chains (succ_count==1)
+        // get no bump. This is the load-bearing signal for the inf-loop
+        // trap gate (`prev.dfs_paths == 0` skip).
+        if succ_count > 0
+            && let Some(pcid) = cur_parent_cache_id
+            && let Some(&(ppc, pidx)) = env.cache_loc_by_id.get(&pcid)
+            && let Some(p) = env.explored_states.get_mut(&ppc).and_then(|v| v.get_mut(pidx))
+        {
+            p.branches = p.branches.saturating_add(succ_count as u32);
+            if succ_count > 1 {
+                p.dfs_paths = p.dfs_paths.saturating_add((succ_count - 1) as u32);
+            }
+        }
+        if succ_count == 0 {
+            // No successors (e.g. Exit): this DFS path terminated.
+            // Decrement parent chain analogously to the prune-hit path.
+            env.complete_dfs_branch(cur_parent_cache_id);
         }
         for succ in loop_back {
             worklist.push_back(succ);
@@ -818,6 +1035,22 @@ fn pct(n: u64, d: u64) -> f64 {
         0.0
     } else {
         (n as f64 / d as f64) * 100.0
+    }
+}
+
+/// Audit dump: per-PC non-pruned state-expansion count.
+/// Triggered by `ZOVIA_DUMP_VISITS=1`. Used to localize path-explosion
+/// hotspots by diffing against the kernel verifier's per-PC visit
+/// count from the log_level-2 trace (`<pc>: (...) <insn>` lines).
+fn dump_pc_visit_count(env: &VerifierEnv) {
+    let mut pairs: Vec<(usize, u64)> =
+        env.pc_visit_count.iter().map(|(&pc, &n)| (pc, n)).collect();
+    pairs.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
+    eprintln!("\n=== ZOVIA per-PC visit count (non-pruned expansions) ===");
+    eprintln!("  total expansions: {}    distinct pcs: {}", env.insn_processed, pairs.len());
+    eprintln!("  top 100 pcs by visit count:");
+    for (pc, n) in pairs.iter().take(100) {
+        eprintln!("    pc={:<5} visits={}", pc, n);
     }
 }
 
@@ -909,6 +1142,10 @@ fn dump_subsumption_miss_histogram(env: &VerifierEnv) {
     eprintln!(
         "    may_goto RANGE_WITHIN hits: {}",
         ps.may_goto_range_within_hits
+    );
+    eprintln!(
+        "    children_unsafe skips:    {:>10}    ← BCF-discharge cache invalidations",
+        ps.children_unsafe_skips
     );
     eprintln!(
         "  cache hits: {total_hits}    cache misses: {total_misses_lifetime} (per-reason histogram below sums to {total_misses})    miss-PCs: {n_pcs}"

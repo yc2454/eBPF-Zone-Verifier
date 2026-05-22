@@ -16,6 +16,130 @@ fn callee_saved_regs() -> HashSet<Reg> {
     [Reg::R6, Reg::R7, Reg::R8, Reg::R9].into_iter().collect()
 }
 
+/// Mirror of kernel `states_maybe_looping` (verifier.c v6.15 L18884).
+/// Topmost frame registers R0..R10 must be bytewise identical and the
+/// call-stack depth must match. The kernel uses `memcmp` ignoring the
+/// `parent` pointer; zovia compares the abstract fields that together
+/// constitute the per-reg state at this site.
+pub(super) fn states_maybe_looping(prev: &State, cur: &State) -> bool {
+    if prev.frames.depth() != cur.frames.depth() {
+        return false;
+    }
+    // Compare the "hard" semantic state: type, numeric value bounds, and
+    // scalar-id linkage. tnum/precise_regs are intentionally EXCLUDED:
+    // the kernel sets precision via mark_chain_precision (backward walk
+    // that updates BOTH cached and current state), and refines tnum via
+    // reg_set_min_max only on scalar registers — zovia eager-propagates
+    // both forward, which makes cached vs current state diverge on
+    // bookkeeping that the kernel keeps in lock-step. The faithful
+    // signal for "this state is identical at this pc" is the abstract
+    // value + type, which is what actually determines verifier progress.
+    for r in Reg::ALL {
+        if prev.types.get(r) != cur.types.get(r) {
+            return false;
+        }
+        // scalar_ids intentionally NOT compared here. Kernel's
+        // `states_maybe_looping` does `memcmp(prev_reg, cur_reg,
+        // offsetof(frameno))` which compares the byte representation
+        // of bpf_reg_state up to frameno; the `id` field gets compared
+        // too in principle, but the kernel canonicalizes ids via
+        // `check_ids` before this point so that semantically-equivalent
+        // states have equal ids. zovia mints fresh `scalar_id` on every
+        // memory load (e.g. `r3 = *(u8*)(r10-N)` each iteration),
+        // producing per-iteration distinct ids for the same abstract
+        // value. That's a zovia-internal bookkeeping artifact, not a
+        // semantic difference. Comparing ids here would spuriously
+        // suppress the infinite-loop trap (mov64sx_s32_varoff_1 family),
+        // letting unsound programs through. Type + abstract value +
+        // tnum capture the actual reg state for the trap.
+        if prev.domain.get_interval(r) != cur.domain.get_interval(r) {
+            return false;
+        }
+        if prev.domain.get_u32_bounds(r) != cur.domain.get_u32_bounds(r) {
+            return false;
+        }
+        if prev.tnums.get(&r) != cur.tnums.get(&r) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Mirror of kernel `iter_active_depths_differ` (verifier.c v6.15 L18965).
+/// Walks all frames' stack slots; for each slot whose `prev` carries an
+/// ACTIVE iterator, the matching slot in `cur` must have the same
+/// `iter.depth`. A differing depth means the loop IS making progress and
+/// the infinite-loop trap should NOT fire.
+pub(super) fn iter_active_depths_differ(prev: &State, cur: &State) -> bool {
+    use crate::analysis::machine::frame_stack::FrameLevel;
+    use crate::analysis::machine::stack_state::IterState;
+
+    let depth = prev.frames.depth().min(cur.frames.depth());
+    for fi in 0..depth {
+        let level = FrameLevel::from_index(fi);
+        let prev_frame = prev.frames.get(level);
+        let cur_frame = cur.frames.get(level);
+        for off in prev_frame.stack.slot_offsets() {
+            let Some(prev_slot) = prev_frame.stack.slots.get(&off) else { continue; };
+            let Some(prev_it) = prev_slot.iterator else { continue; };
+            if prev_it.state != IterState::Active {
+                continue;
+            }
+            // The matching slot in cur. If absent or no iter ⇒ treat as
+            // different depth (the loop's iter context changed).
+            let Some(cur_slot) = cur_frame.stack.slots.get(&off) else { return true; };
+            let Some(cur_it) = cur_slot.iterator else { return true; };
+            if cur_it.depth != prev_it.depth {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Mirror of kernel `states_equal(old, cur, EXACT)` (verifier.c v6.15
+/// L18838-L18883). Strict equality used by the infinite-loop trap; ranges
+/// must match exactly (no widening allowed). Compared field-by-field
+/// against `prev`. Returns true iff every semantic field zovia tracks is
+/// identical between `prev` and `cur`. Path-bookkeeping fields
+/// (`history_idx`, `parent_cache_id`, `cache_id`, `children_unsafe`) and
+/// the BCF symbolic state are intentionally excluded — they don't bear on
+/// the kernel's notion of "same verifier state".
+pub(super) fn state_exact_equal(prev: &State, cur: &State) -> bool {
+    if !states_maybe_looping(prev, cur) {
+        return false;
+    }
+    // Per-frame stack equality, plus caller register/domain/tnum snapshots
+    // on non-top frames. `CallFrame: PartialEq` covers this.
+    use crate::analysis::machine::frame_stack::FrameLevel;
+    if prev.frames.depth() != cur.frames.depth() {
+        return false;
+    }
+    for fi in 0..prev.frames.depth() {
+        let level = FrameLevel::from_index(fi);
+        if prev.frames.get(level) != cur.frames.get(level) {
+            return false;
+        }
+    }
+    // Lock / ref / preempt / rcu / irq state — every per-path semantic field.
+    if prev.active_refs != cur.active_refs
+        || prev.active_lock != cur.active_lock
+        || prev.rcu_read_depth != cur.rcu_read_depth
+        || prev.implicit_rcu_at_entry != cur.implicit_rcu_at_entry
+        || prev.active_preempt_locks != cur.active_preempt_locks
+        || prev.acquired_irq_ids != cur.acquired_irq_ids
+        || prev.acquired_res_locks != cur.acquired_res_locks
+        || prev.goto_budget != cur.goto_budget
+        || prev.var_off_contributor != cur.var_off_contributor
+        || prev.ptr_const_off != cur.ptr_const_off
+        || prev.btf_field_refs != cur.btf_field_refs
+        || prev.kernel_tnum_imprecise != cur.kernel_tnum_imprecise
+    {
+        return false;
+    }
+    true
+}
+
 /// Check if `cur` is subsumed by `old` (old covers all behaviors of cur).
 /// Returns `Ok(())` on success or `Err(reason)` identifying the *first*
 /// sub-check that rejected. The reason is what the
@@ -24,20 +148,42 @@ pub(super) fn state_subsumed_by(
     cur: &State,
     old: &State,
     live_regs: &HashSet<Reg>,
+    frame_live_slots: &[Option<HashSet<i16>>],
     config: &VerifierConfig,
+    force_exact: bool,
 ) -> Result<(), SubsumptionMissReason> {
     // Order matters for instrumentation: the *first* rejecting check
     // is what we record, so cheaper / more-fundamental checks come
     // first to keep the histogram readable.
     if !types_subsumed_by(&cur.types, &old.types, live_regs) {
+        // Measurement hatch (mirror ZOVIA_DUMP_DOMAIN_MISS): on a Types
+        // miss, re-scan to report the first offending live reg + its
+        // (cur, old) RegType at this pc. Runs ONLY when the env var is
+        // set AND we already know the check failed — zero hot-path /
+        // behavioral effect otherwise. Used to localize the
+        // clean_verifier_state / liveness-fidelity gap (skb_drop = 100%
+        // types misses).
+        if std::env::var("ZOVIA_DUMP_TYPES_MISS").ok().as_deref() == Some("1") {
+            for &r in live_regs {
+                let ct = cur.types.get(r);
+                let ot = old.types.get(r);
+                if !type_subsumed_by(&ct, &ot) {
+                    eprintln!(
+                        "[types_miss] pc={} reg={:?} cur={:?} old={:?}",
+                        cur.pc, r, ct, ot
+                    );
+                    break;
+                }
+            }
+        }
         return Err(SubsumptionMissReason::Types);
     }
     if !config.skip_dbm_check
-        && !domain_subsumed_by(&cur.domain, &old.domain, live_regs, &old.precise_regs)
+        && !domain_subsumed_by(&cur.domain, &old.domain, live_regs, &old.precise_regs, force_exact)
     {
         return Err(SubsumptionMissReason::Domain);
     }
-    if !stack_subsumed_by(cur, old) {
+    if !stack_subsumed_by(cur, old, frame_live_slots) {
         return Err(SubsumptionMissReason::Stack);
     }
     if !tnum_subsumed_by(cur, old, live_regs) {
@@ -51,6 +197,13 @@ pub(super) fn state_subsumed_by(
     // cur-state's continuation would refine them independently — pruning
     // it against `old` hides paths where the unlinked register stays
     // unbounded. Mirrors upstream `check_ids` in `regsafe`.
+    // Scalar ids: kernel-faithful single bijective idmap, precision-
+    // gated (regsafe SCALAR). Pointer/packet linkage: the existing
+    // pairwise relation (separate, unchanged). Both attribute to the
+    // ScalarIdLinks miss bucket.
+    if !scalar_ids_subsumed_by(cur, old, live_regs) {
+        return Err(SubsumptionMissReason::ScalarIdLinks);
+    }
     if !scalar_id_links_subsumed_by(cur, old, live_regs) {
         return Err(SubsumptionMissReason::ScalarIdLinks);
     }
@@ -104,6 +257,7 @@ pub(super) fn state_subsumed_by(
                 &old_frame.caller_domain,
                 &saved,
                 &HashSet::new(),
+                false,
             )
         {
             return Err(SubsumptionMissReason::CallerFrame);
@@ -200,6 +354,87 @@ fn active_lock_subsumed_by(cur: &State, old: &State, live_regs: &HashSet<Reg>) -
     true
 }
 
+/// Kernel `check_ids` (verifier.c:19383): a per-comparison consistent
+/// bijection `old_id ↔ cur_id`. Both zero ⇒ ok; exactly one zero ⇒
+/// mismatch; else old_id must map to exactly one cur_id and a cur_id
+/// may be claimed by only one old_id. `map` holds the recorded pairs
+/// (zovia live-reg count is tiny, so the linear scan is trivial vs the
+/// kernel's fixed BPF_ID_MAP_SIZE array).
+fn check_ids(old_id: u32, cur_id: u32, map: &mut Vec<(u32, u32)>) -> bool {
+    if (old_id != 0) != (cur_id != 0) {
+        return false;
+    }
+    if old_id == 0 {
+        return true;
+    }
+    for &(o, c) in map.iter() {
+        if o == old_id {
+            return c == cur_id;
+        }
+        if c == cur_id {
+            return false;
+        }
+    }
+    map.push((old_id, cur_id));
+    true
+}
+
+/// Kernel `check_scalar_ids` (verifier.c:19416): like `check_ids` but a
+/// zero id gets a fresh unique temp so `0 vs ID` / `ID vs 0` are valid
+/// (but still consistently bijective). `tmp` is a per-comparison
+/// generator seeded high (disjoint from real low-valued zovia ids).
+fn check_scalar_ids(
+    old_id: u32,
+    cur_id: u32,
+    map: &mut Vec<(u32, u32)>,
+    tmp: &mut u32,
+) -> bool {
+    let o = if old_id != 0 {
+        old_id
+    } else {
+        *tmp -= 1;
+        *tmp
+    };
+    let c = if cur_id != 0 {
+        cur_id
+    } else {
+        *tmp -= 1;
+        *tmp
+    };
+    check_ids(o, c, map)
+}
+
+/// Kernel-faithful scalar-id check (regsafe SCALAR, verifier.c:19560):
+/// scalar id is compared ONLY for a *precise* old scalar — an imprecise
+/// old scalar is a wildcard (`if (!rold->precise && exact==NOT_EXACT)
+/// return true`), so its id is never checked. All precise live scalars
+/// are run through ONE bijective `check_scalar_ids` map, exactly as the
+/// kernel threads `env->idmap_scratch` through every `regsafe`. This
+/// replaces the scalar half of the old piecemeal pairwise
+/// `scalar_id_links_subsumed_by` (pointer/packet linkage stays there):
+/// the single bijection preserves linkage (same old id ⇒ same cur id)
+/// AND is more permissive than exact-equality (remappable), while the
+/// precision gate drops the over-conservative imprecise-scalar links
+/// the kernel never checks.
+fn scalar_ids_subsumed_by(cur: &State, old: &State, live_regs: &HashSet<Reg>) -> bool {
+    let mut map: Vec<(u32, u32)> = Vec::new();
+    let mut tmp: u32 = u32::MAX;
+    for &r in live_regs {
+        if old.types.get(r) != RegType::ScalarValue {
+            continue;
+        }
+        if !old.is_reg_precise(r) {
+            continue; // imprecise old scalar = wildcard (kernel)
+        }
+        let oid = old.scalar_id(r).unwrap_or(0);
+        let cid = cur.scalar_id(r).unwrap_or(0);
+        if !check_scalar_ids(oid, cid, &mut map, &mut tmp) {
+            return false;
+        }
+    }
+    true
+}
+
 /// Conservative id-equivalence check used by `state_subsumed_by`.
 ///
 /// Returns true iff every pair `(r1, r2)` of live regs in the same
@@ -219,15 +454,18 @@ fn scalar_id_links_subsumed_by(
         for j in (i + 1)..live.len() {
             let r1 = live[i];
             let r2 = live[j];
+            // Scalar linkage now goes through the kernel-faithful
+            // bijective `scalar_ids_subsumed_by`; this pairwise check
+            // covers ONLY the pointer/packet linkage kinds.
             let old_link = match (linkage_key(old, r1), linkage_key(old, r2)) {
-                (Some(a), Some(b)) if a == b => true,
+                (Some(a), Some(b)) if a == b && a.0 != LinkageKind::Scalar => true,
                 _ => false,
             };
             if !old_link {
                 continue;
             }
             let cur_link = match (linkage_key(cur, r1), linkage_key(cur, r2)) {
-                (Some(a), Some(b)) if a == b => true,
+                (Some(a), Some(b)) if a == b && a.0 != LinkageKind::Scalar => true,
                 _ => false,
             };
             if !cur_link {
@@ -348,25 +586,78 @@ fn domain_subsumed_by(
     old: &NumericDomain,
     live_regs: &HashSet<Reg>,
     precise: &HashSet<Reg>,
+    force_exact: bool,
 ) -> bool {
     // Kernel `regsafe` rule (verifier.c v6.15 L18357 / L18387):
     //   - precise → range_within (old ⊇ cur)
-    //   - !precise → accept (kernel doesn't compare imprecise scalars
-    //     across cur/old at all).
+    //   - !precise → accept under NOT_EXACT (kernel doesn't compare
+    //     imprecise scalars across cur/old at all).
+    //   - !precise under RANGE_WITHIN (force_exact=true, we're inside
+    //     an open SCC): kernel still checks range_within — the SCC's
+    //     soundness depends on each iteration's state being covered,
+    //     even for non-precise regs (verifier.c L18313 — the early-
+    //     return on `!rold->precise && exact == NOT_EXACT` doesn't
+    //     fire when exact != NOT_EXACT). This is the gate that fixes
+    //     iters.c::loop_state_deps2: visit-2 with `r6=1` doesn't get
+    //     subsumed by visit-1's `r6=0` once the inner-iter SCC is
+    //     still open.
     for &r in live_regs {
-        if !precise.contains(&r) {
+        if !precise.contains(&r) && !force_exact {
             continue;
         }
-        let (old_min, old_max) = old.get_interval(r);
-        let (cur_min, cur_max) = cur.get_interval(r);
-        if !(old_min <= cur_min && old_max >= cur_max) {
+        // Kernel `range_within` (verifier.c v6.15 L19360): all 8
+        // dimensions of cur must be contained in old's. Tighter than
+        // checking only signed 64-bit. The 32-bit halves help when
+        // upstream transfers tracked them precisely
+        // (sync_bounds-aware ops like apply_add); for ops that haven't
+        // been wired yet, the 32-bit halves stay at full range and
+        // the corresponding dim is automatically vacuous (old is
+        // full ⇒ contains anything).
+        let (old_smin, old_smax) = old.get_interval(r);
+        let (cur_smin, cur_smax) = cur.get_interval(r);
+        if !(old_smin <= cur_smin && old_smax >= cur_smax) {
             if std::env::var("ZOVIA_DUMP_DOMAIN_MISS").ok().as_deref() == Some("1") {
                 eprintln!(
-                    "[domain_miss] reg={:?} precise old=[{},{}] cur=[{},{}]",
-                    r, old_min, old_max, cur_min, cur_max
+                    "[domain_miss] reg={:?} precise s64 old=[{},{}] cur=[{},{}]",
+                    r, old_smin, old_smax, cur_smin, cur_smax
                 );
             }
             return false;
+        }
+        // The 64-bit unsigned + 32-bit halves are only meaningful in
+        // interval mode (Zone mode's bounds live elsewhere). Skip
+        // the extra checks for Zone mode to preserve its existing
+        // behavior — the 8-bound probe is interval-mode-only.
+        if let (NumericDomain::Interval(old_ivl), NumericDomain::Interval(cur_ivl)) = (old, cur) {
+            let ob = old_ivl.get_bounds(r);
+            let cb = cur_ivl.get_bounds(r);
+            if !(ob.umin <= cb.umin && ob.umax >= cb.umax) {
+                if std::env::var("ZOVIA_DUMP_DOMAIN_MISS").ok().as_deref() == Some("1") {
+                    eprintln!(
+                        "[domain_miss] reg={:?} precise u64 old=[{},{}] cur=[{},{}]",
+                        r, ob.umin, ob.umax, cb.umin, cb.umax
+                    );
+                }
+                return false;
+            }
+            if !(ob.s32_min <= cb.s32_min && ob.s32_max >= cb.s32_max) {
+                if std::env::var("ZOVIA_DUMP_DOMAIN_MISS").ok().as_deref() == Some("1") {
+                    eprintln!(
+                        "[domain_miss] reg={:?} precise s32 old=[{},{}] cur=[{},{}]",
+                        r, ob.s32_min, ob.s32_max, cb.s32_min, cb.s32_max
+                    );
+                }
+                return false;
+            }
+            if !(ob.u32_min <= cb.u32_min && ob.u32_max >= cb.u32_max) {
+                if std::env::var("ZOVIA_DUMP_DOMAIN_MISS").ok().as_deref() == Some("1") {
+                    eprintln!(
+                        "[domain_miss] reg={:?} precise u32 old=[{},{}] cur=[{},{}]",
+                        r, ob.u32_min, ob.u32_max, cb.u32_min, cb.u32_max
+                    );
+                }
+                return false;
+            }
         }
     }
 
@@ -494,7 +785,21 @@ fn stack_slot_type_subsumed_by(new_ty: &RegType, old_ty: &RegType) -> bool {
     }
 }
 
-fn stack_subsumed_by(cur: &State, old: &State) -> bool {
+fn stack_subsumed_by(
+    cur: &State,
+    old: &State,
+    frame_live_slots: &[Option<HashSet<i16>>],
+) -> bool {
+    // clean_verifier_state analog (kernel clean_func_state,
+    // verifier.c:19424): a stack slot the kernel proves dead is set to
+    // STACK_INVALID so `stacksafe` skips it — only LIVE slots are ever
+    // compared. zovia previously compared the *union* of all slot
+    // offsets with NO liveness filter (the divergence-map gap), so a
+    // dead scratch slot differing across states blocked every prune.
+    // The kernel cleans EVERY frame at its own ip; `frame_live_slots[i]`
+    // is frame i's sound static MAY-liveness (per-byte offsets) at that
+    // frame's resume pc, or `None` when unknown (⇒ don't skip — full
+    // compare, the sound direction). Built in `should_prune`.
     // Kernel-aligned idmap (verifier.c v6.15 `check_ids` in regsafe at
     // STACK_ITER L18583): iter ids are minted fresh by every
     // `bpf_iter_*_new` call, so literal `old.id == cur.id` always fails
@@ -504,7 +809,9 @@ fn stack_subsumed_by(cur: &State, old: &State) -> bool {
     // for consistency: a given old id may map to exactly one cur id
     // across the comparison.
     let mut iter_idmap: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
-    for (old_frame, new_frame) in old.frames.iter().zip(cur.frames.iter()) {
+    for (frame_i, (old_frame, new_frame)) in
+        old.frames.iter().zip(cur.frames.iter()).enumerate()
+    {
         let all_offsets: HashSet<i16> = old_frame
             .stack
             .slot_offsets()
@@ -512,7 +819,36 @@ fn stack_subsumed_by(cur: &State, old: &State) -> bool {
             .chain(new_frame.stack.slot_offsets())
             .collect();
 
+        // Per-frame liveness for the clean_verifier_state skip. `None`
+        // (frame liveness unknown) ⇒ no skip for this frame (full
+        // compare — the sound direction).
+        let frame_ls = frame_live_slots.get(frame_i).and_then(|o| o.as_ref());
+
         for offset in all_offsets {
+            // Dead-slot skip: if no byte in this 8-byte slot is live at
+            // frame i's resume pc, the kernel would have STACK_INVALID'd
+            // it — skip, mirroring stacksafe. ITER / DYNPTR / IRQ slots
+            // are semantically live regardless of byte-liveness (kernel
+            // `bpf_stack_slot_alive` keeps them alive), so never skip
+            // those. Conservative 8-byte span: any live byte → keep
+            // (fewer skips = sound direction).
+            if let Some(ls) = frame_ls
+                && !(offset..offset.saturating_add(8)).any(|b| ls.contains(&b))
+            {
+                let structural = |fr: &crate::analysis::machine::frame_stack::CallFrame| {
+                    fr.stack
+                        .get_slot(offset)
+                        .map(|s| {
+                            s.iterator.is_some()
+                                || s.dynptr.is_some()
+                                || s.irq_flag.is_some()
+                        })
+                        .unwrap_or(false)
+                };
+                if !structural(old_frame) && !structural(new_frame) {
+                    continue;
+                }
+            }
             let old_ty = old_frame.stack.get_slot_type(offset);
             let new_ty = new_frame.stack.get_slot_type(offset);
             // Stack-specific subsumption is STRICTER than register

@@ -13,7 +13,7 @@ use super::helpers::{
 };
 
 pub(crate) fn handle_add(
-    _env: &mut VerifierEnv,
+    env: &mut VerifierEnv,
     state: &mut State,
     in_types: &TypeState,
     width: Width,
@@ -39,6 +39,26 @@ pub(crate) fn handle_add(
             let dst_is_ptr = in_types.get(dst).is_pointer();
 
             if dst_is_ptr && !src_is_ptr {
+                // Kernel `check_reg_sane_offset` (verifier.c v6.15 L13923+):
+                // when forming a new variable-offset pointer via `ptr +=
+                // scalar`, the scalar's smin must not be `S64_MIN`. An
+                // unbounded-below scalar produces a pointer whose offset
+                // could underflow the base's region, so the kernel rejects
+                // with "math between %s pointer and register with unbounded
+                // min value is not allowed". This is the load-bearing check
+                // for iters.c::loop_state_deps2 — the unsafe `*(r10 + r8)`
+                // path reaches this site with r8 having been merged across
+                // iter-loop iterations into an unbounded scalar, and the
+                // kernel rejects here.
+                let (s_lo, _s_hi) = state.domain.get_interval(*r);
+                if s_lo == i64::MIN {
+                    env.fail(
+                        crate::analysis::machine::error::VerificationError::InvalidPointerArithmetic {
+                            pc: state.pc,
+                        },
+                    );
+                    return;
+                }
                 // ptr += scalar: preserve relational info if possible.
                 //
                 // record the scalar contributor in
@@ -50,6 +70,25 @@ pub(crate) fn handle_add(
                 // (which can trip MOV-handling along the chain when the
                 // base is a fresh LoadMap/MapValue load).
                 state.var_off_contributor.insert(dst, *r);
+
+                // Precision sink at the `ptr += scalar` op itself, mirroring
+                // kernel `adjust_ptr_min_max_vals` → `mark_chain_precision`
+                // on the offset scalar (verifier.c v6.15 ~L15185; the LL2
+                // trace shows `mark_precise: last_idx <ptr+=scalar pc>` for
+                // exactly this insn). Deferring this to the downstream
+                // access site (memory/access.rs) reaches the same lineage
+                // but only *after* the access pc is popped — in the
+                // forward-worklist that can be later than a sibling path's
+                // prune check at an ancestor pc, leaving the scalar
+                // imprecise in the cached ancestor so regsafe treats it as
+                // a wildcard and a check_ids-distinguishable unsafe path is
+                // wrongly subsumed (verifier_scalar_ids.c::
+                // check_ids_in_regsafe family). Marking here matches the
+                // kernel's sink location and closes that ordering gap.
+                if let Some(hidx) = state.history_idx {
+                    let pcid = state.parent_cache_id;
+                    env.mark_chain_precision_backward(hidx, pcid, *r);
+                }
 
                 let (lo, hi) = state.domain.get_interval(*r);
                 // Kernel `ptr_reg->off`: if the scalar is a known

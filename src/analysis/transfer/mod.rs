@@ -356,12 +356,29 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
     }
 
     // Kernel-aligned: main-program exit return-value precision sink
-    // (verifier.c v6.15 check_return_code marks R0 precise before
-    // enforcing the prog-type retval range). Per-path lineage walk
-    // via parent_cache_id — marks precise on this path's specific
-    // cached ancestors only, not all cached states at intermediate
-    // PCs.
+    // (verifier.c v6.15 `check_return_code` calls
+    // `mark_chain_precision(R0)` at the `enforce_retval:` label).
+    // CRUCIAL: the kernel only REACHES that label for prog types that
+    // enforce a retval range. Types whose `check_return_code` returns 0
+    // early — SOCKET_FILTER, unprivileged RAW_TRACEPOINT, non-syscall
+    // KPROBE, plain TRACEPOINT/PERF_EVENT, XDP, SCHED_CLS, the `default:`
+    // arm, ... — NEVER `mark_chain_precision(R0)`. Firing this sink for
+    // every `at_main_frame()` exit (old behavior) over-marked R0 and its
+    // entire backward data-dep chain precise (e.g. loop4's accumulator
+    // `ret` and shift temp via `w0|=w3`/`w0<<=w2`), defeating the loop
+    // convergence the kernel achieves by keeping those imprecise. Gate
+    // on the SAME retval-enforcement condition zovia uses below (the
+    // faithful mirror of "kernel reaches enforce_retval"). Per-path
+    // lineage walk via parent_cache_id.
+    let exit_enforces_retval = env.ctx.attach_flavor.as_deref() != Some("freplace")
+        && (crate::ast::expected_retval_rule(
+            env.ctx.prog_kind,
+            env.ctx.attach_subtype.as_deref(),
+        )
+        .is_some()
+            || env.ctx.prog_kind.requires_strict_return_code());
     if state.at_main_frame()
+        && exit_enforces_retval
         && let Some(hidx) = state.history_idx
     {
         env.mark_chain_precision_backward(hidx, state.parent_cache_id, Reg::R0);

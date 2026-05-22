@@ -107,6 +107,76 @@ pub const PER_FILE_OVERRIDES: &[(&str, PerFileOverride)] = &[
             domain_mode: Some(crate::common::config::DomainMode::Interval),
         },
     ),
+    // Bounded counting loops the kernel verifies by UNROLLING within its
+    // real 1M insn budget — NOT by state pruning. Empirically confirmed
+    // via the running bpf-next-zovia kernel's log_level=2 trace of
+    // `loop1::nested_loops` (2026-05-19): the kernel does ZERO pruning
+    // (no `: safe`, no `from N to M`), tracks the loop counter as a
+    // PRECISE incrementing constant (`R3=206,207,208,...` — identical to
+    // zovia), and `processed 361349 insns (limit 1000000)` continuing to
+    // unroll the ~44850-iteration `for j<300 { for i<j }`. So the kernel
+    // accepts these purely because `for(...)` is bounded and fits the 1M
+    // budget; there is no convergence mechanism to mirror. zovia matches
+    // the kernel when given the same 1M budget + kernel-equivalent
+    // per-PC cache (verifier.c:19222 utility eviction, no fixed cap;
+    // 64 like `get_branch_snapshot.c`). Without these, the 100k
+    // sweep-productivity tightening strands them — previously masked by
+    // the (now-removed) widening.rs domain-only counter-widen block,
+    // which force-converged bounded loops the kernel never converges.
+    // loop1/loop2/loop4 are `test_verif_scale_*` (should_fail=false =
+    // kernel-ACCEPT); parse_tcp_hdr_opt(_dynptr) are real parsers loaded
+    // via `__open_and_load` (kernel-ACCEPT).
+    (
+        "loop1.c",
+        PerFileOverride {
+            max_insn: Some(1_000_000),
+            max_states_per_pc: Some(64),
+            domain_mode: None,
+        },
+    ),
+    // loop4.c: a *pruning* case (20-iter loop, per-iter `if(skb->len)`
+    // branch => 2^20 fan-out the kernel collapses to 524 insns/18
+    // states by keeping the accumulator imprecise). Three faithful
+    // pieces make zovia match the kernel here:
+    //   1. precision fidelity (commits e7ec278/557968c: no forward ALU
+    //      precision prop; exit-R0 sink gated to retval-enforcing prog
+    //      types like the kernel) => R0/R3 imprecise so the branch
+    //      fan-out can collapse.
+    //   2. Interval domain (NOT Zone-DBM). The sweep now runs
+    //      `--kernel-mode` (Interval) so this is inherited, not pinned:
+    //      `domain_mode: None`. The kernel has NO relational domain;
+    //      Zone-DBM tracked counter<->accumulator cells unconditionally
+    //      for live regs and blocked the same-counter subsumption the
+    //      kernel performs.
+    //   3. cap=64: with (1)+(2) the loop head legitimately holds ~20
+    //      states (one per precise counter 0..19, exactly as the
+    //      kernel); default cap=8 LRU-evicts them. Kernel has no fixed
+    //      per-PC cap (verifier.c:19222 utility eviction);
+    //      get_branch_snapshot precedent. NO budget bump.
+    (
+        "loop4.c",
+        PerFileOverride {
+            max_insn: None,
+            max_states_per_pc: Some(64),
+            domain_mode: None,
+        },
+    ),
+    (
+        "test_parse_tcp_hdr_opt.c",
+        PerFileOverride {
+            max_insn: Some(1_000_000),
+            max_states_per_pc: Some(64),
+            domain_mode: None,
+        },
+    ),
+    (
+        "test_parse_tcp_hdr_opt_dynptr.c",
+        PerFileOverride {
+            max_insn: Some(1_000_000),
+            max_states_per_pc: Some(64),
+            domain_mode: None,
+        },
+    ),
 ];
 
 fn override_for_file(file_basename: &str) -> Option<&'static PerFileOverride> {

@@ -7,7 +7,58 @@ use crate::domains::tnum::Tnum;
 
 use super::helpers::{bcf_reg_bounds, sync_tnum_to_dbm};
 
+/// Kernel `is_safe_to_compute_dst_reg_range` (verifier.c:15064): a
+/// shift's dst range is only computable when the amount is a constant
+/// strictly less than the operation bit-width (32 or 64). "Shifts
+/// greater than 31 or 63 are undefined. This includes shifts by a
+/// negative number." When not safe, `adjust_scalar_min_max_vals`
+/// (verifier.c:15089) does `__mark_reg_unknown(dst); return 0;` — a
+/// fully-unknown 64-bit scalar, with NO `zext_32_to_64` (it returns
+/// before that). A negative immediate / out-of-range const has a huge
+/// `umax_value`, so the unsigned `>= bit-width` test covers it.
+///
+/// Returns `true` (and applies the kernel `__mark_reg_unknown` shape +
+/// clears the BCF expr, mirroring `bcf_alu` being gated on the same
+/// `is_safe` predicate) iff the shift amount is a known constant whose
+/// value is `>= bit-width`. Callers must early-return when it returns
+/// true. A non-const amount is handled by each op's existing
+/// conservative reg-source path (the kernel also `__mark_reg_unknown`s
+/// there — `src_is_const` is false). Without this, a masked-amount
+/// computation models the UB `1 << 32` as `1 << 0 = 1` and accepts a
+/// later OOB access (FALSE-ACCEPT:
+/// verifier_bounds::shift_with_oversized_count_operand).
+fn mark_unknown_if_oversized_shift(
+    state: &mut State,
+    width: Width,
+    dst: Reg,
+    src: &Operand,
+) -> bool {
+    let bw: u64 = if width == Width::W32 { 32 } else { 64 };
+    let const_amt: Option<u64> = match src {
+        Operand::Imm(k) => Some(*k as u64),
+        Operand::Reg(sr) => state.get_tnum(*sr).const_value().map(|c| c as u64),
+    };
+    let Some(amt) = const_amt else { return false };
+    if amt < bw {
+        return false;
+    }
+    // kernel __mark_reg_unknown: fully-unknown 64-bit (no zext on the
+    // not-safe path) for both W32 and W64.
+    state.domain.forget(dst);
+    state.set_tnum(dst, Tnum::unknown());
+    sync_tnum_to_dbm(state, dst);
+    if let Some(d) = dst.bcf_idx()
+        && let Some(bcf) = state.bcf.as_mut()
+    {
+        bcf.clear_reg(d);
+    }
+    true
+}
+
 pub(crate) fn handle_shr(state: &mut State, width: Width, dst: Reg, src: &Operand) {
+    if mark_unknown_if_oversized_shift(state, width, dst, src) {
+        return;
+    }
     // Snapshot dst's BCF bounds before the abstract op runs. Right shifts
     // only narrow, so fit_u32/fit_s32 from pre-op bounds is a safe
     // (sometimes-overly-conservative) approximation of the post-op
@@ -241,6 +292,9 @@ fn lsh_domain_known(state: &mut State, width: Width, dst: Reg, shift_amount: u32
 }
 
 pub(crate) fn handle_shl(state: &mut State, width: Width, dst: Reg, src: &Operand) {
+    if mark_unknown_if_oversized_shift(state, width, dst, src) {
+        return;
+    }
     // Snapshot dst's BCF bounds before the abstract op runs. The kernel
     // (verifier.c:16096 + 16179) computes op_u32/op_s32 as the AND of
     // pre- and post-op fit_*, because LSH can widen a u32-bounded value
@@ -389,6 +443,9 @@ pub(crate) fn handle_shl(state: &mut State, width: Width, dst: Reg, src: &Operan
 }
 
 pub(crate) fn handle_arsh(state: &mut State, width: Width, dst: Reg, src: &Operand) {
+    if mark_unknown_if_oversized_shift(state, width, dst, src) {
+        return;
+    }
     // Pre-op BCF bounds snapshot — same convention as handle_shr above.
     // BCF emission at bottom of the Imm-src branch chains the kernel-shape
     // `ARSH_32(reg_expr32, shift_amount)` + ZEXT to 64 onto dst's cache.

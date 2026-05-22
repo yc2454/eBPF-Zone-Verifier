@@ -170,6 +170,40 @@ pub(crate) fn transfer_if(
         return vec![];
     }
 
+    // Kernel `collect_linked_regs` + `push_insn_history(...,
+    // linked_regs_pack(...))` (verifier.c check_cond_jmp_op L16497-16505):
+    // record, on THIS conditional jump's breadcrumb, the scalar registers
+    // sharing the compared register's scalar id, so the backward precision
+    // walk's `bt_sync_linked_regs` can propagate precision across the
+    // class. Kernel collects for src->id (BPF_X) and dst->id, and only
+    // records when the class has > 1 member. Done from the pre-refinement
+    // incoming `state` (kernel collects from `this_branch` before
+    // `push_stack`/`reg_set_min_max`).
+    if let Some(hidx) = env.current_step_idx {
+        use crate::analysis::machine::reg_types::RegType;
+        let mut linked: Vec<Reg> = Vec::new();
+        let mut class_regs: Vec<Reg> = Vec::new();
+        if let Operand::Reg(r) = right
+            && state.types.get(r) == RegType::ScalarValue
+            && let Some(id) = state.scalar_id(r)
+        {
+            class_regs.extend(state.regs_with_scalar_id(id));
+        }
+        if state.types.get(left) == RegType::ScalarValue
+            && let Some(id) = state.scalar_id(left)
+        {
+            class_regs.extend(state.regs_with_scalar_id(id));
+        }
+        for lr in class_regs {
+            if !linked.contains(&lr) {
+                linked.push(lr);
+            }
+        }
+        if linked.len() > 1 {
+            env.history.set_linked_regs(hidx, linked);
+        }
+    }
+
     // --- STEP 1: Abstract Interpretation (Constraint Refinement) ---
     let mut state_then = state.clone();
     let mut state_else = state.clone();
@@ -205,52 +239,25 @@ pub(crate) fn transfer_if(
     // every register and stack slot sharing its scalar id.
     propagate_scalar_links(&mut state_then, &mut state_else, left);
 
-    // a back-edge compare-to-imm is a precision sink for
-    // the compared register. The kernel's `mark_chain_precision` walks
-    // backward from such sinks; without it, the loop counter widens at
-    // intermediate may_goto sites, the bounds derived from this compare
-    // don't propagate to downstream pointer arithmetic, and accumulator-
-    // style loops (test1: `*R2=R1; R2+=8; R1++`) run away in abstract
-    // interp because R1 widens before the next iteration's compare.
-    //
-    // Gate on **back-edge** (target < state.pc) to differentiate the
-    // loop-back-to-head pattern from forward-exit conditionals. A
-    // forward `if r < N goto exit` doesn't need the precision (the
-    // loop head's re-refinement on entry handles each iteration), and
-    // marking precise there blocks widening at the may_goto inside the
-    // body (cond_break1's pattern). A backward `if r != K goto head`
-    // (test1) does need it.
     // Precision sink at conditional branches. Kernel
-    // `check_cond_jmp_op` calls `mark_chain_precision` only after
-    // `is_branch_taken` decides the branch (one side is dead). Marking
-    // precise on every conditional causes precision-mark blow-up that
-    // `propagate_precision` then spreads further (bits_iter
-    // state-explosion).
-    if let Some(hidx) = state.history_idx {
-        let static_resolves = condition_outcome(&state, width, left, op, &right).is_some();
-        // Back-edge compare-to-imm catches tight scalar loops where the
-        // exit predicate is `if r & C goto head` — the conditional
-        // doesn't statically resolve (r is imprecise), but without
-        // marking r precise the back-jump's precision contract isn't
-        // tracked and convergence happily prunes the loop after one
-        // iteration even when the kernel rejects via complexity limit
-        // (verifier_search_pruning.c::short_loop1). Suppress this
-        // sink when an iter slot is active on the stack — iter loops
-        // get their convergence proof from iter-id mechanics, and
-        // marking the conditional reg precise causes precision blow-up
-        // on bits_iter / iter_nested_deeply_iters.
-        let back_edge_imm = matches!(right, Operand::Imm(_)) && target < state.pc;
-        let in_iter_loop = state
-            .frames
-            .iter()
-            .any(|f| f.stack.has_active_iterators());
-        let fire = static_resolves || (back_edge_imm && !in_iter_loop);
-        if fire {
-            let pcid = state.parent_cache_id;
-            env.mark_chain_precision_backward(hidx, pcid, left);
-            if let Operand::Reg(r) = right {
-                env.mark_chain_precision_backward(hidx, pcid, r);
-            }
+    // `check_cond_jmp_op` (verifier.c v6.15 L16450-L16462) calls
+    // `mark_chain_precision` ONLY when `is_branch_taken` resolves
+    // (pred >= 0, one side dead). Firing on every conditional —
+    // including the previous `back_edge_imm` heuristic for unresolved
+    // back-edge compare-to-imm — eagerly over-marks loop counters and
+    // accumulators precise, blocking subsumption across iterations and
+    // multiplying calico-class visit counts. short_loop1 stays
+    // kernel-REJECT without back_edge_imm: its JSET (`if r7 & 0x702000
+    // goto head`) statically resolves (high bits of r7's tnum are
+    // known after `r7 += 0x1ab064b9` from a u16 load), so the
+    // static_resolves arm catches it.
+    if let Some(hidx) = state.history_idx
+        && condition_outcome(&state, width, left, op, &right).is_some()
+    {
+        let pcid = state.parent_cache_id;
+        env.mark_chain_precision_backward(hidx, pcid, left);
+        if let Operand::Reg(r) = right {
+            env.mark_chain_precision_backward(hidx, pcid, r);
         }
     }
 
@@ -407,9 +414,45 @@ fn unreachable_base_pc(env: &VerifierEnv, state: &State) -> Option<usize> {
         // +0x4c → ~115-clause over-walk vs the kernel's 9). This is
         // additive: it only ever *excludes* more, tightening toward the
         // kernel's reg_masks — never widens the tracked set.
+        // Per-pointer-kind const-offset detection. Kernel's
+        // `tnum_is_const(reg->var_off)` captures every fresh non-scalar
+        // pointer because the kernel uses a single `var_off` field for
+        // offset across all ptr types. Zovia splits that representation
+        // across the `RegType` enum; for kernel-faithful exclusion we
+        // need an explicit case per ptr kind whose offset is structurally
+        // constant (i.e. not modeled in the value-tnum). Calico-trace
+        // 2026-05-20: missing `PtrToCtx` here caused R9 to leak into
+        // `target_regs` at every BCF discharge, the walker could never
+        // drain R9 (its definition is the caller's frame, not any
+        // in-program insn), and `bcf_suffix_base_pc` always returned
+        // `None` → full-lineage `children_unsafe` marking → 26× cache
+        // invalidation → 1M-insn TIMEOUT. The kernel-side `[ZK]` probe
+        // confirmed kernel `reg_masks=0x73` (excludes R9=PtrToCtx);
+        // matching it brings the suffix base from None to a tight pc.
         let const_offset = state.get_tnum(r).is_const()
             || matches!(ty, RegType::PtrToMapValue { offset: Some(_), .. })
-            || matches!(ty, RegType::PtrToMapValueOrNull { .. });
+            || matches!(ty, RegType::PtrToMapValueOrNull { .. })
+            // Below: ptr types whose "offset" component is structurally 0
+            // (no variable-offset arithmetic possible in normal use).
+            // PtrToPacket is the only ptr type with variable offset
+            // (`ptr += scalar`) and is deliberately NOT excluded.
+            || matches!(ty, RegType::PtrToCtx)
+            || matches!(ty, RegType::PtrToPacketEnd)
+            || matches!(ty, RegType::PtrToSocket { .. })
+            || matches!(ty, RegType::PtrToSocketOrNull { .. })
+            || matches!(ty, RegType::PtrToSockCommon { .. })
+            || matches!(ty, RegType::PtrToSockCommonOrNull { .. })
+            || matches!(ty, RegType::PtrToTcpSock { .. })
+            || matches!(ty, RegType::PtrToTcpSockOrNull { .. })
+            || matches!(ty, RegType::PtrToCpumask { .. })
+            || matches!(ty, RegType::PtrToCpumaskOrNull { .. })
+            || matches!(ty, RegType::PtrToArena { .. })
+            || matches!(ty, RegType::PtrToArenaOrNull { .. })
+            || matches!(ty, RegType::PtrToCgroup { .. })
+            || matches!(ty, RegType::PtrToCgroupOrNull { .. })
+            || matches!(ty, RegType::PtrToBtfId { .. })
+            || matches!(ty, RegType::PtrToOwnedKptr { .. })
+            || matches!(ty, RegType::PtrToMapKptr { .. });
         if !matches!(ty, RegType::ScalarValue) && const_offset {
             continue;
         }
@@ -442,6 +485,9 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
         return false;
     }
     let base_pc = unreachable_base_pc(env, state);
+    if std::env::var("ZOVIA_DUMP_DISCHARGE").ok().as_deref() == Some("1") {
+        eprintln!("[disc] reject@pc={} base_pc={:?}", state.pc, base_pc);
+    }
     let Some(ok) = try_prove_unreachable(state, base_pc) else {
         return false;
     };

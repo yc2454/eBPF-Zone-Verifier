@@ -196,6 +196,24 @@ pub const BPF_DYNPTR_DATA: u32 = 203;
 pub const BPF_USER_RINGBUF_DRAIN: u32 = 209;
 pub const BPF_CGRP_STORAGE_GET: u32 = 210;
 pub const BPF_CGRP_STORAGE_DELETE: u32 = 211;
+// Helper IDs missing from earlier coverage (FR triage 2026-05-19 batch 2).
+// IDs match `__BPF_FUNC_MAPPER` in `include/uapi/linux/bpf.h` v6.18-rc4.
+pub const BPF_LOAD_HDR_OPT: u32 = 142;
+pub const BPF_SNPRINTF_BTF: u32 = 149;
+pub const BPF_SEQ_PRINTF_BTF: u32 = 150;
+pub const BPF_BPRM_OPTS_SET: u32 = 159;
+pub const BPF_IMA_INODE_HASH: u32 = 161;
+pub const BPF_SYS_BPF: u32 = 166;
+pub const BPF_GET_FUNC_IP: u32 = 173;
+pub const BPF_GET_ATTACH_COOKIE: u32 = 174;
+pub const BPF_GET_FUNC_ARG_CNT: u32 = 185;
+pub const BPF_GET_RETVAL: u32 = 186;
+pub const BPF_SET_RETVAL: u32 = 187;
+pub const BPF_XDP_GET_BUFF_LEN: u32 = 188;
+pub const BPF_XDP_LOAD_BYTES: u32 = 189;
+pub const BPF_TCP_RAW_GEN_SYNCOOKIE_IPV4: u32 = 204;
+pub const BPF_KTIME_GET_TAI_NS: u32 = 208;
+
 pub const BPF_KFUNC_CALL_DUMMY: u32 = 213;
 pub const BPF_RCU_READ_LOCK: u32 = 217;
 pub const BPF_RCU_READ_UNLOCK: u32 = 218;
@@ -327,6 +345,19 @@ pub const BTF_KIND_STRUCT: u8 = 4;
 // ==================================================
 pub const F_NEEDS_EFFICIENT_UNALIGNED_ACCESS: u32 = 1 << 0;
 pub const F_LOAD_WITH_STRICT_ALIGNMENT: u32 = 1 << 1;
+/// Kernel `BPF_F_TEST_STATE_FREQ` (include/uapi/linux/bpf.h, value `1U
+/// << 3`). When set, the kernel's `is_state_visited` flips
+/// `force_new_state=true` (verifier.c v6.15 L18998) which makes every
+/// processed instruction a state-cache addition point. In zovia we
+/// honor the flag by disabling subsumption-hit pruning entirely: every
+/// visit is explored independently. This matches the kernel's intended
+/// "behavior is undefined" debugging flag and is the load-bearing
+/// mechanism behind iters.c::loop_state_deps2 — the deliberate test
+/// vector that proves a verifier explores both inner-loop value paths
+/// (b=0 with c=-24 and b=1 with c=-25) only fires when state-frequency
+/// is forced; otherwise the verifier's standard pruning collapses the
+/// distinct paths and misses the unsafe `*(r10 + c)=…` access.
+pub const F_TEST_STATE_FREQ: u32 = 1 << 3;
 
 // ==================================================
 // BPF ELF Relocation Types

@@ -118,6 +118,72 @@ pub struct State {
     /// `handle_*_pruning`. Set by `mark_path_children_unsafe`.
     pub children_unsafe: bool,
 
+    /// SCC bookkeeping — mirror of kernel `bpf_verifier_state.{dfs_depth,
+    /// branches, loop_entry}` (verifier.c v6.15 L1675+, L1885+). Drives
+    /// the `force_exact` gate in `is_state_visited` that decides whether
+    /// subsumption uses RANGE_WITHIN (strict, inside an open SCC) or
+    /// NOT_EXACT (lax, outside). Without this gate, zovia silently
+    /// subsumes iter-loop body states whose `r6=0` vs `r6=1` would force
+    /// the kernel to explore both, masking the deps2-family soundness
+    /// FAs.
+    ///
+    /// `dfs_depth`: state's DFS depth. Successors inherit parent's +1.
+    /// `branches`: count of in-flight DFS children through this cached
+    /// state. Bumped on each successor push, decremented when a child's
+    /// DFS terminates (pruned/exit/reject). 0 ⇒ all DFS through this
+    /// state finished.
+    /// `loop_entry_cache_id`: cache_id of the outermost loop-header
+    /// ancestor on the current DFS path, set by `update_loop_entry` at
+    /// back-edges or via `update_branch_counts` propagation.
+    pub dfs_depth: u32,
+    pub branches: u32,
+    /// Kernel-faithful "open paths through this cached state" counter,
+    /// parallel to `branches` (which has zovia-internal accounting tied
+    /// to subsumption / cleaning / loop-entry tracking and cannot be
+    /// changed without breaking dozens of selftests). `dfs_paths` mirrors
+    /// the kernel `bpf_verifier_state.branches` field semantics exactly:
+    /// - init to 1 at cache creation (kernel `elem->st.branches = 1`,
+    ///   verifier.c v6.15 L2816)
+    /// - bump parent.dfs_paths by (succ_count - 1) at fork sites — only
+    ///   the EXTRA siblings count (kernel `push_stack` L2045 is called
+    ///   once per ALT, not once per total successor)
+    /// - decremented exactly once per completion (exit OR prune-hit)
+    ///   in `complete_dfs_branch`, walking up parent chain until a
+    ///   cache with dfs_paths > 0 is found
+    /// - reaches 0 iff the entire DFS subtree through this cached state
+    ///   has completed
+    /// Used by the inf-loop trap gate (`prev.dfs_paths == 0` ⇒ skip
+    /// trap, mirroring kernel verifier.c L19024
+    /// `if (sl->state.branches)`). The existing `branches` field is
+    /// untouched because the subsumption/eviction/loop-entry call
+    /// sites in zovia have been tuned against its bumped-per-push
+    /// semantics.
+    pub dfs_paths: u32,
+    pub loop_entry_cache_id: Option<u32>,
+
+    /// Per-path counters for the `add_new_state` sparse-cache heuristic
+    /// (`ZOVIA_KERNEL_ENGINE=1`). The kernel's linear `do_check` flow
+    /// uses env-wide `insn_processed` / `jmps_processed` because cur
+    /// IS the one in-flight path. Zovia's worklist interleaves paths,
+    /// so we instead carry per-path counters on each State (cloned at
+    /// branches; bumped in run_worklist per popped insn / jmp). The
+    /// `prev_*_at_cache` snapshots are set at the most recent cache
+    /// event on this path's lineage (kernel `prev_jmps_processed` /
+    /// `prev_insn_processed` semantics, L19260-L19261).
+    pub path_insn_count: usize,
+    pub path_jmp_count: usize,
+    pub prev_insn_at_cache: usize,
+    pub prev_jmp_at_cache: usize,
+
+    /// Kernel-aligned `bpf_verifier_state.cleaned` (verifier.c v6.15
+    /// L19488). Set to `true` by `clean_verifier_state` when this
+    /// cached state's `branches` first hits 0 — its DFS subtree is
+    /// complete, so future visits will only COMPARE against it, never
+    /// extend through it. At that point dead regs / dead stack slots
+    /// are mutated away to make future subsumption looser. Once
+    /// cleaned, never re-cleaned (kernel's L19542 guard).
+    pub cleaned: bool,
+
     pub tnums: HashMap<Reg, Tnum>, // tnum info for R0-R10
 
     /// Identity tokens for scalar values. Two registers (or a register and
@@ -302,6 +368,15 @@ impl State {
             parent_cache_id: None,
             cache_id: None,
             children_unsafe: false,
+            dfs_depth: 0,
+            branches: 0,
+            dfs_paths: 0,
+            loop_entry_cache_id: None,
+            path_insn_count: 0,
+            path_jmp_count: 0,
+            prev_insn_at_cache: 0,
+            prev_jmp_at_cache: 0,
+            cleaned: false,
             tnums: tnums.clone(),
             scalar_ids: HashMap::new(),
             precise_regs: HashSet::new(),

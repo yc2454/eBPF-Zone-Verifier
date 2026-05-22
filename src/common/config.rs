@@ -34,7 +34,14 @@ pub struct VerifierConfig {
     /// Use widening in pruning - might cause unsoundness but guarantees loop termination
     pub use_widening: bool,
 
-    /// Maximum states to keep per PC for pruning
+    /// Maximum states to keep per PC for pruning. Kernel-absent hard
+    /// FIFO ceiling (the privileged kernel bounds per-insn state lists
+    /// via miss/hit eviction + clean_verifier_state, not a fixed cap).
+    /// Keeping it at 8 for now: fully removing it (→0) regresses the
+    /// large cilium objects into timeouts because zovia lacks
+    /// clean_verifier_state, so uncapped lists explode. The cap is a
+    /// crutch for that missing mechanism — see the pruning trajectory
+    /// (clean_verifier_state must land BEFORE this cap can be removed).
     pub max_states_per_pc: usize,
 
     /// Log heartbeat interval
@@ -101,7 +108,7 @@ impl Default for VerifierConfig {
             domain_mode: DomainMode::Zone,
             skip_dbm_check: false,
             use_widening: false,
-            max_states_per_pc: 8,
+            max_states_per_pc: 64,
             log_interval: 100_000,
             debug_pc: None,
             enable_path_trace: false,

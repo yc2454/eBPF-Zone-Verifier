@@ -447,29 +447,31 @@ pub(crate) fn update_alu_types(
             let dst_ty = in_types.get(dst);
             let is_add = op == AluOp::Add;
 
-            // Same-family packet ptr subtraction (PtrToPacket - PtrToPacket
-            // etc.) collapses to a scalar byte distance. The
-            // `is_pointer()` arm below would otherwise keep dst typed as
-            // a packet pointer (no anchor change is detectable from
-            // dst-vs-AnchorData), which then fails the next non-Add/Sub
-            // ALU op as "Invalid pointer arithmetic". The DBM domain
-            // already carries the correct scalar bounds via apply_sub_reg
-            // in handle_sub.
-            let same_family_sub = !is_add
+            // pointer − pointer collapses to an (arbitrary) scalar.
+            // Mirrors kernel `adjust_reg_min_max_vals` (verifier.c
+            // L15208-15234): when BOTH operands are pointers, the only
+            // permitted ALU op is `BPF_SUB` under `allow_ptr_leaks`
+            // (privileged) — `mark_reg_unknown(dst)` → dst becomes a
+            // SCALAR; any other op / unprivileged is `R%d pointer %s
+            // pointer prohibited` -EACCES. It is NOT restricted to the
+            // packet pointer family: `value_ptr -= value_ptr`
+            // (PtrToMapValue − PtrToMapValue) must also demote so the
+            // following deref is correctly rejected "R0 invalid mem
+            // access 'scalar'" (verifier_value_ptr_arith.c::
+            // access_value_ptr_value_ptr_2). Without this zovia kept dst
+            // a map_value pointer and accepted the load. The DBM domain
+            // already carries the scalar bounds via `apply_sub_reg` in
+            // handle_sub (packet ptr-sub additionally preserves the
+            // correlated-branch length relation there).
+            let both_ptr_sub = !is_add
                 && match src {
                     Operand::Reg(r) => {
-                        let src_ty = in_types.get(*r);
-                        matches!(
-                            (&dst_ty, &src_ty),
-                            (RegType::PtrToPacket, RegType::PtrToPacket)
-                                | (RegType::PtrToPacketEnd, RegType::PtrToPacketEnd)
-                                | (RegType::PtrToPacketMeta, RegType::PtrToPacketMeta)
-                        )
+                        dst_ty.is_pointer() && in_types.get(*r).is_pointer()
                     }
                     _ => false,
                 };
 
-            if same_family_sub {
+            if both_ptr_sub {
                 types.set(dst, RegType::ScalarValue);
             } else if dst_ty.is_pointer() {
                 update_ptr_arithmetic_type(env, types, domain, dst, dst_ty, src, is_add);
