@@ -18,11 +18,13 @@ BCF patches) and the zovia verifier binary.
        BCF (upstream)                     zovia (this repo)
   ─────────────────────────────      ────────────────────────────
   • install-deps.sh ◀── deps        • zovia verifier (Rust)
-  • VM image (bookworm.img)          • Patched kernel (bzImage,
-  • In-VM bpftool + cvc5               shipped as release artifact)
-  • Host-side cvc5 binary             ─ NOT BCF's kernel patches
-  • scripts/boot_vm.sh                • Bundle producers (calico, etc.)
-                                      • test_loader / ll2_loader (.c)
+  • VM image (bookworm.img)          • Patched kernel bzImage
+  • In-VM bpftool + cvc5               (overrides BCF's after their
+  • Host-side cvc5 binary               build.sh kernel produces one)
+  • Patched libbpf static lib         • Bundle producers (calico, etc.)
+    (built by build.sh kernel,        • test_loader / ll2_loader (.c)
+     used by our loaders)
+  • scripts/boot_vm.sh
 ```
 
 ---
@@ -76,10 +78,18 @@ unzip imgs.zip
 chmod 600 bookworm.id_rsa
 cd ..
 
-# Build only the host-side cvc5 (skip BCF's kernel + bpftool — we override
-# the kernel below, and we use the in-VM bpftool that ships in the image).
+# Build the host-side cvc5
 ./scripts/build.sh solver
 # Output: ~/BCF/output/cvc5-libs/bin/cvc5
+
+# Build BCF's kernel + libbpf (~30 min). This materializes the patched
+# libbpf static lib that our in-VM loaders link against. We override
+# the resulting bzImage with zovia's in step 2, but the patched libbpf
+# in ~/BCF/build/bpf-next/tools/lib/bpf/ stays put and is used by the
+# loader compile step below.
+./scripts/build.sh kernel
+# Output: ~/BCF/output/bzImage (BCF's — we replace it)
+#         ~/BCF/build/bpf-next/tools/lib/bpf/libbpf.a (patched, KEEP)
 
 # Source rustup's shell hook if this is your first install
 source "$HOME/.cargo/env"
@@ -136,9 +146,11 @@ ssh -i ~/BCF/imgs/bookworm.id_rsa -p 10023 root@localhost "uname -r && which bpf
 
 ### 5. Build the loaders inside the VM
 
-zovia ships two C loaders alongside the bundle format. They link against
-the patched libbpf that lives **inside** the VM image, so they must be
-compiled in-VM (not on the host):
+zovia ships two C loaders alongside the bundle format. They statically
+link against the patched libbpf built by step 1's `build.sh kernel`
+(materialized at `~/BCF/build/bpf-next/tools/lib/bpf/libbpf.a`, visible
+inside the VM via virtiofs). Compile in-VM so the resulting binary is
+linked against the VM's libc / libelf / libz:
 
 - [`linux-deltas/test_loader.c`](linux-deltas/test_loader.c) — the canonical
   bundle loader. Optional positional bundle argument:
@@ -163,10 +175,14 @@ cp ~/eBPF-Zone-Verifier/linux-deltas/ll2_loader.c ~/BCF/sweep/
 # In the VM (ssh in)
 ssh -i ~/BCF/imgs/bookworm.id_rsa -p 10023 root@localhost
 cd /root/bcf/sweep
-gcc -O2 -o test_loader test_loader.c -lbpf -lelf -lz
-# ll2_loader needs the in-tree libbpf headers (uses #include "libbpf.h"):
-gcc -O2 -I/root/bcf/build/bpf-next/tools/lib/bpf \
-    -o ll2_loader ll2_loader.c -lbpf -lelf -lz
+
+# Both loaders statically link the patched libbpf.a from the bpf-next
+# tree (built by step 1's `build.sh kernel`). The VM's /usr/lib has
+# libbpf.so.1 but no headers and no libbpf-dev package, so we go
+# directly at the patched static lib in the kernel tree.
+LIBBPF=/root/bcf/build/bpf-next/tools/lib
+gcc -O2 -I$LIBBPF -o test_loader test_loader.c $LIBBPF/bpf/libbpf.a -lelf -lz
+gcc -O2 -I$LIBBPF -o ll2_loader  ll2_loader.c  $LIBBPF/bpf/libbpf.a -lelf -lz
 exit
 ```
 
@@ -276,9 +292,15 @@ Bundle hash doesn't match what the kernel computes. Likely cause: zovia and
 the running kernel are out of sync. Re-pull both to the same tag and
 rebuild zovia.
 
-**`test_loader: error while loading shared libraries: libbpf.so.X`**
-You rebuilt the loader against a different libbpf than what's installed
-in the VM. Rebuild inside the VM, not on the host.
+**`gcc: ... bpf/libbpf.h: No such file or directory`**
+You haven't run `./scripts/build.sh kernel` yet — that's what clones
+bpf-next, applies BCF's set5 patches, and produces the patched libbpf
+headers + static lib at `~/BCF/build/bpf-next/tools/lib/bpf/`.
+
+**`ld: cannot find -lbpf`**
+The Debian Bookworm VM has `libbpf.so.1` but no `libbpf-dev`. Don't use
+`-lbpf` — link the patched static lib directly:
+`$LIBBPF/bpf/libbpf.a -lelf -lz` (see the gcc one-liner in step 5).
 
 **`cvc5 binary not found`**
 `export ZOVIA_CVC5=~/BCF/output/cvc5-libs/bin/cvc5`. If that path doesn't

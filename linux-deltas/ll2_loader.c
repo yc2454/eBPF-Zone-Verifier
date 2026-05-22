@@ -7,8 +7,8 @@
  *
  * Usage: ll2_loader [--type TYPE] <prog.bpf.o> [<bundle.bcf-bundle>]
  */
-#include "libbpf.h"
-#include "bpf.h"
+#include <bpf/libbpf.h>
+#include <bpf/bpf.h>
 
 #include <errno.h>
 #include <stdio.h>
