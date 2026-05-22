@@ -192,6 +192,17 @@ fn visit_insn(pc: usize, prog: &Program, env: &mut VerifierEnv) -> Result<Vec<us
             }
             if pc + 1 < n {
                 succs.push(pc + 1);
+                // Kernel: `visit_func_call_insn` unconditionally marks the
+                // post-call fallthrough as a prune point (verifier.c L17175
+                // `mark_prune_point(env, t + insn_sz)`). Applies to ALL
+                // calls (helper + subprog). Without this, sparse-cache
+                // mode never caches post-call states, so the BCF discharge
+                // walker can't land at kernel-equivalent post-call bases
+                // (observed on calico c17 from_tnl_debug: the kernel's
+                // 6-vstate chain at PC 1523 has bases at PCs 1340/1412/
+                // 1493, all post `call 0x6`/bpf_trace_printk — unreachable
+                // to zovia's walker without this marking).
+                init_explored_state(env, pc + 1);
             }
             Ok(succs)
         }
@@ -215,8 +226,8 @@ fn visit_insn(pc: usize, prog: &Program, env: &mut VerifierEnv) -> Result<Vec<us
         }
         Instr::If { target, .. } => {
             // Kernel Default Case: Conditional Jump
-            // 1. Mark SELF as Prune Point
-            // "init_explored_state(env, t);"
+            // 1. Mark SELF as Prune Point (verifier.c L17556
+            //    `mark_prune_point(env, t)` in the conditional-jump arm).
             init_explored_state(env, pc);
 
             // 2. Push Fallthrough
@@ -224,7 +235,16 @@ fn visit_insn(pc: usize, prog: &Program, env: &mut VerifierEnv) -> Result<Vec<us
                 succs.push(pc + 1);
             }
 
-            // 3. Push Target
+            // 3. Push Target — and ALSO mark target as a prune point,
+            //    mirroring kernel `push_insn` BRANCH-edge handling
+            //    (verifier.c L17132-17136 `if (e == BRANCH)
+            //    mark_prune_point(env, w)`). Without this, sparse-cache
+            //    mode never caches at conditional-branch targets, so
+            //    zovia's vstate chain misses kernel parents at If-target
+            //    PCs (observed on calico c17 from_tnl_debug at PC 1517,
+            //    target of If at PC 1515, which the kernel includes in
+            //    its 6-vstate chain producing hash 0xc70002dce03c2f0e).
+            init_explored_state(env, *target);
             succs.push(*target);
 
             Ok(succs)
