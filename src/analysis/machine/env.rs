@@ -1167,6 +1167,115 @@ impl<'a> VerifierEnv<'a> {
     ///
     /// Returns `None` for empty `target_regs` (kernel returns
     /// `-EFAULT` in that case too) or when the walk runs out.
+    /// For a cached state identified by its `cache_id`, return the PC
+    /// of the instruction processed IMMEDIATELY BEFORE the cache event
+    /// — zovia's analog of the kernel's `vstate->last_insn_idx`. Used
+    /// by `filter_path_conds_from_pc` to mirror the kernel's
+    /// `record_path_cond` push at `bcf_track` replay start: only
+    /// triggers if prev_insn was a scalar conditional branch
+    /// (verifier.c:21117 + 21000-21019). Returns `None` if the cache_id
+    /// isn't found, or the cached state has no history breadcrumb, or
+    /// the breadcrumb is the first (no parent step).
+    pub fn cached_prev_insn_pc(&self, cache_id: u32) -> Option<usize> {
+        let (pc, idx) = *self.cache_loc_by_id.get(&cache_id)?;
+        let cached = self.explored_states.get(&pc)?.get(idx)?;
+        let hidx = cached.history_idx?;
+        let breadcrumb = self.history.get(hidx)?;
+        let parent_idx = breadcrumb.parent_idx?;
+        Some(self.history.get(parent_idx)?.pc)
+    }
+
+    /// Companion to `bcf_suffix_base_pc`: same walk, but returns
+    /// `(base_pc, base_cache_id)` so the caller can also identify the
+    /// cached state at the suffix base (needed by
+    /// `filter_path_conds_from_pc` to look up that base state's
+    /// `prev_insn_pc` and mirror the kernel's `record_path_cond` push
+    /// at `bcf_track` replay start).
+    pub fn bcf_suffix_base_pc_and_cache_id(
+        &self,
+        history_idx: usize,
+        parent_cache_id: Option<u32>,
+        target_regs: &[Reg],
+    ) -> Option<(usize, u32)> {
+        // Inline a minimal copy of the bcf_suffix_base_pc walk, returning
+        // (pc, cache_id) instead of just pc. Logic mirrors the original;
+        // diffs are limited to (a) returning the current_parent_id along
+        // with parent_loc.pc when bt empties, (b) skipping the entry-arg
+        // drain path (it only applies at pc=0, which has no cache_id —
+        // callers wanting that termination keep using bcf_suffix_base_pc).
+        if target_regs.is_empty() {
+            return None;
+        }
+        let start_depth = self.history.get(history_idx).map(|s| s.depth).unwrap_or(0);
+        let mut bt = BacktrackState::new();
+        for &r in target_regs {
+            bt.set_reg(start_depth, r);
+        }
+        if bt.is_empty() {
+            return None;
+        }
+
+        let mut current_history: Option<usize> = Some(history_idx);
+        let mut current_parent_id: Option<u32> = parent_cache_id;
+        let mut budget: usize = 16_384;
+        let mut skip_first = true;
+
+        loop {
+            let parent_loc = current_parent_id
+                .and_then(|id| self.cache_loc_by_id.get(&id).copied());
+            let (parent_history_stop, parent_grandparent_id) =
+                if let Some((pc, idx)) = parent_loc {
+                    let s = self
+                        .explored_states
+                        .get(&pc)
+                        .and_then(|v| v.get(idx));
+                    (
+                        s.and_then(|s| s.history_idx),
+                        s.and_then(|s| s.parent_cache_id),
+                    )
+                } else {
+                    (None, None)
+                };
+
+            while let Some(idx) = current_history {
+                if budget == 0 {
+                    return None;
+                }
+                budget -= 1;
+                if let Some(stop) = parent_history_stop
+                    && idx <= stop
+                {
+                    break;
+                }
+                let Some(step) = self.history.get(idx) else {
+                    return None;
+                };
+                let parent_idx = step.parent_idx;
+                let instr_copy = step.instr.clone();
+                let step_depth = step.depth;
+                let step_stack_access = step.stack_access;
+                if !skip_first {
+                    if backtrack_insn_step(&mut bt, &instr_copy, step_depth, step_stack_access).is_err() {
+                        return None;
+                    }
+                    if bt.is_empty() {
+                        // Found the suffix base. Return its (pc, cache_id).
+                        let (pc, _) = parent_loc?;
+                        let cid = current_parent_id?;
+                        return Some((pc, cid));
+                    }
+                }
+                skip_first = false;
+                current_history = parent_idx;
+            }
+            if parent_grandparent_id.is_none() {
+                return None;
+            }
+            current_parent_id = parent_grandparent_id;
+            current_history = parent_history_stop;
+        }
+    }
+
     pub fn bcf_suffix_base_pc(
         &self,
         history_idx: usize,

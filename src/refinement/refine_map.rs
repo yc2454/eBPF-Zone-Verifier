@@ -56,7 +56,10 @@ pub fn try_refine_map_access(
     // kernel computes on its runtime CONJ.
     let pre_count = sym.path_conds.len();
     if let Some(bp) = base_pc {
-        sym.filter_path_conds_from_pc(bp);
+        // TODO(faithful): plumb prev_insn_pc from caller (mirror of
+        // refine_unreachable's wiring) so the kernel's record_path_cond
+        // at replay-start is also captured for map-bounds refinement.
+        sym.filter_path_conds_from_pc(bp, None);
     }
     if std::env::var("ZOVIA_BCF_TRACK_DEBUG").is_ok() {
         eprintln!(

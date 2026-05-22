@@ -102,6 +102,14 @@ pub struct SymbolicState {
     /// at refine time to mirror the kernel's `bcf_track` suffix-only
     /// br_cond emission (verifier.c:24308).
     pub path_cond_pcs: Vec<usize>,
+    /// Parallel to `path_conds`: true iff this entry was pushed via
+    /// `add_cond_at` (a branch transfer's path-condition; mirrors
+    /// kernel's `record_path_cond` push at verifier.c:21117). False iff
+    /// pushed by `bound_pred` (mirrors kernel's `bcf_bound_reg`
+    /// materialization push at verifier.c:849). Used by
+    /// [`filter_path_conds_from_pc`] to identify the "immediate
+    /// previous branch" L without confusing it with bound preds.
+    pub path_cond_is_branch: Vec<bool>,
     /// Final refinement condition (set by a site-specific callback).
     pub refine_cond: Option<u32>,
     /// Transient: the PC currently being processed by symbolic-tracking
@@ -298,6 +306,28 @@ impl SymbolicState {
     pub fn add_cond_at(&mut self, pred_idx: u32, pc: usize) {
         self.path_conds.push(pred_idx);
         self.path_cond_pcs.push(pc);
+        self.path_cond_is_branch.push(true);
+    }
+
+    /// Walk the expression tree rooted at `root` and return the set of
+    /// BCF_VAR slot offsets it references. Used by the kernel-faithful
+    /// `filter_path_conds_from_pc` to decide whether a sub-`base_pc`
+    /// path_cond should be kept by virtue of referencing the same
+    /// symbolic variables as the "immediate previous branch" cond.
+    fn collect_vars(&self, root: u32) -> std::collections::HashSet<u32> {
+        use crate::refinement::bcf::{BCF_OP_MASK, BCF_VAR};
+        let mut vars = std::collections::HashSet::new();
+        let mut stack = vec![root];
+        while let Some(idx) = stack.pop() {
+            let Some(e) = self.expr_at(idx) else { continue };
+            if (e.code & BCF_OP_MASK) == BCF_VAR {
+                vars.insert(idx);
+            }
+            for &arg in &e.args {
+                stack.push(arg);
+            }
+        }
+        vars
     }
 
     /// Drop path_conds whose source PC is strictly less than `base_pc`,
@@ -306,21 +336,78 @@ impl SymbolicState {
     /// with `pc == 0` are treated as "untagged / always present" and are
     /// kept regardless of the cutoff — this preserves unit-test
     /// behaviour for [`SymbolicState`]s constructed without PC context.
-    pub fn filter_path_conds_from_pc(&mut self, base_pc: usize) {
+    ///
+    /// KERNEL-FAITHFUL EXTENSION (2026-05-21, post-byte-stream probe):
+    /// in addition to suffix conds (`source_pc >= base_pc`), also retain
+    /// the conds the kernel re-emits via `record_path_cond` + lazy
+    /// `bcf_reg_expr`/`bcf_bound_reg` at the FIRST instruction of the
+    /// `bcf_track` replay (verifier.c:21112-21120 + 894-926). That entry
+    /// corresponds to the immediate previous branch (`prev_insn_idx`)
+    /// before the cache event at `base_pc`. We approximate it by:
+    ///   1. picking `L` = the path_cond with the LARGEST `source_pc <
+    ///      base_pc` (the most recent branch-cond push before the
+    ///      cache),
+    ///   2. retaining any path_cond whose referenced BCF_VAR set is
+    ///      ⊆ vars(L) — this picks up `L` itself plus all bound preds
+    ///      pushed for `L`'s variables (mirroring the kernel's lazy
+    ///      `bcf_reg_expr` materialization).
+    /// Without this, zovia's MISS-side emissions at calico's PC 1726
+    /// drop the upstream JNE(v0,6) + JLE(v0,0xff) conds that the kernel
+    /// re-pushes at replay-start, so the canonical hash misses the
+    /// kernel's expected entry (e.g. `0x5edc48abe49fbee5` for
+    /// `calico_tc_main` in `clang-15_-O1_felix_bin_bpf_to_wep_debug_co-re.o`).
+    /// See `feedback_bytematch_revised_2026-05-21.md`.
+    pub fn filter_path_conds_from_pc(
+        &mut self,
+        base_pc: usize,
+        prev_insn_pc: Option<usize>,
+    ) {
         if base_pc == 0 {
             return;
         }
         debug_assert_eq!(self.path_conds.len(), self.path_cond_pcs.len());
+        debug_assert_eq!(self.path_conds.len(), self.path_cond_is_branch.len());
+
+        // KERNEL-FAITHFUL: locate L = the branch cond pushed at source_pc
+        // == prev_insn_pc. Mirrors the kernel's `record_path_cond` push
+        // at `bcf_track` replay's first instruction (verifier.c:21117),
+        // which fires only when the cached base state's immediate
+        // predecessor was a scalar conditional branch. Skip if
+        // prev_insn_pc is unknown, no path_cond was pushed at exactly
+        // that PC, or none of those pushes is a branch (only bound
+        // preds). Once L is found, also retain bound preds whose
+        // referenced var set is a subset of vars(L) — these are the
+        // bound preds the kernel re-emits via `bcf_reg_expr`'s lazy
+        // `bcf_bound_reg` at the same site (verifier.c:894-926).
+        let l_idx_opt = prev_insn_pc.and_then(|pp| {
+            self.path_cond_pcs.iter().enumerate()
+                .find(|&(idx, &pc)| pc == pp && self.path_cond_is_branch[idx])
+                .map(|(idx, _)| idx)
+        });
+        let l_vars: std::collections::HashSet<u32> = match l_idx_opt {
+            Some(idx) => self.collect_vars(self.path_conds[idx]),
+            None => std::collections::HashSet::new(),
+        };
+
         let mut kept_exprs = Vec::with_capacity(self.path_conds.len());
         let mut kept_pcs = Vec::with_capacity(self.path_cond_pcs.len());
+        let mut kept_is_branch = Vec::with_capacity(self.path_cond_is_branch.len());
         for (idx, &pc) in self.path_cond_pcs.iter().enumerate() {
-            if pc == 0 || pc >= base_pc {
+            let keep = pc == 0
+                || pc >= base_pc
+                || (!l_vars.is_empty() && {
+                    let cond_vars = self.collect_vars(self.path_conds[idx]);
+                    !cond_vars.is_empty() && cond_vars.is_subset(&l_vars)
+                });
+            if keep {
                 kept_exprs.push(self.path_conds[idx]);
                 kept_pcs.push(pc);
+                kept_is_branch.push(self.path_cond_is_branch[idx]);
             }
         }
         self.path_conds = kept_exprs;
         self.path_cond_pcs = kept_pcs;
+        self.path_cond_is_branch = kept_is_branch;
     }
 
     /// Set the PC tag for subsequently-emitted bound preds via
@@ -391,6 +478,7 @@ impl SymbolicState {
         let pc = self.current_pc;
         self.path_conds.push(pred);
         self.path_cond_pcs.push(pc);
+        self.path_cond_is_branch.push(false);
         pred
     }
 

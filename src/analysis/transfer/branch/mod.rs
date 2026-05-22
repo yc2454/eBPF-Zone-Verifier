@@ -485,10 +485,55 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
         return false;
     }
     let base_pc = unreachable_base_pc(env, state);
+    // Mirror kernel's `vstate->last_insn_idx` retrieval at bcf_track
+    // replay start: look up the prev_insn PC of the cached state AT
+    // base_pc (the cache the suffix walk landed on, not the immediate
+    // parent_cache_id of cur — they can differ). The filter uses this
+    // to identify the immediate-predecessor branch cond (the kernel's
+    // record_path_cond push at insn=base_pc, verifier.c:21117).
+    let prev_insn_pc = {
+        use crate::analysis::machine::reg::Reg;
+        use crate::analysis::machine::reg_types::RegType;
+        const VARREGS: [Reg; 10] = [
+            Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4,
+            Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9,
+        ];
+        let targets: Vec<Reg> = VARREGS.iter().copied()
+            .filter(|&r| !matches!(state.types.get(r), RegType::NotInit))
+            .filter(|&r| {
+                let ty = state.types.get(r);
+                let const_off = state.get_tnum(r).is_const()
+                    || matches!(ty, RegType::PtrToMapValue { offset: Some(_), .. })
+                    || matches!(ty, RegType::PtrToMapValueOrNull { .. })
+                    || matches!(ty, RegType::PtrToCtx)
+                    || matches!(ty, RegType::PtrToPacketEnd)
+                    || matches!(ty, RegType::PtrToSocket { .. })
+                    || matches!(ty, RegType::PtrToSocketOrNull { .. })
+                    || matches!(ty, RegType::PtrToSockCommon { .. })
+                    || matches!(ty, RegType::PtrToSockCommonOrNull { .. })
+                    || matches!(ty, RegType::PtrToTcpSock { .. })
+                    || matches!(ty, RegType::PtrToTcpSockOrNull { .. })
+                    || matches!(ty, RegType::PtrToCpumask { .. })
+                    || matches!(ty, RegType::PtrToCpumaskOrNull { .. })
+                    || matches!(ty, RegType::PtrToArena { .. })
+                    || matches!(ty, RegType::PtrToArenaOrNull { .. })
+                    || matches!(ty, RegType::PtrToCgroup { .. })
+                    || matches!(ty, RegType::PtrToCgroupOrNull { .. })
+                    || matches!(ty, RegType::PtrToBtfId { .. })
+                    || matches!(ty, RegType::PtrToOwnedKptr { .. })
+                    || matches!(ty, RegType::PtrToMapKptr { .. });
+                !(!matches!(ty, RegType::ScalarValue) && const_off)
+            })
+            .collect();
+        let hidx = env.current_step_idx.or(state.history_idx);
+        hidx.and_then(|hidx| env.bcf_suffix_base_pc_and_cache_id(hidx, state.parent_cache_id, &targets))
+            .and_then(|(_base_pc, base_cid)| env.cached_prev_insn_pc(base_cid))
+    };
     if std::env::var("ZOVIA_DUMP_DISCHARGE").ok().as_deref() == Some("1") {
-        eprintln!("[disc] reject@pc={} base_pc={:?}", state.pc, base_pc);
+        eprintln!("[disc] reject@pc={} base_pc={:?} prev_insn_pc={:?}",
+                  state.pc, base_pc, prev_insn_pc);
     }
-    let Some(ok) = try_prove_unreachable(state, base_pc) else {
+    let Some(ok) = try_prove_unreachable(state, base_pc, prev_insn_pc) else {
         return false;
     };
     let entry = RefineEntry::new(

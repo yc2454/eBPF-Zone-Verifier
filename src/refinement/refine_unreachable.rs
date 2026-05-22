@@ -38,14 +38,19 @@ pub struct UnreachableOk {
 pub fn try_prove_unreachable(
     state: &State,
     base_pc: Option<usize>,
+    prev_insn_pc: Option<usize>,
 ) -> Option<UnreachableOk> {
     let bcf_ref = state.bcf.as_ref()?;
     let mut sym: SymbolicState = (**bcf_ref).clone();
 
     // Mirror bcf_track's suffix-only emission: drop path_conds emitted
-    // strictly before the suffix base.
+    // strictly before the suffix base. `prev_insn_pc` enables the
+    // kernel's `record_path_cond`-at-replay-start mechanism: if the
+    // cached base state's immediate predecessor (vstate->last_insn_idx)
+    // was a scalar conditional branch, that branch's cond + its var's
+    // bound preds get retained even when their source_pc < base_pc.
     if let Some(bp) = base_pc {
-        sym.filter_path_conds_from_pc(bp);
+        sym.filter_path_conds_from_pc(bp, prev_insn_pc);
     }
 
     if std::env::var("ZOVIA_BCF_DUMP_PATH_COND_PCS").is_ok() {
