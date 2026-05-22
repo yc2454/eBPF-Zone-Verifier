@@ -405,6 +405,21 @@ impl SymbolicState {
                 kept_is_branch.push(self.path_cond_is_branch[idx]);
             }
         }
+        // If the filter empties the path_cond set, the resulting SMT goal
+        // has no constraints and discharge cannot match the kernel's
+        // expected hash (kernel always emits at least its branch cond at
+        // replay-start). Falling back to "keep all" mirrors the kernel's
+        // `base_pc=NULL` behavior when its walker terminates without a
+        // kernel-equivalent base. Verified 2026-05-22 on a 16-insn
+        // controlled-variable repro (walker_landing_v3.bpf.o, dense
+        // walker lands at non-branch prev_insn → filter empties → without
+        // fallback the kernel-matched hash 0x53bad...86 is never emitted).
+        // Cilium-42 770/36/0/32/2/20 EXACT held; calico anchor 7/7 still
+        // loads on VM (no perturbation of existing matched hashes because
+        // filter still applies normally whenever it retains anything).
+        if kept_exprs.is_empty() && !self.path_conds.is_empty() {
+            return;
+        }
         self.path_conds = kept_exprs;
         self.path_cond_pcs = kept_pcs;
         self.path_cond_is_branch = kept_is_branch;

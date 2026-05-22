@@ -40,6 +40,7 @@ pub fn try_refine_stack_oob(
     instruction_offset: i64,
     size: i64,
     base_pc: Option<usize>,
+    prev_insn_pc: Option<usize>,
 ) -> Option<RefineOk> {
     let bcf_ref = state.bcf.as_ref()?;
     let mut sym: SymbolicState = (**bcf_ref).clone();
@@ -47,12 +48,14 @@ pub fn try_refine_stack_oob(
     // drop path_conds emitted at PCs strictly before the suffix's base
     // PC (the point at which the refine target reg's definition chain
     // has bottomed out). `None` ⇒ keep all path_conds (sound, just not
-    // as tight as the kernel's runtime CONJ).
+    // as tight as the kernel's runtime CONJ). `prev_insn_pc` enables
+    // the kernel's `record_path_cond`-at-replay-start mechanism: if
+    // the cached base state's immediate predecessor was a scalar
+    // conditional branch, retain that branch's cond + its var's bound
+    // preds even when source_pc < base_pc (mirror of
+    // try_emit_path_unreachable_entry's wiring; landed 2026-05-22).
     if let Some(bp) = base_pc {
-        // TODO(faithful): plumb prev_insn_pc from caller (mirror of
-        // refine_unreachable's wiring) so the kernel's record_path_cond
-        // at replay-start is also captured for stack-bounds refinement.
-        sym.filter_path_conds_from_pc(bp, None);
+        sym.filter_path_conds_from_pc(bp, prev_insn_pc);
     }
 
     // Step 1: get the variable part of base's offset from r10. After the
