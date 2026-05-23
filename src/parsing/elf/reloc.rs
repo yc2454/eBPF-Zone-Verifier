@@ -1148,12 +1148,30 @@ pub fn discover_bpf_call_targets<P: AsRef<Path>>(
                 Some(s) => s,
                 None => continue,
             };
-            let name = elf.strtab.get_at(sym.st_name).unwrap_or("");
+            let raw_name = elf.strtab.get_at(sym.st_name).unwrap_or("");
 
             // Skip helper functions
-            if helper_id_by_name(name).is_some() {
+            if helper_id_by_name(raw_name).is_some() {
                 continue;
             }
+
+            // Resolve section-symbol cross-section calls (e.g. bcc
+            // ksnoop's `kprobe/foo -> .text:ksnoop` call, encoded as
+            // R_BPF_64_32 against `.text` STT_SECTION). Without this
+            // the dispatch below sees an empty name, resolve_symbol_location
+            // returns None, and the cross-section target goes undetected →
+            // loader falls back to single-section parsing → subprog body
+            // missing → "last insn at pc 0 is not an exit or jmp".
+            let resolved_name = resolve_section_symbol_call_name(
+                &elf,
+                &buf,
+                &sym,
+                raw_name,
+                r_type,
+                target_sec_idx,
+                reloc.r_offset,
+            );
+            let name = resolved_name.as_deref().unwrap_or(raw_name);
 
             if r_type == R_BPF_64_32 {
                 // Cross-section BPF-to-BPF call (unchanged behavior).
