@@ -806,8 +806,28 @@ fn run_worklist(
         // 9 known kernel discharge hashes.
         let kernel_engine_and =
             std::env::var("ZOVIA_KERNEL_ENGINE_AND").ok().as_deref() == Some("1");
+        // Under kernel-engine (without AND): use the per-path heuristic
+        // ALONE. Kernel runs linear DFS, so its env-wide
+        // `jmps_processed`/`insn_processed` are de facto per-path. Zovia's
+        // env-wide counter is contaminated by worklist interleave (work
+        // done on sibling DFS branches between this path's parent-cache
+        // and this insn), which inflates `env_jd`/`env_id` at jump-target
+        // prune-points and causes spurious caches the kernel doesn't make.
+        //
+        // Concretely on calico c17 from_tnl_debug: at PC 1319 (jump target
+        // sibling-arrival), env_jd=2 env_id=26 (inflated) → env_h=true
+        // while path_jd=2 path_id=4 → path_h=false. Kernel jd=1 id=28 →
+        // false. The OR-of-both produced an unwanted cache at 1319,
+        // burning the heuristic budget so PC 1340 (post-call) couldn't
+        // cache → BCF discharge walker mislanded → wrong canonical hash
+        // → kernel MISS → -EACCES. Switching to path-only at PC 1340 lets
+        // path_jd=3 path_id=22 → path_h=true → cache → correct hash.
+        //
+        // AND mode keeps both for diagnostic comparison.
         let combined_heuristic = if kernel_engine_and {
             env_heuristic && path_heuristic
+        } else if kernel_engine {
+            path_heuristic
         } else {
             env_heuristic || path_heuristic
         };
