@@ -93,6 +93,18 @@ pub struct SymbolicState {
     next_slot: u32,
     /// Per-register expression index (`None` until materialized).
     pub reg_expr: [Option<u32>; NUM_REGS],
+    /// Parallel to `reg_expr`: the PC at which each reg's currently-cached
+    /// `bcf_expr` was materialized (either via lazy `reg_expr` first-use,
+    /// `bind_reg` from a spill/fill propagation, or any other binder).
+    /// `None` iff the reg's bcf_expr is uncached. Used at canonical-hash
+    /// time to compute "would this reg be uncached in a fresh kernel
+    /// `bcf_track` replay starting at base_pc?" — equivalent to
+    /// `reg_expr_pc.is_none() || reg_expr_pc.unwrap() < base_pc`.
+    /// Ground-truth probe 2026-05-23 shows kernel emits `K==K` iff
+    /// `dst.bcf_pre=-1` at branch time, i.e. the reg was not
+    /// materialized within the replay window. See
+    /// [[feedback_kernel_probe_record_path_cond_2026-05-23]].
+    pub reg_expr_pc: [Option<usize>; NUM_REGS],
     /// Path-condition predicates (each a u32 idx into `exprs`).
     pub path_conds: Vec<u32>,
     /// Parallel to `path_conds`: the source PC at which each predicate was
@@ -112,14 +124,20 @@ pub struct SymbolicState {
     pub path_cond_is_branch: Vec<bool>,
     /// Parallel to `path_conds`: when this entry was pushed by a branch
     /// JMP whose narrowing collapses the LHS reg to a const K on the
-    /// side that took it, holds `Some((K, op, jmp32))`. `None` for any
-    /// other case (non-narrowing branch, bound pred push, etc.). Used
-    /// at BCF-refinement (canonical hash time) to rewrite the conjunct
-    /// to `K op K` literal — mirroring kernel `record_path_cond` after
-    /// `___mark_reg_known` resets `bcf_expr=-1` in a fresh `bcf_track`
-    /// replay (verifier.c:21024 + 2497 + 24536-37). Kernel-probe ground
-    /// truth 2026-05-23 — see feedback_kernel_probe_record_path_cond_2026-05-23.md
-    pub path_cond_narrowed_const: Vec<Option<(u64, u8, bool)>>,
+    /// side that took it, holds `Some((K, op, jmp32, lhs_materialize_pc))`.
+    /// The 4th element is the PC at which the LHS reg's bcf_expr was
+    /// materialized at branch time (`None` iff LHS was uncached then).
+    /// `None` for non-narrowing branches or bound pred pushes.
+    ///
+    /// At BCF-refinement, the rewrite to `K op K` fires iff in a fresh
+    /// kernel `bcf_track` replay starting at `base_pc`, the LHS would
+    /// be uncached at this branch — equivalent to
+    /// `lhs_materialize_pc.is_none() || lhs_materialize_pc.unwrap() < base_pc`.
+    /// Mirrors kernel `record_path_cond` post-`___mark_reg_known`
+    /// + fresh-replay semantics (verifier.c:21024 + 2497 + 24536-37).
+    /// Kernel-probe ground truth 2026-05-23 — see
+    /// feedback_kernel_probe_record_path_cond_2026-05-23.md.
+    pub path_cond_narrowed_const: Vec<Option<(u64, u8, bool, Option<usize>)>>,
     /// Final refinement condition (set by a site-specific callback).
     pub refine_cond: Option<u32>,
     /// Transient: the PC currently being processed by symbolic-tracking
@@ -345,7 +363,7 @@ impl SymbolicState {
         &mut self,
         pred_idx: u32,
         pc: usize,
-        narrowed: Option<(u64, u8, bool)>,
+        narrowed: Option<(u64, u8, bool, Option<usize>)>,
     ) {
         self.path_conds.push(pred_idx);
         self.path_cond_pcs.push(pc);
@@ -530,9 +548,14 @@ impl SymbolicState {
 
     // ---------- per-register bindings ----------
 
-    /// Bind register `reg` to symbolic expression `idx`.
+    /// Bind register `reg` to symbolic expression `idx`. Records the
+    /// current PC as the materialization PC (see `reg_expr_pc`); used
+    /// at canonical-hash time to decide whether the bind would have
+    /// happened inside or outside a fresh kernel `bcf_track` replay
+    /// starting at base_pc.
     pub fn bind_reg(&mut self, reg: usize, idx: u32) {
         self.reg_expr[reg] = Some(idx);
+        self.reg_expr_pc[reg] = Some(self.current_pc);
     }
 
     /// Get the bound expression for `reg`.
@@ -540,11 +563,18 @@ impl SymbolicState {
         self.reg_expr[reg]
     }
 
+    /// Get the PC at which `reg`'s currently-cached `bcf_expr` was
+    /// materialized. `None` iff uncached. See `reg_expr_pc` field doc.
+    pub fn get_reg_pc(&self, reg: usize) -> Option<usize> {
+        self.reg_expr_pc[reg]
+    }
+
     /// Clear the bound expression for `reg` (e.g., before a clobbering write
     /// whose new expression hasn't been built yet). Mirrors BCF's
     /// `reg->bcf_expr = -1` clears.
     pub fn clear_reg(&mut self, reg: usize) {
         self.reg_expr[reg] = None;
+        self.reg_expr_pc[reg] = None;
     }
 
     /// Append a typed predicate `op(lhs, val(imm, bit32))` and register it
@@ -663,6 +693,7 @@ impl SymbolicState {
             None => {
                 let idx = self.materialize_reg(reg, bounds);
                 self.reg_expr[reg] = Some(idx);
+                self.reg_expr_pc[reg] = Some(self.current_pc);
                 idx
             }
         };

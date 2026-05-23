@@ -71,7 +71,27 @@ pub fn try_prove_unreachable(
     debug_assert_eq!(sym.path_conds.len(), sym.path_cond_narrowed_const.len());
     let original_path_conds = sym.path_conds.clone();
     for i in 0..sym.path_conds.len() {
-        if let Some((k, op_byte, jmp32)) = sym.path_cond_narrowed_const[i] {
+        if let Some((k, op_byte, jmp32, lhs_pc)) = sym.path_cond_narrowed_const[i] {
+            // Rewrite gate: in a fresh kernel `bcf_track` replay starting
+            // at base_pc, the LHS reg's bcf_expr is uncached iff it had
+            // never been materialized OR its previous materialization was
+            // before base_pc (invisible in the fresh expr table). Skip
+            // rewrite if LHS was cached at or after base_pc — kernel
+            // would have returned the cached var and emitted `VAR op K`,
+            // preserving the binding constraint needed for cvc5 to prove
+            // the overall formula unsat (e.g. wepfd PC 1474 R1==6 cached
+            // via spill/fill propagation from R7's PC 1467 spill, pairs
+            // with R7!=6 at PC 1468 for the contradiction). Conservatively
+            // rewrite when base_pc is unknown (mirrors kernel's
+            // `base_pc=NULL` keep-all behavior).
+            let lhs_uncached_in_fresh_replay = match (lhs_pc, base_pc) {
+                (None, _) => true,
+                (Some(_), None) => false,
+                (Some(p), Some(bp)) => p < bp,
+            };
+            if !lhs_uncached_in_fresh_replay {
+                continue;
+            }
             let lhs = sym.add_val(k, jmp32);
             let rhs = sym.add_val(k, jmp32);
             let new_pred = sym.add_pred(op_byte, lhs, rhs);

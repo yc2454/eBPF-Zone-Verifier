@@ -110,6 +110,18 @@ fn record_branch_path_conds(
     // Set current_pc *before* reg_expr to tag any bound preds emitted
     // during lazy materialization with this JMP's source PC.
     then_bcf.set_current_pc(src_pc);
+    // Snapshot the PC at which LHS's bcf_expr was most recently
+    // materialized (`None` iff uncached) BEFORE the reg_expr call (which
+    // may lazy-materialize and set the PC to `src_pc`). At refinement
+    // time, the rewrite to `K op K` is gated on `would the LHS be
+    // uncached in a fresh kernel bcf_track replay starting at base_pc?`
+    // — true iff this captured PC is None or < base_pc. Kernel's
+    // `bcf_reg_expr` returns a `bcf_val(K)` literal only when the
+    // reg's bcf_expr is `-1` on entry (verifier.c:902 `tnum_is_const`
+    // path); when cached (spill/fill propagation, prior materialize),
+    // the cached var is returned and the predicate stays `VAR op K`.
+    // Ground-truth probe 2026-05-23.
+    let lhs_materialize_pc: Option<usize> = then_bcf.get_reg_pc(l_idx);
     let cmp_l = then_bcf.reg_expr(l_idx, &lhs_bounds, jmp32);
     let cmp_r = match right {
         Operand::Imm(c) => {
@@ -152,16 +164,24 @@ fn record_branch_path_conds(
         Operand::Imm(c) => Some(if jmp32 { (*c as u32) as u64 } else { *c as u64 }),
         _ => None,
     };
-    let (narrow_then, narrow_else): (Option<(u64, u8, bool)>, Option<(u64, u8, bool)>) =
-        match (op, imm_k, std_ops) {
-            (CmpOp::Eq, Some(k), Some((op_then, _))) => {
-                (Some((k, op_then, jmp32)), None)
-            }
-            (CmpOp::Ne, Some(k), Some((_, op_else))) => {
-                (None, Some((k, op_else, jmp32)))
-            }
-            _ => (None, None),
-        };
+    // Emit K==K-rewrite metadata for the side whose narrowing collapses
+    // LHS to a const K. The rewrite-gate decision is deferred to
+    // refinement time (where base_pc is known): we record the LHS's
+    // materialization PC here, and `try_prove_unreachable` rewrites iff
+    // that PC is None or < base_pc (i.e. uncached in a fresh replay
+    // starting at base_pc).
+    let (narrow_then, narrow_else): (
+        Option<(u64, u8, bool, Option<usize>)>,
+        Option<(u64, u8, bool, Option<usize>)>,
+    ) = match (op, imm_k, std_ops) {
+        (CmpOp::Eq, Some(k), Some((op_then, _))) => {
+            (Some((k, op_then, jmp32, lhs_materialize_pc)), None)
+        }
+        (CmpOp::Ne, Some(k), Some((_, op_else))) => {
+            (None, Some((k, op_else, jmp32, lhs_materialize_pc)))
+        }
+        _ => (None, None),
+    };
 
     // Now mirror the **whole post-hook DAG** into state_else's bcf. The
     // pre-hook DAGs were identical (state_else.bcf was cloned from state
