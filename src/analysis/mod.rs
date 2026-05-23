@@ -356,21 +356,35 @@ pub fn analyze_program_full(
     }
 
     // --- BCF bundle emit ---
-    if let Some(path) = config.bcf_bundle_out.as_deref() {
-        if !env.bcf_proofs.is_empty() && env.error.is_none() {
-            match crate::refinement::bundle::write_bundle(
-                std::path::Path::new(path),
-                &env.bcf_proofs,
-            ) {
-                Ok(bytes) => info!(
-                    target: "app",
-                    "[bcf] wrote bundle: {} ({} entries, {} bytes)",
-                    path,
-                    env.bcf_proofs.len(),
-                    bytes
-                ),
-                Err(e) => error!(target: "app", "[bcf] bundle write failed ({}): {}", path, e),
-            }
+    // Each entry in bcf_proofs is an INDEPENDENT cvc5-proven UNSAT goal
+    // for a specific rejection site discharged earlier in this analysis.
+    // Dropping them when env.error is set (i.e. zovia hit a later
+    // precision bug) silently loses real, verified proofs that would
+    // make the kernel-side BCF discharge HIT. The bundle's downstream
+    // consumer (kernel discharge in test_loader) treats each entry as
+    // standalone, so partial output is safe and strictly better than
+    // empty.
+    // Concretely: calico to_hep_debug_co-re's calico_tc_host_ct_conflict
+    // discharges PC 377 (hash 0x9492...) successfully, then hits a
+    // zovia-side precision failure at PC 535 (R4 !read_ok). Without this
+    // change, the 0x9492 proof is dropped and the kernel MISSes despite
+    // zovia having computed the correct proof.
+    if let Some(path) = config.bcf_bundle_out.as_deref()
+        && !env.bcf_proofs.is_empty()
+    {
+        match crate::refinement::bundle::write_bundle(
+            std::path::Path::new(path),
+            &env.bcf_proofs,
+        ) {
+            Ok(bytes) => info!(
+                target: "app",
+                "[bcf] wrote bundle: {} ({} entries, {} bytes){}",
+                path,
+                env.bcf_proofs.len(),
+                bytes,
+                if env.error.is_some() { " (analysis failed; partial)" } else { "" },
+            ),
+            Err(e) => error!(target: "app", "[bcf] bundle write failed ({}): {}", path, e),
         }
     }
 
@@ -508,6 +522,28 @@ pub fn analyze_exception_cb(
 /// Maps actually used by this program are derived from `pc_to_reloc`
 /// (RelocKind::MapPtr / MapValue), so other progs in the same ELF that
 /// reference different maps are unaffected.
+
+/// Trace helper for ZOVIA_TRACE_PC_RANGE=LO:HI focused tracing.
+/// Returns true if `pc` is within the configured trace range.
+pub(crate) fn trace_pc_in_range(pc: usize) -> bool {
+    static RANGE: std::sync::OnceLock<Option<(usize, usize)>> = std::sync::OnceLock::new();
+    let range = RANGE.get_or_init(|| {
+        std::env::var("ZOVIA_TRACE_PC_RANGE").ok().and_then(|s| {
+            let parts: Vec<&str> = s.split(':').collect();
+            if parts.len() == 2 {
+                Some((parts[0].trim().parse().ok()?, parts[1].trim().parse().ok()?))
+            } else {
+                None
+            }
+        })
+    });
+    if let Some((lo, hi)) = range {
+        *lo <= pc && pc <= *hi
+    } else {
+        false
+    }
+}
+
 fn check_map_prog_compatibility(env: &VerifierEnv) -> Option<VerificationError> {
     use crate::ast::ProgramKind;
     use crate::parsing::btf::SpecialFieldKind;
@@ -594,6 +630,53 @@ fn run_worklist(
     let diag_pcs = crate::analysis::machine::env::diag_pcs();
     let mut diag_arrivals: HashMap<usize, usize> = HashMap::new();
 
+    // One-shot dump of AST instr at trace PCs (WT diagnostic).
+    if std::env::var("ZOVIA_DUMP_AST").is_ok() {
+        for pc in 0..prog.instrs.len() {
+            if trace_pc_in_range(pc) {
+                eprintln!("[AST] pc={} instr={:?}", pc, prog.instrs[pc]);
+            }
+        }
+    }
+    // Dump jmp_point + prune_point flags + predecessor instr kind (to
+    // identify which mark site fired). WT diagnostic.
+    if std::env::var("ZOVIA_DUMP_JMP_POINTS").ok().as_deref() == Some("1") {
+        for pc in 0..prog.instrs.len() {
+            if !trace_pc_in_range(pc) { continue; }
+            let aux = &env.insn_aux_data[pc];
+            if !aux.jmp_point { continue; }
+            // Identify likely mark source: look at pc-1 for Call/Jmp/CallRel
+            // (post-call fallthrough / unconditional jmp target) or scan for
+            // an If/Jmp/CallRel/MayGoto with target=pc earlier.
+            let pred_kind: String = if pc > 0 {
+                match &prog.instrs[pc - 1] {
+                    Instr::Call { .. } => "post-Call".into(),
+                    Instr::CallRel { .. } => "post-CallRel".into(),
+                    Instr::Jmp { .. } => "post-Jmp(unreachable)".into(),
+                    Instr::MayGoto { .. } => "post-MayGoto-FT".into(),
+                    Instr::If { .. } => "post-If-FT".into(),
+                    _ => "other".into(),
+                }
+            } else { "PC0".into() };
+            // Check if any earlier insn targets this PC
+            let mut tgt_kinds: Vec<&str> = Vec::new();
+            for (sp, si) in prog.instrs.iter().enumerate() {
+                match si {
+                    Instr::If { target, .. } if *target == pc => tgt_kinds.push("If-target"),
+                    Instr::Jmp { target } if *target == pc => tgt_kinds.push("Jmp-target"),
+                    Instr::MayGoto { target } if *target == pc => tgt_kinds.push("MayGoto-target"),
+                    Instr::CallRel { target } if *target == pc => tgt_kinds.push("CallRel-target"),
+                    _ => {}
+                }
+                let _ = sp;
+            }
+            eprintln!(
+                "[JMP_PT] pc={} pred={} target_of={:?} (prune={} force_cp={})",
+                pc, pred_kind, tgt_kinds, aux.prune_point, aux.force_checkpoint
+            );
+        }
+    }
+
     while let Some(mut state) = worklist.pop_back() {
         // Per-path counter bump for the kernel-engine sparse-cache
         // heuristic (`ZOVIA_KERNEL_ENGINE=1`). Counts THIS path's
@@ -615,6 +698,45 @@ fn run_worklist(
             && env.insn_aux_data[state.pc].jmp_point
         {
             state.jmp_history_cnt = state.jmp_history_cnt.saturating_add(1);
+            if std::env::var("ZOVIA_TRACE_JMP_HIST_BUMP").ok().as_deref() == Some("1")
+                && trace_pc_in_range(state.pc)
+            {
+                eprintln!(
+                    "[JH_BUMP] pc={} new_cnt={} parent_cache={:?}",
+                    state.pc, state.jmp_history_cnt, state.parent_cache_id
+                );
+            }
+            // One-shot lineage dump: when this state first hits the
+            // target (pc, new_cnt) combo, walk history backward and
+            // print every jmp_point PC the lineage visited. WT
+            // diagnostic.
+            if let (Ok(target_pc), Ok(target_cnt)) = (
+                std::env::var("ZOVIA_DUMP_LINEAGE_PC").and_then(|s| s.parse::<usize>().map_err(|_| std::env::VarError::NotPresent)),
+                std::env::var("ZOVIA_DUMP_LINEAGE_CNT").and_then(|s| s.parse::<u64>().map_err(|_| std::env::VarError::NotPresent)),
+            ) {
+                static DUMPED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+                if state.pc == target_pc && state.jmp_history_cnt as u64 == target_cnt
+                    && !DUMPED.swap(true, std::sync::atomic::Ordering::SeqCst)
+                {
+                    eprintln!("[LINEAGE] state at pc={} cnt={} parent_cache_id={:?}", state.pc, state.jmp_history_cnt, state.parent_cache_id);
+                    let mut hidx = state.history_idx;
+                    let mut depth = 0;
+                    let mut bumps = 0;
+                    while let Some(i) = hidx {
+                        let step = match env.history.get(i) { Some(s) => s, None => break };
+                        let pc = step.pc;
+                        let is_jp = env.insn_aux_data.get(pc).map(|a| a.jmp_point).unwrap_or(false);
+                        if is_jp {
+                            bumps += 1;
+                            eprintln!("[LINEAGE] depth={} pc={} JMP_POINT (bump #{})", depth, pc, bumps);
+                        }
+                        depth += 1;
+                        hidx = step.parent_idx;
+                        if depth > 5000 { break; }
+                    }
+                    eprintln!("[LINEAGE] total_jmp_point_bumps_in_history={} (counter value={})", bumps, state.jmp_history_cnt);
+                }
+            }
         }
         // Per-instruction scope for the BCF `detect_conflict_eq`
         // path-unreachable flag: only the instruction that set it (its
@@ -858,11 +980,44 @@ fn run_worklist(
         if outer_gate && add_new_state {
             let cache_id =
                 merging::record_state(env, state.clone(), config.max_states_per_pc);
+            if trace_pc_in_range(state.pc) {
+                let n_cached = env.explored_states.get(&state.pc).map(|v| v.len()).unwrap_or(0);
+                eprintln!(
+                    "[TRACE] CACHE pc={} -> cache_id={} parent={:?} (n_now={}, force_new={} env_jd={} env_id={} path_jd={} path_id={} jmp_hist={} env_h={} path_h={} combined={} outer_gate={})",
+                    state.pc, cache_id, state.parent_cache_id, n_cached,
+                    force_new_state, env_jmps_delta, env_insns_delta, path_jmps_delta, path_insns_delta,
+                    state.jmp_history_cnt,
+                    env_heuristic, path_heuristic, combined_heuristic,
+                    outer_gate,
+                );
+            }
             state.parent_cache_id = Some(cache_id);
             env.prev_jmps_processed = env.jmps_processed;
             env.prev_insn_processed = env.insn_processed;
             state.prev_jmp_at_cache = state.path_jmp_count;
             state.prev_insn_at_cache = state.path_insn_count;
+            // Kernel `clear_jmp_history(cur)` at verifier.c v6.15 L20645:
+            // at every add_new_state event, kernel resets the current
+            // state's jmp_history_cnt to 0. Zovia must mirror — otherwise
+            // the counter grows unboundedly across cache events and the
+            // long-history safety valve (jmp_history_cnt > 40) fires
+            // unnecessarily at every later prune-point, force-caching
+            // states the kernel doesn't cache. Concretely on anchor
+            // calico_tc_main: pre-reset, zovia hit jmp_history_cnt=58 at
+            // PC 1878 (kernel's value: 4) and force-cached → walker base
+            // shifted from kernel's PC 1683 to PC 1878 → first 23
+            // canonical-encoding bytes filtered out → hash 0xd13031db
+            // missed.
+            state.jmp_history_cnt = 0;
+        } else if trace_pc_in_range(state.pc) {
+            eprintln!(
+                "[TRACE] NOCACHE pc={} parent={:?} (force_new={} env_jd={} env_id={} path_jd={} path_id={} jmp_hist={} env_h={} path_h={} combined={} outer_gate={})",
+                state.pc, state.parent_cache_id,
+                force_new_state, env_jmps_delta, env_insns_delta, path_jmps_delta, path_insns_delta,
+                state.jmp_history_cnt,
+                env_heuristic, path_heuristic, combined_heuristic,
+                outer_gate,
+            );
         }
 
         // B. Global Complexity Limit (only count non-pruned states)
