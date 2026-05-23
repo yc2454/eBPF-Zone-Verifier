@@ -489,6 +489,60 @@ pub fn should_prune(
             if prev.dfs_paths == 0 {
                 continue;
             }
+            // Kernel `states_maybe_looping` (verifier.c v6.15 L20137):
+            // memcmp(regs, ..., offsetof(struct bpf_reg_state, frameno))
+            // compares EVERY field including `reg.parent` (the upward
+            // pointer to the predecessor state's matching reg, used by
+            // precision back-propagation). Two iters reaching the same
+            // PC with identical *values* but distinct DFS parent chains
+            // have different `reg.parent` pointers → memcmp non-zero →
+            // states_maybe_looping=false → kernel SKIPS the inf-loop
+            // check and falls through to the regular subsumption-prune
+            // path (where states_equal with RANGE_WITHIN/EXACT acts as
+            // a HIT, not a reject).
+            //
+            // Zovia's `state_exact_equal` only compares VALUES (types,
+            // intervals, tnums, scalar_ids) — no parent-pointer
+            // equivalent — so it false-positives on sibling-DFS-branch
+            // value convergence. To approximate the kernel's
+            // discrimination, require prev's cache_id to appear in
+            // cur's parent_cache_id lineage: only then is this a TRUE
+            // single-path cycle. Convergent siblings get the prune
+            // path below (state_exact_equal => subsumption hit).
+            //
+            // Concretely on calico anchor new_flow_entrypoint (post
+            // jmp_history_cnt fix, 2026-05-22): R7 differs at loop
+            // head PC 2844 across iterations (R7 increments) but is
+            // overwritten to a constant in the loop body, so two iters
+            // reach the loop tail PC 3059 with byte-identical reg
+            // values. Without the lineage gate the trap fires; with
+            // it, sibling-iter convergence falls through to the regular
+            // prune path and exploration terminates correctly.
+            let prev_cid = prev.cache_id;
+            let in_lineage = prev_cid.is_some() && {
+                let mut cur_anc = state.parent_cache_id;
+                let mut steps = 0usize;
+                let mut found = false;
+                while let Some(cid) = cur_anc {
+                    if Some(cid) == prev_cid {
+                        found = true;
+                        break;
+                    }
+                    if steps > 4096 {
+                        break;
+                    }
+                    steps += 1;
+                    cur_anc = env
+                        .cache_loc_by_id
+                        .get(&cid)
+                        .and_then(|(p, i)| env.explored_states.get(p)?.get(*i))
+                        .and_then(|s| s.parent_cache_id);
+                }
+                found
+            };
+            if !in_lineage {
+                continue;
+            }
             if prev.may_goto_depth != state.may_goto_depth {
                 continue;
             }
