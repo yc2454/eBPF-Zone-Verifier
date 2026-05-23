@@ -70,6 +70,7 @@ pub fn try_prove_unreachable(
     // specific entry.
     debug_assert_eq!(sym.path_conds.len(), sym.path_cond_narrowed_const.len());
     let original_path_conds = sym.path_conds.clone();
+    let mut orphaned_vars: std::collections::HashSet<u32> = std::collections::HashSet::new();
     for i in 0..sym.path_conds.len() {
         if let Some((k, op_byte, jmp32, lhs_pc)) = sym.path_cond_narrowed_const[i] {
             // Rewrite gate: in a fresh kernel `bcf_track` replay starting
@@ -92,11 +93,54 @@ pub fn try_prove_unreachable(
             if !lhs_uncached_in_fresh_replay {
                 continue;
             }
+            // Collect the OLD pred's VAR references before overwriting —
+            // these vars are now orphaned in this discharge's canonical
+            // encoding (kernel's fresh replay emits `bcf_val(K)` directly
+            // and never materializes the VAR, so its bound preds don't
+            // exist in kernel's bcf graph). Below we drop matching bound
+            // preds from the filtered path_conds for byte-faithful hash.
+            let old_pred = sym.path_conds[i];
+            for v in sym.collect_vars(old_pred) {
+                orphaned_vars.insert(v);
+            }
             let lhs = sym.add_val(k, jmp32);
             let rhs = sym.add_val(k, jmp32);
             let new_pred = sym.add_pred(op_byte, lhs, rhs);
             sym.path_conds[i] = new_pred;
         }
+    }
+    // Drop bound-pred path_conds whose only VAR references are now
+    // orphaned by the K==K rewrites above. Mirrors kernel's
+    // fresh-replay behavior: when `bcf_reg_expr` takes the
+    // `tnum_is_const → bcf_val(K)` path (no `bcf_bound_reg32` call),
+    // no bound preds exist for that VAR in the kernel's bcf graph.
+    // Zovia inherits the bound preds from its full-trace bcf state
+    // (kept by `filter_path_conds_from_pc`'s subset rule for vars(L)),
+    // but after we rewrite L to `K op K`, those bound preds become
+    // canonical-hash garbage (extra conjuncts kernel doesn't have).
+    // Drop only true bound preds (is_branch=false) — branches always
+    // stay regardless of var orphanage.
+    if !orphaned_vars.is_empty() {
+        let mut kept_conds = Vec::with_capacity(sym.path_conds.len());
+        let mut kept_pcs = Vec::with_capacity(sym.path_cond_pcs.len());
+        let mut kept_is_branch = Vec::with_capacity(sym.path_cond_is_branch.len());
+        let mut kept_narrowed = Vec::with_capacity(sym.path_cond_narrowed_const.len());
+        for i in 0..sym.path_conds.len() {
+            let drop = !sym.path_cond_is_branch[i] && {
+                let vars = sym.collect_vars(sym.path_conds[i]);
+                !vars.is_empty() && vars.is_subset(&orphaned_vars)
+            };
+            if !drop {
+                kept_conds.push(sym.path_conds[i]);
+                kept_pcs.push(sym.path_cond_pcs[i]);
+                kept_is_branch.push(sym.path_cond_is_branch[i]);
+                kept_narrowed.push(sym.path_cond_narrowed_const[i]);
+            }
+        }
+        sym.path_conds = kept_conds;
+        sym.path_cond_pcs = kept_pcs;
+        sym.path_cond_is_branch = kept_is_branch;
+        sym.path_cond_narrowed_const = kept_narrowed;
     }
 
     if std::env::var("ZOVIA_BCF_DUMP_PATH_COND_PCS").is_ok() {

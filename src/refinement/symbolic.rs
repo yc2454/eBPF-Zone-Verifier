@@ -376,7 +376,7 @@ impl SymbolicState {
     /// `filter_path_conds_from_pc` to decide whether a sub-`base_pc`
     /// path_cond should be kept by virtue of referencing the same
     /// symbolic variables as the "immediate previous branch" cond.
-    fn collect_vars(&self, root: u32) -> std::collections::HashSet<u32> {
+    pub fn collect_vars(&self, root: u32) -> std::collections::HashSet<u32> {
         use crate::refinement::bcf::{BCF_OP_MASK, BCF_VAR};
         let mut vars = std::collections::HashSet::new();
         let mut stack = vec![root];
