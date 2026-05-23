@@ -1190,9 +1190,21 @@ impl<'a> VerifierEnv<'a> {
         let (pc, idx) = *self.cache_loc_by_id.get(&cache_id)?;
         let cached = self.explored_states.get(&pc)?.get(idx)?;
         let hidx = cached.history_idx?;
-        let breadcrumb = self.history.get(hidx)?;
-        let parent_idx = breadcrumb.parent_idx?;
-        Some(self.history.get(parent_idx)?.pc)
+        // `cached.history_idx` already points at the breadcrumb for the
+        // IMMEDIATELY PRECEDING insn: cache events fire BEFORE the current
+        // insn's `history.record`, so `state.history_idx` is still the
+        // value set when the successor was pushed in the prior iteration
+        // (= predecessor's breadcrumb). The previous code walked one step
+        // further via `.parent_idx`, returning the grandparent's PC —
+        // off-by-one against the kernel's `vstate->last_insn_idx`. For a
+        // state arriving at PC 1873 via the branch at PC 1746
+        // (`if w1 != w2 goto 1873`), the old code returned 1745 (the
+        // u16 load before the branch); `filter_path_conds_from_pc` then
+        // couldn't find a branch predicate at source_pc=1745, dropped the
+        // JNE(w1, w2) emitted at 1746, and the canonical hash diverged
+        // from the kernel's. Verified 2026-05-23: closes calico anchor
+        // (-EACCES → 7/7 loaded), no c17 regression.
+        Some(self.history.get(hidx)?.pc)
     }
 
     /// Companion to `bcf_suffix_base_pc`: same walk, but returns
