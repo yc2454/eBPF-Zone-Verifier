@@ -110,6 +110,16 @@ pub struct SymbolicState {
     /// [`filter_path_conds_from_pc`] to identify the "immediate
     /// previous branch" L without confusing it with bound preds.
     pub path_cond_is_branch: Vec<bool>,
+    /// Parallel to `path_conds`: when this entry was pushed by a branch
+    /// JMP whose narrowing collapses the LHS reg to a const K on the
+    /// side that took it, holds `Some((K, op, jmp32))`. `None` for any
+    /// other case (non-narrowing branch, bound pred push, etc.). Used
+    /// at BCF-refinement (canonical hash time) to rewrite the conjunct
+    /// to `K op K` literal — mirroring kernel `record_path_cond` after
+    /// `___mark_reg_known` resets `bcf_expr=-1` in a fresh `bcf_track`
+    /// replay (verifier.c:21024 + 2497 + 24536-37). Kernel-probe ground
+    /// truth 2026-05-23 — see feedback_kernel_probe_record_path_cond_2026-05-23.md
+    pub path_cond_narrowed_const: Vec<Option<(u64, u8, bool)>>,
     /// Final refinement condition (set by a site-specific callback).
     pub refine_cond: Option<u32>,
     /// Transient: the PC currently being processed by symbolic-tracking
@@ -322,6 +332,25 @@ impl SymbolicState {
         self.path_conds.push(pred_idx);
         self.path_cond_pcs.push(pc);
         self.path_cond_is_branch.push(true);
+        self.path_cond_narrowed_const.push(None);
+    }
+
+    /// Same as [`add_cond_at`] but also records the narrowed-LHS const
+    /// metadata (`Some((K, op_byte, jmp32))`) for kernel-mirror rewrite
+    /// of `VAR op K` → `K op K` at canonical-hash emission time. Use
+    /// when the branch transfer has confirmed LHS narrowed to K on this
+    /// side (e.g. JEQ-K taken / JNE-K not-taken). Mirrors kernel
+    /// `record_path_cond` post-`___mark_reg_known` semantics.
+    pub fn add_cond_at_narrowed(
+        &mut self,
+        pred_idx: u32,
+        pc: usize,
+        narrowed: Option<(u64, u8, bool)>,
+    ) {
+        self.path_conds.push(pred_idx);
+        self.path_cond_pcs.push(pc);
+        self.path_cond_is_branch.push(true);
+        self.path_cond_narrowed_const.push(narrowed);
     }
 
     /// Walk the expression tree rooted at `root` and return the set of
@@ -407,6 +436,7 @@ impl SymbolicState {
         let mut kept_exprs = Vec::with_capacity(self.path_conds.len());
         let mut kept_pcs = Vec::with_capacity(self.path_cond_pcs.len());
         let mut kept_is_branch = Vec::with_capacity(self.path_cond_is_branch.len());
+        let mut kept_narrowed = Vec::with_capacity(self.path_cond_narrowed_const.len());
         for (idx, &pc) in self.path_cond_pcs.iter().enumerate() {
             let is_branch = self.path_cond_is_branch[idx];
             let keep = pc == 0
@@ -437,6 +467,7 @@ impl SymbolicState {
                 kept_exprs.push(self.path_conds[idx]);
                 kept_pcs.push(pc);
                 kept_is_branch.push(is_branch);
+                kept_narrowed.push(self.path_cond_narrowed_const[idx]);
             }
         }
         // If the filter empties the path_cond set, the resulting SMT goal
@@ -457,6 +488,7 @@ impl SymbolicState {
         self.path_conds = kept_exprs;
         self.path_cond_pcs = kept_pcs;
         self.path_cond_is_branch = kept_is_branch;
+        self.path_cond_narrowed_const = kept_narrowed;
     }
 
     /// Set the PC tag for subsequently-emitted bound preds via
@@ -539,6 +571,7 @@ impl SymbolicState {
         self.path_conds.push(pred);
         self.path_cond_pcs.push(pc);
         self.path_cond_is_branch.push(false);
+        self.path_cond_narrowed_const.push(None);
         pred
     }
 

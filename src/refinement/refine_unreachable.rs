@@ -53,6 +53,32 @@ pub fn try_prove_unreachable(
         sym.filter_path_conds_from_pc(bp, prev_insn_pc);
     }
 
+    // Kernel-mirror K==K rewrite: for each branch path_cond that narrowed
+    // its LHS to a const K on the taken side, substitute the predicate
+    // expression with a fresh `K op K` literal. Mirrors kernel
+    // `bcf_track`'s fresh-replay where `bcf_reg_expr` re-materializes
+    // the dst via `tnum_is_const → bcf_val(K)` because the replay starts
+    // with `bcf_expr = -1`. Ground-truth probe 2026-05-23 confirms PC 1215
+    // emits `17 == 17` via this path (calico from_wep_fib_dsr_debug).
+    //
+    // Done as a graph rewrite (add fresh exprs, swap path_cond slot)
+    // rather than a full per-replay rebuild so existing cvc5 contradictions
+    // via spill/fill-propagated vars stay intact. The fallback below
+    // catches cases where K==K substitution removes a load-bearing
+    // constraint — falls back to the un-rewritten form and re-runs cvc5,
+    // preserving discharge soundness at the cost of byte-match for that
+    // specific entry.
+    debug_assert_eq!(sym.path_conds.len(), sym.path_cond_narrowed_const.len());
+    let original_path_conds = sym.path_conds.clone();
+    for i in 0..sym.path_conds.len() {
+        if let Some((k, op_byte, jmp32)) = sym.path_cond_narrowed_const[i] {
+            let lhs = sym.add_val(k, jmp32);
+            let rhs = sym.add_val(k, jmp32);
+            let new_pred = sym.add_pred(op_byte, lhs, rhs);
+            sym.path_conds[i] = new_pred;
+        }
+    }
+
     if std::env::var("ZOVIA_BCF_DUMP_PATH_COND_PCS").is_ok() {
         eprintln!(
             "[bcf] path-unreachable: {} path_conds (base_pc={:?})",
@@ -104,6 +130,36 @@ pub fn try_prove_unreachable(
         }
         Err(e) => {
             debug!("[bcf] path-unreachable: cvc5 declined ({})", e);
+            // Kernel-mirror rewrite (K==K) above may have removed a
+            // constraint that was load-bearing for unsat. Fallback: undo
+            // the rewrite and retry with the original VAR-form path_conds.
+            // Loses byte-match with kernel for this entry but preserves
+            // discharge for cases where the K==K rewrite weakens the
+            // formula (e.g. when other conjuncts don't independently pin
+            // the LHS via spill/fill propagation).
+            if sym.path_conds != original_path_conds {
+                sym.path_conds = original_path_conds;
+                let fallback_goal = match sym.path_conds.len() {
+                    0 => return None,
+                    1 => sym.path_conds[0],
+                    _ => {
+                        let pcs = sym.path_conds.clone();
+                        sym.add_conj(pcs)
+                    }
+                };
+                let smt2 = match smtlib::encode(&sym) {
+                    Ok(s) => s,
+                    Err(_) => return None,
+                };
+                if let Ok(bytes) = solver::solve(&smt2) {
+                    debug!("[bcf] path-unreachable: cvc5 accepted fallback ({} bytes)", bytes.len());
+                    return Some(UnreachableOk {
+                        proof_bytes: bytes,
+                        goal_root: fallback_goal,
+                        sym,
+                    });
+                }
+            }
             None
         }
     }

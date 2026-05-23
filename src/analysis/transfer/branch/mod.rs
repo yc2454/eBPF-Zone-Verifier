@@ -139,16 +139,40 @@ fn record_branch_path_conds(
         )
     };
 
+    // Kernel-mirror narrowed-LHS-to-const detection. For the side that
+    // takes a JEQ-K (taken side) or skips a JNE-K (not-taken side), LHS
+    // narrows to const K. We pre-compute K (the imm) and the op-byte +
+    // jmp32 width so canonical-hash time can rewrite `VAR op K` to
+    // `K op K`, matching kernel's fresh-replay `bcf_reg_expr` const-path
+    // (verifier.c:902 `tnum_is_const(reg->var_off)` → `bcf_val`). Only
+    // populated when `right` is BPF_K (`Operand::Imm`); reg-reg branches
+    // never produce K==K in kernel. Ground-truth probe 2026-05-23 — see
+    // feedback_kernel_probe_record_path_cond_2026-05-23.md.
+    let imm_k: Option<u64> = match right {
+        Operand::Imm(c) => Some(if jmp32 { (*c as u32) as u64 } else { *c as u64 }),
+        _ => None,
+    };
+    let (narrow_then, narrow_else): (Option<(u64, u8, bool)>, Option<(u64, u8, bool)>) =
+        match (op, imm_k, std_ops) {
+            (CmpOp::Eq, Some(k), Some((op_then, _))) => {
+                (Some((k, op_then, jmp32)), None)
+            }
+            (CmpOp::Ne, Some(k), Some((_, op_else))) => {
+                (None, Some((k, op_else, jmp32)))
+            }
+            _ => (None, None),
+        };
+
     // Now mirror the **whole post-hook DAG** into state_else's bcf. The
     // pre-hook DAGs were identical (state_else.bcf was cloned from state
     // before the hook), so a wholesale replace keeps both sides
     // consistent. Then append only the not-taken pred to state_else's
     // path_conds (state_then gets the taken pred).
     let snapshot = (**then_bcf).clone();
-    then_bcf.add_cond_at(pred_then, src_pc);
+    then_bcf.add_cond_at_narrowed(pred_then, src_pc, narrow_then);
     if let Some(else_bcf) = state_else.bcf.as_mut() {
         **else_bcf = snapshot;
-        else_bcf.add_cond_at(pred_else, src_pc);
+        else_bcf.add_cond_at_narrowed(pred_else, src_pc, narrow_else);
     }
 }
 
