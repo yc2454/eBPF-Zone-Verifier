@@ -258,6 +258,17 @@ fn transfer_endian(
     size: u32,
     width: Width,
 ) -> Vec<State> {
+    // Snapshot the PRE-be16 source bounds before the apply_and_imm
+    // narrowing below. Kernel `check_alu_op` BPF_END does
+    // `check_reg_arg(dst, SRC_OP)` FIRST — reading dst as source for
+    // bcf — which calls `bcf_reg_expr(dst)` with the reg's pre-be16
+    // bounds (typically the previous u16/u32 load's tnum, e.g.
+    // mask=0xffff after `w4 = *(u16 *)(...)`). This materializes a
+    // `VAR_U32 + bcf_bound_reg32` (ground-truth probe 2026-05-23 PC
+    // 1301: `path=VAR_U32 ... mask=0xffff umax=65535`). We mirror by
+    // calling reg_expr with these pre-bounds first.
+    let pre_endian_bounds = crate::analysis::transfer::alu::helpers::bcf_reg_bounds(&state, dst);
+
     // 1. Types: Endian ops destroy pointers -> Scalar
     state.types.set(dst, RegType::ScalarValue);
 
@@ -301,22 +312,44 @@ fn transfer_endian(
         state.domain.apply_and_imm(dst, 0xFFFF_FFFF);
     }
 
-    // BCF symbolic mirror. Kernel `check_alu_op` BPF_END
+    // BCF symbolic mirror for BPF_END. Kernel `check_alu_op` BPF_END
     // (verifier.c:16396) does `check_reg_arg(dst, SRC_OP)` then
-    // `check_reg_arg(dst, DST_OP)` — DST_OP `mark_reg_unknown`s the
-    // byteswap result (fully-unbounded 64-bit scalar), and clears its
-    // `bcf_expr`. So the kernel's next `bcf_reg_expr(result)` is a
-    // bare `VAR_64` (+ EXTRACT32 for a JMP32 use, no bound preds).
-    // zovia keeps a tighter domain bound here (e.g. be16 → [0,0xffff],
-    // intentional verification precision — see the apply_and_imm
-    // above), which would drive `materialize_reg` into the fit_u32
-    // path → a 32-bit var, diverging from the kernel CONJ (cilium
-    // wireguard D3: pc173 `r2 = be16 r2` then pc179 `if w2 < 0xfa23`
-    // — kernel `EXTRACT32(v5_64)`, zovia bare `v5_32`). Pre-cache the
-    // result's bcf_expr as the kernel-shape unbounded VAR_64; the
-    // abstract-domain bound is left intact (zovia-only precision).
+    // `check_reg_arg(dst, DST_OP)`. DST_OP's `mark_reg_unknown` clears
+    // bcf_expr, but subsequent register-state refinement (tnum updated
+    // for the BSWAP width via `tnum_and(0xffff)` etc.) leaves the reg
+    // with a concrete bounded tnum (e.g. `mask=0xffff umin=0 umax=65535`
+    // post-be16). Kernel's next `bcf_reg_expr(result)` therefore takes
+    // the `fit_u32` path → emits `VAR_U32 + bcf_bound_reg32` (ground-
+    // truth kernel probe 2026-05-23: PC 1301 `r4 = be16 r4` emits
+    // `path=VAR_U32 ... mask=0xffff umax=65535`). Mirror that here by
+    // using the actual reg bounds (via `bcf_reg_bounds`) instead of
+    // `RegBounds::unknown()`, so the bound preds (`VAR ULE 0xffff`)
+    // appear in zovia's bcf graph too — closing the calico
+    // from_wep_fib_dsr_debug PC 1301/1304 conjunct gap that previously
+    // kept zovia's 0x75861184cd295c8e from byte-matching kernel's
+    // 0x034f376909db9ac8 target. See
+    // [[feedback_kernel_probe_record_path_cond_2026-05-23]].
     if let Some(d) = dst.bcf_idx() {
         if let Some(bcf) = state.bcf.as_mut() {
+            // Step 1 (SRC_OP read): materialize dst with PRE-be16 bounds
+            // (snapshot before apply_and_imm above). Kernel's
+            // `check_reg_arg(dst, SRC_OP)` reads dst as a source for
+            // bcf — emits `VAR_U32 + bound preds` if the prior tnum
+            // fit u32. Without this, zovia misses the bound-pred
+            // conjuncts kernel emits at the SRC read (calico
+            // from_wep_fib_dsr_debug PC 1301/1304 conjuncts that
+            // landed kernel's 0x034f376909db9ac8 at 12 conj vs
+            // zovia's 10 — see
+            // [[feedback_kernel_probe_record_path_cond_2026-05-23]]).
+            let _src_expr = bcf.reg_expr(d, &pre_endian_bounds, false);
+
+            // Step 2 (DST_OP write): kernel `mark_reg_unknown` clears
+            // `bcf_expr = -1`, so next bcf_reg_expr re-materializes
+            // fresh. Mirror by clearing the cache and re-emitting an
+            // unbounded VAR_64 (matches kernel-shape: byte-swap result
+            // is not abstractly bounded post-`mark_reg_unknown`,
+            // independent of zovia's tighter domain bound from
+            // apply_and_imm above which is preserved for AI precision).
             bcf.clear_reg(d);
             let _ = bcf.reg_expr(
                 d,
