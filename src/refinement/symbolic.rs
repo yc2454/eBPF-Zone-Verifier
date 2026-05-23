@@ -304,6 +304,21 @@ impl SymbolicState {
     /// drops entries strictly below `base_pc` to mirror the kernel's
     /// `bcf_track` suffix-only br_cond emission.
     pub fn add_cond_at(&mut self, pred_idx: u32, pc: usize) {
+        if std::env::var("ZOVIA_TRACE_PATH_COND").ok().as_deref() == Some("1") {
+            let (lo, hi) = std::env::var("ZOVIA_TRACE_PATH_COND_RANGE")
+                .ok()
+                .and_then(|s| {
+                    let mut it = s.split(':');
+                    Some((it.next()?.parse().ok()?, it.next()?.parse().ok()?))
+                })
+                .unwrap_or((0usize, usize::MAX));
+            if pc >= lo && pc <= hi {
+                eprintln!(
+                    "[PATH_COND] push pc={} pred_idx={} (depth_now={}, branch=true)",
+                    pc, pred_idx, self.path_conds.len() + 1
+                );
+            }
+        }
         self.path_conds.push(pred_idx);
         self.path_cond_pcs.push(pc);
         self.path_cond_is_branch.push(true);
@@ -393,16 +408,35 @@ impl SymbolicState {
         let mut kept_pcs = Vec::with_capacity(self.path_cond_pcs.len());
         let mut kept_is_branch = Vec::with_capacity(self.path_cond_is_branch.len());
         for (idx, &pc) in self.path_cond_pcs.iter().enumerate() {
+            let is_branch = self.path_cond_is_branch[idx];
             let keep = pc == 0
                 || pc >= base_pc
-                || (!l_vars.is_empty() && {
+                // The branch-into-base predicate itself (L at prev_insn_pc).
+                // Kernel emits this via `record_path_cond` at the first
+                // bcf_track replay step (verifier.c:21155, prev_insn_idx =
+                // vstate->last_insn_idx).
+                || Some(pc) == prev_insn_pc
+                // Bound predicates (is_branch=false) for variables that L
+                // operates on. Kernel re-emits these via bcf_reg_expr ->
+                // bcf_bound_reg32 when materializing L's operands during
+                // replay (verifier.c:894-926, lazy bound emission).
+                //
+                // Branches (is_branch=true) with source_pc < base_pc are NOT
+                // retained — only the literal L (handled above). The previous
+                // unconditional vars-subset rule transitively pulled in EARLIER
+                // branches on aliased SSA versions of L's variables (e.g.
+                // calico to_wep_debug_co-re: PC 2's `if w1 != 0x3000000` shared
+                // an expr_id with L's w1 via incomplete bcf_expr clear between
+                // PC 1's u32 load and PC 1584's u8 load → 6-conj zovia goal vs
+                // kernel's 5-conj 0x5edc).
+                || (!is_branch && !l_vars.is_empty() && {
                     let cond_vars = self.collect_vars(self.path_conds[idx]);
                     !cond_vars.is_empty() && cond_vars.is_subset(&l_vars)
                 });
             if keep {
                 kept_exprs.push(self.path_conds[idx]);
                 kept_pcs.push(pc);
-                kept_is_branch.push(self.path_cond_is_branch[idx]);
+                kept_is_branch.push(is_branch);
             }
         }
         // If the filter empties the path_cond set, the resulting SMT goal
@@ -491,6 +525,17 @@ impl SymbolicState {
         let rhs = self.add_val(imm, bit32);
         let pred = self.add_pred(op, lhs, rhs);
         let pc = self.current_pc;
+        if std::env::var("ZOVIA_TRACE_BOUND_PRED").ok().as_deref() == Some("1") {
+            let (lo, hi) = std::env::var("ZOVIA_TRACE_BOUND_PRED_RANGE")
+                .ok().and_then(|s| {
+                    let mut it = s.split(':');
+                    Some((it.next()?.parse().ok()?, it.next()?.parse().ok()?))
+                }).unwrap_or((0usize, usize::MAX));
+            if pc >= lo && pc <= hi {
+                eprintln!("[BOUND_PRED] pc={} op=0x{:x} lhs={} imm={} bit32={} pred={}",
+                    pc, op, lhs, imm, bit32, pred);
+            }
+        }
         self.path_conds.push(pred);
         self.path_cond_pcs.push(pc);
         self.path_cond_is_branch.push(false);
