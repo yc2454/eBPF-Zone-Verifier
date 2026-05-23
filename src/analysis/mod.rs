@@ -600,6 +600,22 @@ fn run_worklist(
         // progress (not env-wide), so worklist interleaving doesn't
         // pollute the deltas with other paths' work.
         state.path_insn_count = state.path_insn_count.saturating_add(1);
+        // Kernel `push_jmp_history` accumulation (verifier.c v6.15
+        // L21128-L21131): in `do_check`, every `is_jmp_point` PC
+        // appends a branch-decision entry to `cur->jmp_history`. Mirror
+        // the dominant call site by bumping the per-state counter at
+        // every jmp_point PC visit. Drives the long-history safety
+        // valve `add_new_state` reads at L20256
+        // (`cur->jmp_history_cnt > 40`). Other push_jmp_history sites
+        // (linked-regs at L17682, stack-spill flags at L5670/L5976)
+        // are conditional on insn-specific flags zovia doesn't model
+        // yet — under-counting at those secondary sites is preferred
+        // over re-implementing the flag machinery.
+        if state.pc < env.insn_aux_data.len()
+            && env.insn_aux_data[state.pc].jmp_point
+        {
+            state.jmp_history_cnt = state.jmp_history_cnt.saturating_add(1);
+        }
         // Per-instruction scope for the BCF `detect_conflict_eq`
         // path-unreachable flag: only the instruction that set it (its
         // own transfer) consumes it. Reset here so a set from a
@@ -788,7 +804,20 @@ fn run_worklist(
         // Kernel L18998-L19000: long-history safety valve. Fire when
         // either env-wide or per-path window > 40 insns since last
         // cache event.
-        let long_history = env_insns_delta > 40 || path_insns_delta > 40;
+        // Kernel L20254-L20256: long-history safety valve. Kernel
+        // formula is `cur->jmp_history_cnt > 40` — a count of BRANCH
+        // DECISIONS recorded on this state's lineage (per
+        // `push_jmp_history` accumulation), NOT a raw insn delta.
+        //
+        // Previously zovia used `env_insns_delta > 40 ||
+        // path_insns_delta > 40`, which fires far more aggressively
+        // than the kernel's valve. On calico c17 from_tnl_debug at
+        // PC 1224 zovia force-cached (path_id=42 > 40) while kernel's
+        // jmp_hist was ~few (well below 40) and did NOT force; that
+        // spurious cache created a wrong baseline that polluted the
+        // path delta computations downstream (e.g. the wrong path_jd=2
+        // at PC 1319 vs kernel's jd=1, traced 2026-05-22).
+        let long_history = state.jmp_history_cnt > 40;
         let force_new_state = insn_aux_force || long_history;
         let env_heuristic =
             env_jmps_delta >= 2 && env_insns_delta >= 8;

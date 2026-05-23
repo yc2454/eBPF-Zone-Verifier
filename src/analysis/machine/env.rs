@@ -11,6 +11,16 @@ use std::collections::{HashMap, HashSet};
 #[derive(Clone, Default, Debug)]
 pub struct InsnAuxData {
     pub prune_point: bool,
+    /// Kernel `insn_aux_data[i].jmp_point` (verifier.c v6.15 L4148).
+    /// Strict subset of `prune_point`: marked at conditional-branch
+    /// TARGETS (kernel push_insn BRANCH edge L18319) and POST-CALL
+    /// FALLTHROUGH (kernel L18361). Read by `is_jmp_point` to gate
+    /// `push_jmp_history` calls — kernel's `cur->jmp_history_cnt`
+    /// counts branch decisions made on the current state's lineage,
+    /// and the long-history safety valve in `add_new_state` uses
+    /// `jmp_history_cnt > 40` (verifier.c v6.15 L20256) — NOT the raw
+    /// insn delta.
+    pub jmp_point: bool,
     pub seen: bool,
     /// Registers that are live (read before next write) at this PC.
     pub live_regs: HashSet<Reg>,
