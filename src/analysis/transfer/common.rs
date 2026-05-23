@@ -68,20 +68,36 @@ pub(crate) fn check_reg_readable(env: &mut VerifierEnv, state: &mut State, reg: 
     match reg_type {
         RegType::NotInit => {
             // The kernel's `check_reg_arg` rejects an uninitialized
-            // register read with `-EACCES` ("R%d !read_ok")
-            // unconditionally — mirror that: `!read_ok` ⇒ reject. A
-            // structural path-conflict discharge was once tried here
-            // (BCF set1/0014 framing) but a syntactic
-            // `reg==c ∧ reg!=c` check over the full `path_conds`
-            // false-positives (structurally-equal but semantically-
-            // distinct operands), declaring KERNEL-REACHABLE
-            // `!read_ok` paths "unreachable" → 24 measured false
-            // accepts across cilium (sock_addr connect/sendmsg
-            // `R1 !read_ok`, overlay `R5 !read_ok`); the per-program
-            // kernel oracle confirms the kernel REJECTS these. The
-            // generic-load site (`access.rs`) discharges genuine
-            // path-unreachability via a checked cvc5 bundle entry, not
-            // a structural shortcut, so it is unaffected.
+            // register read with `-EACCES` ("R%d !read_ok") and (when
+            // `env->bcf.tracking` is off) triggers `bcf_refine` to
+            // probe whether the path itself can be proven unreachable.
+            // Mirror that BCF-faithful reactive discharge: try a
+            // cvc5-checked path-unreachable proof; on success emit a
+            // `kind=UNREACHABLE` bundle entry and silently prune the
+            // state. The previous concern about false accepts (24
+            // measured) was specific to a SYNTACTIC `reg==c ∧ reg!=c`
+            // structural shortcut over `path_conds` — not the
+            // cvc5-checked discharge. cvc5 is sound, so an UNSAT
+            // result is a genuine proof of unreachability and no
+            // false accept can leak.
+            //
+            // Measured 2026-05-23 on calico from_wep_fib_dsr_debug
+            // calico_tc_main: kernel `R3 !read_ok` reject at PC 834
+            // along a path where zovia's exploration didn't reach
+            // (zovia's R3 is readable at this PC). Bundle needs a
+            // path-unreachable entry for kernel's specific path; the
+            // reactive discharge here emits it iff cvc5 proves the
+            // accumulated path_cond unsat. See
+            // [[feedback_kernel_probe_record_path_cond_2026-05-23]].
+            if crate::analysis::transfer::branch::try_emit_path_unreachable_entry(env, state) {
+                log::info!(
+                    target: "app",
+                    "[bcf] reactive path-unreachable: discharged !read_ok reject at pc {} for {:?} (cvc5 proof, kind=UNREACHABLE)",
+                    state.pc, reg
+                );
+                env.bcf_path_unreachable = true;
+                return false;
+            }
             env.fail(VerificationError::RegisterNotReadable { pc: state.pc, reg });
             false
         }
