@@ -505,6 +505,21 @@ fn try_bcf_refine_map(
         }
     }
     env.bcf_proofs.push(entry);
+    // Mirror kernel `bcf_refine` parent-marking (verifier.c:24904-24921):
+    // every cached ancestor on this refinement's backtrack suffix is no
+    // longer prune-safe, because a later arrival that would otherwise
+    // subsume against it may reach the same reject via a DIFFERENT path
+    // and need its own (different-hash) discharge entry. Branch-side
+    // refinement (`refine_unreachable`) already calls this in
+    // `branch/mod.rs`; the map/stack refinements were missing it, which
+    // let zovia subsume kernel-distinct paths at convergence PCs and
+    // drop their per-path discharges (inspektor-gadget seccomp PC 142:
+    // runc-neg's map-refine fires first; without this mark, its PC 141
+    // ancestor stays prune-safe and the later path-A arrival at PC 141
+    // gets subsumed there — the kernel sets `children_unsafe=1` and
+    // exempts it from subsumption, so path A continues to PC 142 and
+    // emits its own discharge with hash 0x6eb7).
+    env.mark_path_children_unsafe(state, base_pc);
     true
 }
 

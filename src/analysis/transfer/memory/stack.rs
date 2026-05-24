@@ -62,6 +62,9 @@ fn try_bcf_refine_stack(
         }
     }
     env.bcf_proofs.push(entry);
+    // Mirror kernel `bcf_refine` parent-marking (verifier.c:24904-24921);
+    // see the matching block in `memory/map.rs::try_bcf_refine_map`.
+    env.mark_path_children_unsafe(state, base_pc);
     true
 }
 
