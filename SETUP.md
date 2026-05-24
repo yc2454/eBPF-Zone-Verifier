@@ -9,26 +9,40 @@ ship our own kernel `bzImage` and the verifier binary.
 
 ---
 
+## 0. Prerequisites (install before BCF's installer)
+
+BCF's `install-deps.sh` sources `vars.sh`, which fatals immediately if
+`virtiofsd` isn't already on `PATH` — so virtiofsd has to be installed
+*before* BCF's installer runs, not by it. Same for the Rust toolchain
+(needed to build virtiofsd) and virtiofsd's link deps.
+
+```bash
+sudo apt update
+sudo apt install -y libseccomp-dev libcap-ng-dev \
+                    python3-venv \
+                    clang llvm libbpf-dev dwarves
+
+# Rust toolchain
+command -v cargo >/dev/null || \
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+source "$HOME/.cargo/env"
+
+# install virtiofsd
+command -v virtiofsd >/dev/null || cargo install virtiofsd
+
+# KVM access — qemu opens /dev/kvm (root:kvm). Add yourself to the kvm
+# group, then log out + back in (or `newgrp kvm`) so the new group
+# membership takes effect.
+sudo usermod -aG kvm $USER
+newgrp kvm
+```
+
 ## 1. Clone BCF and install dependencies
 
 ```bash
 git clone https://github.com/SunHao-0/BCF ~/BCF
 cd ~/BCF
-./scripts/install-deps.sh                          # kernel + cvc5 + qemu deps
-sudo apt install -y clang llvm libbpf-dev dwarves  # zovia extras: BPF compile + pahole (for BTF)
-```
-
-`install-deps.sh` is supposed to install rustup and virtiofsd too, but it
-sometimes skips them. Install both explicitly:
-
-```bash
-# Rust toolchain (needed to build zovia and virtiofsd)
-command -v cargo >/dev/null || \
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-source "$HOME/.cargo/env"
-
-# virtiofsd (used by BCF's boot_vm.sh to share ~/BCF into the VM)
-command -v virtiofsd >/dev/null || cargo install virtiofsd
+./scripts/install-deps.sh   # kernel + cvc5 + qemu deps
 ```
 
 ## 2. Download the BCF VM image
@@ -52,27 +66,51 @@ ln -sf /proj/ebpf-PG0/bcf-vm/bookworm.id_rsa.pub ~/BCF/imgs/bookworm.id_rsa.pub
 
 Non-cloudlab boxes: skip the symlinks, just `cd ~/BCF/imgs && wget … && unzip …`.
 
-## 3. Build BCF's cvc5 and kernel tree
+## 3. Build BCF's cvc5
 
 ```bash
 cd ~/BCF
 ./scripts/build.sh solver   # ~15 min — produces ~/BCF/output/cvc5-libs/bin/cvc5
-./scripts/build.sh kernel   # ~30 min — clones bpf-next, applies BCF patches, builds bzImage + libbpf.a
 ```
 
-`build.sh kernel` is required even though we override the bzImage in
-step 4: it materializes the patched `libbpf.a` at
-`~/BCF/build/bpf-next/tools/lib/bpf/`, which our loaders link against.
+We don't run `./scripts/build.sh kernel` — it would clone bpf-next and
+re-apply BCF's patches, which (a) takes ~30 min, (b) currently fails on
+patch drift, and (c) wouldn't give us the right libbpf anyway (our
+loaders use `bpf_program__set_bcf_bundle()`, a zovia addition not in
+upstream BCF). We fetch zovia's prebuilt kernel + libbpf in step 4
+instead.
 
-## 4. Replace BCF's bzImage with zovia's
+> **Heads-up if `build.sh solver` fails partway through:** it decides
+> "already built, skipping" based on the presence of a build directory,
+> not on whether the previous run actually succeeded. If you fix the
+> underlying error and re-run, it will skip instead of retrying. Wipe
+> the partial state first:
+>
+> ```bash
+> rm -rf ~/BCF/build/cvc5-*
+> ```
+
+## 4. Fetch zovia's prebuilt kernel + libbpf
 
 ```bash
-# Get artifacts/bzImage from this repo (gitignored; ask Yalu or fetch from a Release).
-cp ~/eBPF-Zone-Verifier/artifacts/bzImage ~/BCF/output/bzImage
+# 4a. Kernel bzImage → drops into BCF's output dir
+wget -O ~/BCF/output/bzImage \
+    https://github.com/yc2454/eBPF-Zone-Verifier/releases/download/kernel-47b3934f7ad8/bzImage
+echo "0755cb22fd116733714dad663c80bfd122bfbe247cd565691f3385bfc5249d6a  $HOME/BCF/output/bzImage" \
+    | sha256sum -c -
+
+# 4b. Patched libbpf → drops into the path step 7's gcc -I expects
+mkdir -p ~/BCF/build/bpf-next/tools/lib
+wget -O /tmp/libbpf-zovia.tar.gz \
+    https://github.com/yc2454/eBPF-Zone-Verifier/releases/download/kernel-47b3934f7ad8/libbpf-zovia.tar.gz
+echo "3c4221b1d6275d2506d408c0f3d704a2d9b0a86b5a07f0b223810ffa93d844a9  /tmp/libbpf-zovia.tar.gz" \
+    | sha256sum -c -
+tar -xzf /tmp/libbpf-zovia.tar.gz -C ~/BCF/build/bpf-next/tools/lib
 ```
 
-Current pin: `6.18.0-rc4-g47b3934f7ad8`, branch `userspace-bcf`, sha256
-`0755cb22fd116733714dad663c80bfd122bfbe247cd565691f3385bfc5249d6a`.
+Current pin: kernel `6.18.0-rc4-g47b3934f7ad8` (branch `userspace-bcf`),
+libbpf = bpf-next + BCF set5 + 3 zovia patches (adds
+`bpf_program__set_bcf_bundle`).
 
 ## 5. Build zovia
 
@@ -104,6 +142,8 @@ ssh -i ~/BCF/imgs/bookworm.id_rsa -p 10023 root@localhost "uname -r"
 ## 7. Build the in-VM loaders
 
 ```bash
+mkdir ~/BCF/sweep
+
 cp ~/eBPF-Zone-Verifier/linux-deltas/test_loader.c ~/BCF/sweep/
 cp ~/eBPF-Zone-Verifier/linux-deltas/ll2_loader.c  ~/BCF/sweep/
 
@@ -145,7 +185,7 @@ ssh -i ~/BCF/imgs/bookworm.id_rsa -p 10023 root@localhost \
 
 ## Troubleshooting
 
-**`gcc: bpf/libbpf.h: No such file or directory`** — `build.sh kernel` (step 3) hasn't run.
+**`gcc: bpf/libbpf.h: No such file or directory`** — step 4b's libbpf tarball didn't extract to the expected path. Confirm `ls ~/BCF/build/bpf-next/tools/lib/bpf/libbpf.h` shows the file.
 
 **`ld: cannot find -lbpf`** — Don't use `-lbpf`. Link `$LIBBPF/bpf/libbpf.a` directly (step 7).
 
