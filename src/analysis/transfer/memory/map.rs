@@ -289,6 +289,17 @@ fn interval_check_map_access(
         // Use PtrOffset to get offset range from buffer start
         let min_off = ptr_off.min_offset() + (insn_off as i64);
         let max_off = ptr_off.max_offset() + (insn_off as i64) + size;
+        if std::env::var("ZOVIA_TRACE_MAP_ACCESS").ok().as_deref() == Some("1") {
+            eprintln!(
+                "[MAP_ACCESS] pc={} base={:?} ptr_off=[{},{}] insn_off={} size={} -> min_off={} max_off={} limit={} btf_id={:?}",
+                pc, base, ptr_off.min_offset(), ptr_off.max_offset(),
+                insn_off, size, min_off, max_off, map_limit, map_def.btf_val_type_id,
+            );
+            if let Some(btf_id) = map_def.btf_val_type_id {
+                let sf = env.ctx.btf.find_special_fields(btf_id);
+                eprintln!("[MAP_ACCESS]   special_fields(btf_id={}) = {:?}", btf_id, sf);
+            }
+        }
 
         // enforce value_size bounds even when the map carries a
         // BTF value-type. The special-fields check below is additive — a
@@ -410,16 +421,12 @@ fn try_bcf_refine_map(
     size: i64,
     map_limit: i64,
 ) -> bool {
+    let bcf_debug = std::env::var("ZOVIA_TRACE_BCF_REFINE").ok().as_deref() == Some("1");
     if state.bcf.is_none() {
+        if bcf_debug { eprintln!("[REFINE] pc={} bcf=None -> skip", state.pc); }
         return false;
     }
     let size_reg = env.bcf_size_reg;
-    // Mirror kernel `bcf_refine_access_bound` (verifier.c:5393):
-    // reg_masks = bit for ptr_reg (always set when ptr is variable;
-    // ptr-const case routes through bcf_prove_unreachable) plus bit for
-    // size_reg when non-const. Pass to `bcf_suffix_base_pc` to find the
-    // PC at which both target regs' definition chains have bottomed
-    // out.
     let mut target_regs: Vec<Reg> = vec![base];
     if let Some(sr) = size_reg {
         target_regs.push(sr);
@@ -427,11 +434,17 @@ fn try_bcf_refine_map(
     let base_pc = state
         .history_idx
         .and_then(|hidx| env.bcf_suffix_base_pc(hidx, state.parent_cache_id, &target_regs));
+    if bcf_debug {
+        eprintln!("[REFINE] pc={} base={:?} insn_off={} size={} limit={} size_reg={:?} base_pc={:?}",
+                  state.pc, base, insn_off, size, map_limit, size_reg, base_pc);
+    }
     let Some(ok) = crate::refinement::refine_map::try_refine_map_access(
         state, base, insn_off, size, map_limit, size_reg, base_pc,
     ) else {
+        if bcf_debug { eprintln!("[REFINE] pc={} try_refine_map_access -> None", state.pc); }
         return false;
     };
+    if bcf_debug { eprintln!("[REFINE] pc={} SUCCESS proof_bytes={}", state.pc, ok.proof_bytes.len()); }
     let entry = crate::refinement::bundle::RefineEntry::new(
         ok.goal_root,
         ok.sym.exprs,
