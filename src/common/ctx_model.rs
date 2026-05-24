@@ -1960,6 +1960,37 @@ pub fn validate_ctx_access(env: &VerifierEnv, off: i16, size: i64) -> Option<Ctx
         });
     }
 
+    // raw_tracepoint ctx is `struct bpf_raw_tracepoint_args { __u64
+    // args[MAX_BPF_FUNC_ARGS]; }` (kernel `include/linux/bpf.h`).
+    // `raw_tp_prog_is_valid_access` (bpf_trace.c) defers to
+    // `bpf_tracing_ctx_access` (bpf.h), which validates bounds /
+    // alignment / read-only and leaves `info->reg_type` unset — so the
+    // kernel types every load as SCALAR_VALUE, regardless of what
+    // `BPF_PROG()` wrappers cast the args to. Without this arm the
+    // entry_args / lax-TrustedPtr fallbacks further down can over-type
+    // an 8-byte raw_tp ctx slot as PtrToBtfId{"unknown"}, and a
+    // subsequent shift/and on the value rejects as "Invalid pointer
+    // arithmetic" (inspektor-gadget seccomp `ig_seccomp_e`: PC 30 loads
+    // `args[1]`, PC 42 does `r1 <<= 32` for u32 zero-extension).
+    // raw_tp.w differs only at off=0 (PTR_TO_TP_BUFFER write target);
+    // keep that on the existing path until we model PtrToTpBuffer.
+    if prog_kind == ProgramKind::RawTracepoint
+        && off >= 0
+        && size > 0
+        && size <= 8
+        && (size & (size - 1)) == 0
+        && off % size as i16 == 0
+        // 8 * MAX_BPF_FUNC_ARGS = 8 * 12 = 96; kernel bound from
+        // `bpf_tracing_ctx_access` (`off >= sizeof(__u64) * MAX_BPF_FUNC_ARGS`).
+        && (off as i64 + size) <= 96
+    {
+        return Some(CtxAccessInfo {
+            kind: CtxFieldKind::Scalar,
+            readable: true,
+            writable: false,
+        });
+    }
+
     // struct_ops subprogs receive their args via the BPF_PROG
     // wrapper's ctx-array idiom — clang emits each arg access as
     // `r_n = *(u64 *)(r1 + 8*i)` followed by an explicit cast to the
