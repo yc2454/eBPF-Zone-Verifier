@@ -678,6 +678,14 @@ fn run_worklist(
     }
 
     while let Some(mut state) = worklist.pop_back() {
+        if trace_pc_in_range(state.pc) {
+            use crate::analysis::machine::reg::Reg;
+            let (r2lo, r2hi) = state.domain.get_interval(Reg::R2);
+            eprintln!(
+                "[WL_POP] pc={} parent_cache_id={:?} R2=[{}..{}]",
+                state.pc, state.parent_cache_id, r2lo, r2hi,
+            );
+        }
         // Per-path counter bump for the kernel-engine sparse-cache
         // heuristic (`ZOVIA_KERNEL_ENGINE=1`). Counts THIS path's
         // progress (not env-wide), so worklist interleaving doesn't
@@ -1243,6 +1251,12 @@ fn run_worklist(
             worklist.push_back(succ);
         }
         for succ in other.into_iter().rev() {
+            if trace_pc_in_range(succ.pc) {
+                eprintln!(
+                    "[WL_PUSH] pc={} parent_cache_id={:?} (worklist_len_before={})",
+                    succ.pc, succ.parent_cache_id, worklist.len()
+                );
+            }
             worklist.push_back(succ);
         }
     }

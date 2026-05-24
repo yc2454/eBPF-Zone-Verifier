@@ -413,10 +413,18 @@ pub(crate) fn transfer_if(
 
     // Return only consistent states
     let mut out = Vec::new();
-    if !state_else.domain.is_inconsistent() {
+    let else_ok = !state_else.domain.is_inconsistent();
+    let then_ok = !state_then.domain.is_inconsistent();
+    if crate::analysis::trace_pc_in_range(state.pc) {
+        eprintln!(
+            "[BRANCH] pc={} else_ok={} then_ok={} (else_target={} then_target={})",
+            state.pc, else_ok, then_ok, state_else.pc, state_then.pc,
+        );
+    }
+    if else_ok {
         out.push(state_else);
     }
-    if !state_then.domain.is_inconsistent() {
+    if then_ok {
         out.push(state_then);
     }
     out

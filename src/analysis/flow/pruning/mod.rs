@@ -153,10 +153,22 @@ fn handle_loop_pruning(
                 || env.incomplete_read_marks(prev);
             match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
                 Ok(()) => {
+                    if crate::analysis::trace_pc_in_range(pc) {
+                        eprintln!(
+                            "[SUBSUM_HIT] pc={} prev_idx={} prev.dfs_paths={} force_exact={}",
+                            pc, i, prev.dfs_paths, force_exact,
+                        );
+                    }
                     h = Some(i);
                     break;
                 }
                 Err(reason) => {
+                    if crate::analysis::trace_pc_in_range(pc) {
+                        eprintln!(
+                            "[SUBSUM_MISS] pc={} prev_idx={} reason={:?} prev.dfs_paths={} force_exact={}",
+                            pc, i, reason, prev.dfs_paths, force_exact,
+                        );
+                    }
                     m.push(i);
                     r.push(reason);
                 }
@@ -279,6 +291,12 @@ fn handle_standard_pruning(
                     break;
                 }
                 Err(reason) => {
+                    if crate::analysis::trace_pc_in_range(pc) {
+                        eprintln!(
+                            "[SUBSUM_MISS] pc={} prev_idx={} reason={:?} prev.dfs_paths={} force_exact={} (non-loop site)",
+                            pc, i, reason, prev.dfs_paths, force_exact,
+                        );
+                    }
                     miss_idxs.push(i);
                     miss_reasons.push(reason);
                 }
@@ -549,7 +567,93 @@ pub fn should_prune(
             if iter_active_depths_differ(prev, state) {
                 continue;
             }
+            if std::env::var("ZOVIA_DISABLE_INF_LOOP_TRAP").ok().as_deref() == Some("1") {
+                continue;
+            }
             if state_exact_equal(prev, state) {
+                // ZOVIA_TRAP_DEBUG=1 — dump prev vs cur side-by-side when the
+                // inf-loop trap fires, so we can see which fields kernel
+                // treats as distinct that zovia treats as identical.
+                if std::env::var("ZOVIA_TRAP_DEBUG").ok().as_deref() == Some("1") {
+                    use crate::analysis::machine::reg::Reg;
+                    eprintln!("[TRAP] === inf-loop fire at pc={} ===", pc);
+                    eprintln!("[TRAP] prev.dfs_paths={} cur.dfs_paths={}", prev.dfs_paths, state.dfs_paths);
+                    eprintln!("[TRAP] prev.may_goto_depth={} cur.may_goto_depth={}", prev.may_goto_depth, state.may_goto_depth);
+                    eprintln!("[TRAP] depth prev={} cur={}", prev.frames.depth(), state.frames.depth());
+                    // Walk full history, count visits to PC, and find any non-linear jumps
+                    let mut hist_pcs: Vec<usize> = Vec::new();
+                    let mut idx = state.history_idx;
+                    let mut visits_to_trap_pc = 0;
+                    while let Some(i) = idx {
+                        match env.history.get(i) {
+                            Some(step) => {
+                                if step.pc == pc { visits_to_trap_pc += 1; }
+                                hist_pcs.push(step.pc);
+                                idx = step.parent_idx;
+                                if hist_pcs.len() > 5000 { break; }
+                            }
+                            None => break,
+                        }
+                    }
+                    eprintln!("[TRAP] cur history len={}  visits_to_pc{}={}", hist_pcs.len(), pc, visits_to_trap_pc);
+                    eprintln!("[TRAP] last 15 PCs (most-recent first): {:?}", &hist_pcs[..hist_pcs.len().min(15)]);
+                    // find non-linear transitions: prev PC where next != prev+1
+                    let mut jumps: Vec<(usize, usize)> = Vec::new();
+                    for w in hist_pcs.windows(2) {
+                        let (newer, older) = (w[0], w[1]);
+                        if newer != older + 1 && newer != older + 2 { // skip LD_IMM64 stride
+                            jumps.push((older, newer));
+                            if jumps.len() > 20 { break; }
+                        }
+                    }
+                    eprintln!("[TRAP] non-linear jumps in history (older->newer): {:?}", jumps);
+                    eprintln!("[TRAP] cur parent_cache_id={:?} prev.cache_id={:?}", state.parent_cache_id, prev.cache_id);
+                    for r in Reg::ALL {
+                        let pty = prev.types.get(r);
+                        let cty = state.types.get(r);
+                        let (plo, phi) = prev.domain.get_interval(r);
+                        let (clo, chi) = state.domain.get_interval(r);
+                        let psid = prev.scalar_ids.get(&r).copied().unwrap_or(0);
+                        let csid = state.scalar_ids.get(&r).copied().unwrap_or(0);
+                        let same_ty = pty == cty;
+                        let same_iv = (plo, phi) == (clo, chi);
+                        let same_u32 = prev.domain.get_u32_bounds(r) == state.domain.get_u32_bounds(r);
+                        let same_tn = prev.tnums.get(&r) == state.tnums.get(&r);
+                        let same_sid = psid == csid;
+                        eprintln!(
+                            "[TRAP] {:?}: ty={} iv={} u32={} tn={} sid={} | prev_ty={:?} iv=[{}..{}] sid={} | cur_ty={:?} iv=[{}..{}] sid={}",
+                            r, if same_ty {"="} else {"≠"}, if same_iv {"="} else {"≠"},
+                            if same_u32 {"="} else {"≠"}, if same_tn {"="} else {"≠"},
+                            if same_sid {"="} else {"≠"},
+                            pty, plo, phi, psid, cty, clo, chi, csid,
+                        );
+                    }
+                    // Top-frame stack slot diffs
+                    use crate::analysis::machine::frame_stack::FrameLevel;
+                    let top = FrameLevel::from_index(prev.frames.depth().saturating_sub(1));
+                    let pf = prev.frames.get(top);
+                    let cf = state.frames.get(top);
+                    // explicit: dump the fp-0x128 (-296) slot specifically
+                    let pslot = pf.stack.slots.get(&-296i16);
+                    let cslot = cf.stack.slots.get(&-296i16);
+                    eprintln!("[TRAP] fp-296 (= fp-0x128): prev={:?}", pslot);
+                    eprintln!("[TRAP] fp-296 (= fp-0x128): cur ={:?}", cslot);
+                    let mut all_offs: std::collections::BTreeSet<i16> = pf.stack.slot_offsets().into_iter().collect();
+                    all_offs.extend(cf.stack.slot_offsets());
+                    for off in all_offs {
+                        let ps = pf.stack.slots.get(&off);
+                        let cs = cf.stack.slots.get(&off);
+                        let same = match (ps, cs) {
+                            (Some(a), Some(b)) => a == b,
+                            (None, None) => true,
+                            _ => false,
+                        };
+                        if !same {
+                            eprintln!("[TRAP] fp{}: DIFF prev={:?} cur={:?}", off, ps, cs);
+                        }
+                    }
+                    eprintln!("[TRAP] === end ===");
+                }
                 env.fail(crate::analysis::machine::error::VerificationError::InfiniteLoopDetected {
                     pc,
                 });
