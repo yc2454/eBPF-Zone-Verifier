@@ -194,6 +194,12 @@ pub(crate) fn handle_add(
                 }
                 // Pointer + imm: leave dst.bcf_expr at its current value
                 // (the variable contributor only).
+            } else if !dst_is_ptr_post && bcf.clear_reg_if_const(d, &dst_bounds_post) {
+                // Kernel-mirror bcf_alu early bail-out (verifier.c:15220-15223):
+                // skip materialization when the scalar result is a known const.
+                // Gated on !dst_is_ptr_post so pointer-arith chains (whose
+                // bcf_expr tracks the variable contributor independently)
+                // are unaffected.
             } else {
                 let op_u32 = dst_bounds_post.fit_u32();
                 let op_s32 = dst_bounds_post.fit_s32();
@@ -376,6 +382,9 @@ pub(crate) fn handle_sub(
                     bcf.clear_reg(d);
                 }
                 // Pointer − imm: leave dst.bcf_expr at its current value.
+            } else if !dst_is_ptr_post && bcf.clear_reg_if_const(d, &dst_bounds_post) {
+                // Kernel-mirror bcf_alu early bail-out (verifier.c:15220-15223);
+                // see handle_add for full rationale.
             } else {
                 let op_u32 = dst_bounds_post.fit_u32();
                 let op_s32 = dst_bounds_post.fit_s32();

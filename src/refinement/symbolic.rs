@@ -577,6 +577,30 @@ impl SymbolicState {
         self.reg_expr_pc[reg] = None;
     }
 
+    /// Kernel-mirror `bcf_alu` early bail-out (verifier.c:15220-15223):
+    /// when an ALU op's post-narrowing value is a known constant, kernel
+    /// clears `dst_reg->bcf_expr = -1` and returns without materializing
+    /// the expression chain. The next `bcf_reg_expr` call then takes the
+    /// `tnum_is_const` branch and emits a pure `bcf_val(K)` literal.
+    ///
+    /// Without this, downstream branches emit `ZEXT((VAR op K))` chains
+    /// for what the kernel materializes as bare `K`, breaking byte-faithful
+    /// discharge hashes (inspektor-gadget seccomp `ig_seccomp_e` PC 142:
+    /// kernel emits `(K0_64 JEQ K0_64)` for the `r9 &= 1; if r9 == 0`
+    /// chain on the const-r9 path; zovia was emitting
+    /// `(ZEXT((K0_32 AND K1_32)) JEQ K0_64)`).
+    ///
+    /// Returns `true` when the cache was cleared and the caller should
+    /// skip ALU-expression materialization (mirrors kernel's `return 0`).
+    pub fn clear_reg_if_const(&mut self, reg: usize, bounds: &RegBounds) -> bool {
+        if bounds.const_val.is_some() {
+            self.clear_reg(reg);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Append a typed predicate `op(lhs, val(imm, bit32))` and register it
     /// as a path-condition. Mirrors kernel's `__bcf_bound_reg` →
     /// `bcf_add_cond(bcf_add_pred(...))` chain (verifier.c:834). Tags the

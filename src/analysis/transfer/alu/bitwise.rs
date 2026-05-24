@@ -322,6 +322,18 @@ pub(crate) fn handle_and(state: &mut State, width: Width, dst: Reg, src: &Operan
     let bits: u16 = if alu32 { 32 } else { 64 };
 
     if let Some(d) = dst.bcf_idx() {
+        // Kernel-mirror `bcf_alu` early bail-out (verifier.c:15220-15223):
+        // when the post-op value is a known constant, clear `dst`'s
+        // bcf_expr instead of materializing the chain — the next
+        // `reg_expr` call emits a pure `bcf_val(K)` literal, matching
+        // kernel's fresh-replay `bcf_reg_expr` const path. Without this,
+        // a later branch on `dst` emits `ZEXT((VAR AND K))` chains for
+        // what the kernel emits as bare `K` (IG seccomp PC 142).
+        if let Some(bcf) = state.bcf.as_mut()
+            && bcf.clear_reg_if_const(d, &dst_bounds_post)
+        {
+            return;
+        }
         // Extend the AND result back to the 64-bit cached reg slot. ZEXT
         // for alu32/op_u32 cases; SEXT for op_s32; no-op for true 64-bit.
         let extend_back = |bcf: &mut crate::refinement::symbolic::SymbolicState,
