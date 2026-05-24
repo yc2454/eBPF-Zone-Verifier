@@ -427,16 +427,55 @@ fn try_bcf_refine_map(
         return false;
     }
     let size_reg = env.bcf_size_reg;
-    let mut target_regs: Vec<Reg> = vec![base];
+    // Mirror kernel `bcf_refine_access_bound` (verifier.c:5455-5468):
+    // include ptr regno in reg_masks ONLY when its var_off is non-const,
+    // and include size_regno ONLY when its var_off is non-const. zovia
+    // previously included `base` unconditionally — for ksnoop's
+    // `bpf_perf_event_output(R4=map_value, ..., R5=size)` where R4 was
+    // spill/filled from a const-offset map_value, R4's backtrack chain
+    // crossed a helper call (pc=333 bpf_probe_read_kernel) → walker
+    // -EFAULT → base_pc=None → refine bailed. Kernel skips R4 here
+    // (reg_masks=0x20, R5 only) and the walker stops at the cached
+    // state at PC 498.
+    // Kernel `tnum_is_const(ptr_reg->var_off)` analog: use ptr_off range
+    // from the interval domain. min == max ⇒ no variable contribution.
+    // var_off_contributor is unreliable here because zovia's spill/fill
+    // doesn't always clear it when a fresh const-offset map_value is
+    // filled (ksnoop pc=520 `r4 = *(u64 *)(r10 -184)` shape).
+    let ptr_is_const = match state.domain.as_interval().and_then(|i| i.get_ptr_offset(base)) {
+        Some(ptr_off) => ptr_off.min_offset() == ptr_off.max_offset(),
+        None => true,
+    };
+    if bcf_debug {
+        let po = state.domain.as_interval().and_then(|i| i.get_ptr_offset(base));
+        eprintln!("[REFINE-TARGETS] pc={} base={:?} ptr_is_const={} ptr_off=[{:?}..{:?}]",
+                  state.pc, base, ptr_is_const,
+                  po.as_ref().map(|p| p.min_offset()), po.as_ref().map(|p| p.max_offset()));
+    }
+    let mut target_regs: Vec<Reg> = Vec::new();
+    if !ptr_is_const {
+        target_regs.push(base);
+    }
     if let Some(sr) = size_reg {
-        target_regs.push(sr);
+        // Kernel also gates size_reg inclusion on non-const; for zovia,
+        // a missing bcf_expr cache means size is const for refine
+        // purposes (case (ii)/(iv) below handles it).
+        if state.domain.get_fixed_value(sr).is_none() {
+            target_regs.push(sr);
+        }
+    }
+    if target_regs.is_empty() {
+        // Both const → no walker needed; pass empty so suffix_base_pc
+        // returns None and refine uses keep-all (kernel-faithful too:
+        // kernel returns bcf_prove_unreachable in this branch).
     }
     let base_pc = state
         .history_idx
         .and_then(|hidx| env.bcf_suffix_base_pc(hidx, state.parent_cache_id, &target_regs));
     if bcf_debug {
-        eprintln!("[REFINE] pc={} base={:?} insn_off={} size={} limit={} size_reg={:?} base_pc={:?}",
-                  state.pc, base, insn_off, size, map_limit, size_reg, base_pc);
+        eprintln!("[REFINE] pc={} base={:?} insn_off={} size={} limit={} size_reg={:?} base_pc={:?} parent_cid={:?} history_idx={:?}",
+                  state.pc, base, insn_off, size, map_limit, size_reg, base_pc,
+                  state.parent_cache_id, state.history_idx);
     }
     let Some(ok) = crate::refinement::refine_map::try_refine_map_access(
         state, base, insn_off, size, map_limit, size_reg, base_pc,
