@@ -175,6 +175,20 @@ pub struct State {
     pub prev_insn_at_cache: usize,
     pub prev_jmp_at_cache: usize,
 
+    /// Kernel `bpf_verifier_state.jmp_history_cnt` (verifier.c v6.15
+    /// ~L4274). Counts branch-decision entries accumulated on the
+    /// current state's lineage (incremented at each `push_jmp_history`
+    /// site — primarily `is_jmp_point` PCs in do_check L21128-L21131,
+    /// plus conditional-jump linked-regs and stack-spill bookkeeping).
+    /// Read by `add_new_state`'s safety valve at L20256:
+    ///   `force_new_state = ... || cur->jmp_history_cnt > 40`
+    /// to avoid accumulating an unbounded jmp_history array. This is a
+    /// COUNT OF BRANCH DECISIONS, not raw insns — the kernel value at
+    /// PC 1340 for calico c17 from_tnl_debug is 8 (versus
+    /// path_insns_delta=42). Bumped in `run_worklist` when popping a
+    /// state at a `jmp_point` PC. Cloned at forks.
+    pub jmp_history_cnt: usize,
+
     /// Kernel-aligned `bpf_verifier_state.cleaned` (verifier.c v6.15
     /// L19488). Set to `true` by `clean_verifier_state` when this
     /// cached state's `branches` first hits 0 — its DFS subtree is
@@ -374,6 +388,7 @@ impl State {
             loop_entry_cache_id: None,
             path_insn_count: 0,
             path_jmp_count: 0,
+            jmp_history_cnt: 0,
             prev_insn_at_cache: 0,
             prev_jmp_at_cache: 0,
             cleaned: false,

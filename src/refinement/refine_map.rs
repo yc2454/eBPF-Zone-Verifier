@@ -56,7 +56,10 @@ pub fn try_refine_map_access(
     // kernel computes on its runtime CONJ.
     let pre_count = sym.path_conds.len();
     if let Some(bp) = base_pc {
-        sym.filter_path_conds_from_pc(bp);
+        // TODO(faithful): plumb prev_insn_pc from caller (mirror of
+        // refine_unreachable's wiring) so the kernel's record_path_cond
+        // at replay-start is also captured for map-bounds refinement.
+        sym.filter_path_conds_from_pc(bp, None);
     }
     if std::env::var("ZOVIA_BCF_TRACK_DEBUG").is_ok() {
         eprintln!(
@@ -128,6 +131,12 @@ pub fn try_refine_map_access(
         }
     };
 
+    if std::env::var("ZOVIA_TRACE_REFINE_CASE").ok().as_deref() == Some("1") {
+        eprintln!(
+            "[REFINE-CASE] ptr_is_var={} size_is_var={} size_expr_cached={:?} var_off_expr={:?} ptr_const_off={} insn_off={} total_off={} size_const={:?} bit32={}",
+            ptr_is_var, size_is_var, size_expr_cached, var_off_expr, const_off, insn_off, total_off, size_const_val, bit32,
+        );
+    }
     let oob = if !ptr_is_var && size_is_var {
         // Case (i): ptr const, refine size. Kernel verifier.c:5315-5326.
         // refine_cond = JGT(size_expr, higher_bound - off)   (UNSIGNED JGT)
@@ -186,6 +195,9 @@ pub fn try_refine_map_access(
     let smt = match smtlib::encode(&sym) {
         Ok(s) => s,
         Err(e) => {
+            if std::env::var("ZOVIA_TRACE_REFINE_CASE").ok().as_deref() == Some("1") {
+                eprintln!("[REFINE-CASE] SMT encode FAILED: {}", e);
+            }
             warn!("[bcf] map SMT-LIB encode failed: {}", e);
             return None;
         }
@@ -203,6 +215,9 @@ pub fn try_refine_map_access(
             Some(super::refine_stack::RefineOk { proof_bytes: bytes, goal_root, sym })
         }
         Err(e) => {
+            if std::env::var("ZOVIA_TRACE_REFINE_CASE").ok().as_deref() == Some("1") {
+                eprintln!("[REFINE-CASE] cvc5 DECLINED: {}", e);
+            }
             debug!("[bcf] map-OOB refinement: cvc5 declined ({})", e);
             None
         }

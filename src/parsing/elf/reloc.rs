@@ -252,7 +252,7 @@ pub fn load_relocations<P: AsRef<Path>>(
                     continue;
                 }
             };
-            let name = elf.strtab.get_at(sym.st_name).unwrap_or("");
+            let mut name = elf.strtab.get_at(sym.st_name).unwrap_or("").to_string();
 
             let mut r_type = reloc.r_type;
             if r_type == 0 {
@@ -267,6 +267,29 @@ pub fn load_relocations<P: AsRef<Path>>(
                     }
                 }
             }
+
+            // section-symbol BPF-to-BPF call relocation. clang emits
+            // `call <static __noinline subprog in .text>` as an
+            // R_BPF_64_32 reloc against the section's STT_SECTION symbol
+            // (name == "" or ".text") instead of the function symbol —
+            // the callsite's `imm` field carries the PC-relative offset
+            // (in 8-byte insn units) to the callee within the referenced
+            // section. Resolve by finding the function symbol at that
+            // offset, so the name-keyed dispatch below routes to the
+            // BpfCall branch instead of the dummy-helper fallback. Same
+            // logic as `load_relocations_for_function` below.
+            if let Some(resolved) = resolve_section_symbol_call_name(
+                &elf,
+                &buf,
+                &sym,
+                &name,
+                r_type,
+                target_sec_idx,
+                reloc.r_offset,
+            ) {
+                name = resolved;
+            }
+            let name = name.as_str();
 
             // Check relocation type
             if r_type == R_BPF_64_32 {
@@ -432,6 +455,88 @@ pub fn load_relocations<P: AsRef<Path>>(
         }
     }
     Ok(pc_to_reloc)
+}
+
+/// Resolve a section-symbol BPF-to-BPF call relocation to the actual
+/// function name at the call target. Returns `None` when the reloc is
+/// not a section-symbol call (so the caller leaves `name` untouched).
+///
+/// clang emits `call <static __noinline subprog in .text>` as an
+/// `R_BPF_64_32` reloc against the `.text` STT_SECTION symbol (name ==
+/// "" or starts with `.`). The callsite's `imm` field carries the
+/// PC-relative offset (in 8-byte insn units) to the callee within the
+/// referenced section. We resolve by locating the function symbol at
+/// that byte offset so the downstream name-keyed dispatch routes to
+/// `RelocKind::BpfCall` instead of the dummy-helper fallback (which
+/// surfaced as the spurious "Invalid helper ID 213" reject on bcc
+/// ksnoop and similar tracing programs).
+fn resolve_section_symbol_call_name(
+    elf: &Elf,
+    buf: &[u8],
+    sym: &goblin::elf::Sym,
+    current_name: &str,
+    r_type: u32,
+    host_sec_idx: usize,
+    r_offset: u64,
+) -> Option<String> {
+    if r_type != R_BPF_64_32 {
+        return None;
+    }
+    if sym.st_shndx >= elf.section_headers.len() {
+        return None;
+    }
+    let is_section_symbol = sym.st_type() == goblin::elf::sym::STT_SECTION
+        || current_name.is_empty()
+        || current_name.starts_with('.');
+    if !is_section_symbol {
+        return None;
+    }
+    if helper_id_by_name(current_name).is_some() {
+        return None;
+    }
+    let target_sec_idx_resolved = sym.st_shndx;
+    let host_sh = &elf.section_headers[host_sec_idx];
+    let host_sh_offset = host_sh.sh_offset as usize;
+    let insn_offset = host_sh_offset + r_offset as usize;
+    if insn_offset + 8 > buf.len() {
+        return None;
+    }
+    let imm_off_bytes = &buf[insn_offset + 4..insn_offset + 8];
+    let imm = i32::from_le_bytes(imm_off_bytes.try_into().ok()?);
+    let target_byte_off = if target_sec_idx_resolved == host_sec_idx {
+        r_offset as i64 + 8 + (imm as i64) * 8
+    } else {
+        // Cross-section: section symbol's st_value is the anchor,
+        // imm encodes 8-byte-unit offset from "next insn".
+        sym.st_value as i64 + (imm as i64 + 1) * 8
+    };
+    // Prefer STT_FUNC over STT_NOTYPE labels at the same offset.
+    let mut best: Option<&str> = None;
+    let mut best_is_func = false;
+    for s in elf.syms.iter() {
+        let st_type = s.st_type();
+        let func_like = st_type == goblin::elf::sym::STT_FUNC
+            || st_type == goblin::elf::sym::STT_NOTYPE;
+        if !func_like {
+            continue;
+        }
+        if s.st_shndx != target_sec_idx_resolved {
+            continue;
+        }
+        if s.st_value as i64 != target_byte_off {
+            continue;
+        }
+        let n = elf.strtab.get_at(s.st_name).unwrap_or("");
+        if n.is_empty() || n.starts_with('.') {
+            continue;
+        }
+        let is_func = st_type == goblin::elf::sym::STT_FUNC;
+        if best.is_none() || (is_func && !best_is_func) {
+            best = Some(n);
+            best_is_func = is_func;
+        }
+    }
+    best.map(|s| s.to_string())
 }
 
 /// Resolve a `R_BPF_64_64` against an executable section as a callback
@@ -1043,12 +1148,30 @@ pub fn discover_bpf_call_targets<P: AsRef<Path>>(
                 Some(s) => s,
                 None => continue,
             };
-            let name = elf.strtab.get_at(sym.st_name).unwrap_or("");
+            let raw_name = elf.strtab.get_at(sym.st_name).unwrap_or("");
 
             // Skip helper functions
-            if helper_id_by_name(name).is_some() {
+            if helper_id_by_name(raw_name).is_some() {
                 continue;
             }
+
+            // Resolve section-symbol cross-section calls (e.g. bcc
+            // ksnoop's `kprobe/foo -> .text:ksnoop` call, encoded as
+            // R_BPF_64_32 against `.text` STT_SECTION). Without this
+            // the dispatch below sees an empty name, resolve_symbol_location
+            // returns None, and the cross-section target goes undetected →
+            // loader falls back to single-section parsing → subprog body
+            // missing → "last insn at pc 0 is not an exit or jmp".
+            let resolved_name = resolve_section_symbol_call_name(
+                &elf,
+                &buf,
+                &sym,
+                raw_name,
+                r_type,
+                target_sec_idx,
+                reloc.r_offset,
+            );
+            let name = resolved_name.as_deref().unwrap_or(raw_name);
 
             if r_type == R_BPF_64_32 {
                 // Cross-section BPF-to-BPF call (unchanged behavior).

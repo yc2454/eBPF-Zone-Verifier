@@ -97,6 +97,17 @@ fn init_explored_state(env: &mut VerifierEnv, pc: usize) {
     }
 }
 
+/// Helper to mark a PC as a jmp_point.
+/// Mirrors `mark_jmp_point` in kernel (verifier.c L4146). Marked at
+/// branch targets (kernel L18319, after `mark_prune_point(env, w)`)
+/// and post-call fallthrough (kernel L18361, after the same). NOT
+/// marked at conditional-jump SELF (L17556 marks prune_point only).
+fn mark_jmp_point(env: &mut VerifierEnv, pc: usize) {
+    if pc < env.insn_aux_data.len() {
+        env.insn_aux_data[pc].jmp_point = true;
+    }
+}
+
 /// Mirrors `visit_insn` from kernel/bpf/verifier.c
 /// Returns a list of successors to push to the stack.
 fn visit_insn(pc: usize, prog: &Program, env: &mut VerifierEnv) -> Result<Vec<usize>, String> {
@@ -192,6 +203,23 @@ fn visit_insn(pc: usize, prog: &Program, env: &mut VerifierEnv) -> Result<Vec<us
             }
             if pc + 1 < n {
                 succs.push(pc + 1);
+                // Kernel: `visit_func_call_insn` unconditionally marks the
+                // post-call fallthrough as a prune point (verifier.c L17175
+                // `mark_prune_point(env, t + insn_sz)`). Applies to ALL
+                // calls (helper + subprog). Without this, sparse-cache
+                // mode never caches post-call states, so the BCF discharge
+                // walker can't land at kernel-equivalent post-call bases
+                // (observed on calico c17 from_tnl_debug: the kernel's
+                // 6-vstate chain at PC 1523 has bases at PCs 1340/1412/
+                // 1493, all post `call 0x6`/bpf_trace_printk — unreachable
+                // to zovia's walker without this marking).
+                init_explored_state(env, pc + 1);
+                // Kernel mirror: visit_func_call_insn marks the post-call
+                // fallthrough as BOTH prune_point AND jmp_point
+                // (verifier.c L18361 `mark_jmp_point(env, t + insn_sz)`).
+                // Drives `cur->jmp_history_cnt` accumulation used by the
+                // `add_new_state` long-history safety valve.
+                mark_jmp_point(env, pc + 1);
             }
             Ok(succs)
         }
@@ -201,9 +229,12 @@ fn visit_insn(pc: usize, prog: &Program, env: &mut VerifierEnv) -> Result<Vec<us
             // "unconditional jump with single edge"
             succs.push(*target);
 
-            // 2. Mark Target as Prune Point
+            // 2. Mark Target as Prune Point + Jmp Point
             // "init_explored_state(env, t + insns[t].off + 1);"
+            // Kernel push_insn BRANCH edge marks both prune_point AND
+            // jmp_point (verifier.c L18316-L18319).
             init_explored_state(env, *target);
+            mark_jmp_point(env, *target);
 
             // 3. Mark Fallthrough as Prune Point (Defensive/History)
             // "if (t + 1 < insn_cnt) init_explored_state(env, t + 1);"
@@ -215,8 +246,8 @@ fn visit_insn(pc: usize, prog: &Program, env: &mut VerifierEnv) -> Result<Vec<us
         }
         Instr::If { target, .. } => {
             // Kernel Default Case: Conditional Jump
-            // 1. Mark SELF as Prune Point
-            // "init_explored_state(env, t);"
+            // 1. Mark SELF as Prune Point (verifier.c L17556
+            //    `mark_prune_point(env, t)` in the conditional-jump arm).
             init_explored_state(env, pc);
 
             // 2. Push Fallthrough
@@ -224,7 +255,17 @@ fn visit_insn(pc: usize, prog: &Program, env: &mut VerifierEnv) -> Result<Vec<us
                 succs.push(pc + 1);
             }
 
-            // 3. Push Target
+            // 3. Push Target — and ALSO mark target as a prune point,
+            //    mirroring kernel `push_insn` BRANCH-edge handling
+            //    (verifier.c L17132-17136 `if (e == BRANCH)
+            //    mark_prune_point(env, w)`). Without this, sparse-cache
+            //    mode never caches at conditional-branch targets, so
+            //    zovia's vstate chain misses kernel parents at If-target
+            //    PCs (observed on calico c17 from_tnl_debug at PC 1517,
+            //    target of If at PC 1515, which the kernel includes in
+            //    its 6-vstate chain producing hash 0xc70002dce03c2f0e).
+            init_explored_state(env, *target);
+            mark_jmp_point(env, *target);
             succs.push(*target);
 
             Ok(succs)
@@ -245,9 +286,11 @@ fn visit_insn(pc: usize, prog: &Program, env: &mut VerifierEnv) -> Result<Vec<us
             if pc + 1 < n {
                 succs.push(pc + 1);
                 init_explored_state(env, pc + 1);
+                mark_jmp_point(env, pc + 1);
             }
             succs.push(*target);
             init_explored_state(env, *target);
+            mark_jmp_point(env, *target);
             // may_goto is a force-checkpoint site (kernel
             // `mark_force_checkpoint` at verifier.c L17557).
             if pc < env.insn_aux_data.len() {
@@ -259,6 +302,7 @@ fn visit_insn(pc: usize, prog: &Program, env: &mut VerifierEnv) -> Result<Vec<us
             // 1. Push the Function Entry (The Call)
             succs.push(*target);
             init_explored_state(env, *target);
+            mark_jmp_point(env, *target);
 
             // 2. Push the Return Point (Fallthrough)
             // We assume the function eventually returns.
@@ -267,6 +311,9 @@ fn visit_insn(pc: usize, prog: &Program, env: &mut VerifierEnv) -> Result<Vec<us
                 // The return point is a convergence point (many callers return here),
                 // so it's a good candidate for pruning.
                 init_explored_state(env, pc + 1);
+                // Subprog-return fallthrough is a jmp_point in kernel
+                // (visit_func_call_insn, verifier.c L18361).
+                mark_jmp_point(env, pc + 1);
             }
 
             Ok(succs)

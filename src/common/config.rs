@@ -50,6 +50,14 @@ pub struct VerifierConfig {
     /// Debug a specific PC (force verbose logging at this PC)
     pub debug_pc: Option<usize>,
 
+    /// Optional path to a target kernel BTF blob (e.g. a snapshot of
+    /// `/sys/kernel/btf/vmlinux` from the kernel zovia is mirroring).
+    /// When set, enables CO-RE relocation application during ELF→AST
+    /// lowering. Default `None` preserves the prior unrelocated path.
+    /// Mirrors libbpf's CO-RE setup: programs with `.BTF.ext` records
+    /// get patched to match the target kernel's struct/enum layout.
+    pub target_btf_path: Option<String>,
+
     /// Enable path tracing for crash analysis
     pub enable_path_trace: bool,
 
@@ -111,6 +119,7 @@ impl Default for VerifierConfig {
             max_states_per_pc: 64,
             log_interval: 100_000,
             debug_pc: None,
+            target_btf_path: None,
             enable_path_trace: false,
             map_overrides: std::collections::HashMap::new(),
             detect_bounded_loops: true, // Default: enabled for precision

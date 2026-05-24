@@ -730,11 +730,11 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         .mem_size_pairs(&pairs::GET_CURRENT_COMM),
 
         constants::BPF_PERF_EVENT_OUTPUT => CallProto::with_args([
-            PtrToCtx,    // R1: ctx
-            ConstMapPtr, // R2: map
-            Anything,    // R3: flags
-            PtrToMem,    // R4: data
-            ConstSize,   // R5: size
+            PtrToCtx,         // R1: ctx
+            ConstMapPtr,      // R2: map
+            Anything,         // R3: flags
+            PtrToMem,         // R4: data
+            ConstSizeOrZero,  // R5: size — kernel uses ARG_CONST_SIZE_OR_ZERO
         ])
         .mem_size_pairs(&pairs::PERF_EVENT_OUTPUT),
 

@@ -85,6 +85,19 @@ pub(crate) fn transfer_load(
             .get_slot(slot_off)
             .is_some_and(|s| s.source_reg.is_some());
         if state.fill_at(frame_level, dst, slot_off, size) {
+            // Kernel-faithful: spill/fill saves and restores the full
+            // bpf_reg_state. zovia's slot doesn't carry ptr_const_off or
+            // var_off_contributor, so previously these stayed STALE
+            // across spill/fill cycles. Surfaced on ksnoop pc=521 where
+            // R4 was filled fresh from a const-offset map_value but
+            // zovia still saw ptr_const_off=8 + var_contrib=Some(R6)
+            // from a prior R4 lifetime, breaking BCF refine (wrong
+            // threshold + walker picking up R4 unnecessarily). Clear
+            // these for `dst` on fill to match kernel's "fresh value"
+            // semantics. Proper fix would preserve them through slot
+            // metadata.
+            state.ptr_const_off.remove(&dst);
+            state.var_off_contributor.remove(&dst);
             if let Some(idx) = env.current_step_idx
                 && slot_is_spilled_reg
             {

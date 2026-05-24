@@ -45,15 +45,100 @@ fn cmp_op_to_bcf_pair(op: CmpOp) -> Option<(u8, u8)> {
     })
 }
 
-/// Append the taken/not-taken predicates to each side's `path_conds`.
-/// Skips the hook entirely when symbolic tracking is off or when either
-/// side can't be materialized as a tracked register (anchor regs, etc.).
+/// Kernel-mirror of `record_path_cond` (verifier.c:21072) for one branch
+/// successor. Builds the branch's predicate in `state`'s own bcf DAG and
+/// appends it to that state's `path_conds`. Called once per side from
+/// `transfer_if` after `refine_branch` has finalized the side's reg
+/// types (which is when the kernel runs `record_path_cond`, at the next
+/// insn's prologue — by then any `mark_ptr_or_null_reg` demote/promote
+/// has already happened).
 ///
-/// `src_pc` is the PC of the JMP insn — used to tag each emitted
-/// path_cond (and any bound preds emitted by `reg_expr`'s lazy
-/// materialization). The refine-time filter
-/// (`SymbolicState::filter_path_conds_from_pc`) keeps path_conds with
-/// `pc >= base_pc` (the kernel's bcf_track suffix-only emission rule).
+/// `op_byte_for_side` is the BPF jump-op encoding for this side's
+/// predicate (taken op for state_then, reversed for state_else). For
+/// JSET, the side's pred wraps `AND(dst,src)` in a JEQ/JNE against 0
+/// per verifier.c:20917-20927.
+///
+/// `narrow_for_side` carries the K==K-rewrite metadata for this side
+/// (None on the side where LHS doesn't collapse to a const). See
+/// `try_prove_unreachable` rewrite gate.
+///
+/// `src_pc` tags emitted path_conds (and lazy bound preds) for the
+/// kernel's `bcf_track` suffix-only filter at refinement time.
+fn record_path_cond_for_side(
+    state: &mut State,
+    width: Width,
+    left: Reg,
+    op: CmpOp,
+    op_byte_for_side: u8,
+    right: &Operand,
+    src_pc: usize,
+    narrow_for_side: Option<(u64, u8, bool, Option<usize>)>,
+) {
+    if state.bcf.is_none() {
+        return;
+    }
+    let Some(l_idx) = left.bcf_idx() else {
+        return;
+    };
+    // Mirror kernel `record_path_cond` (verifier.c:21104): skip
+    // emission when either operand isn't a SCALAR_VALUE. Checked
+    // per-side because OR_NULL pointers demote to SCALAR_VALUE only
+    // on the null branch (`mark_ptr_or_null_reg`, verifier.c:17318),
+    // so kernel records the path_cond on the null side and skips
+    // the non-null side. Without per-side checks, zovia missed the
+    // null-branch conjunct (inspektor-gadget seccomp PC 142, PC 89
+    // `if r0 != 0` fall-through after map_lookup_elem).
+    if !state.types.get(left).is_scalar() {
+        return;
+    }
+    if let Operand::Reg(r) = right
+        && !state.types.get(*r).is_scalar()
+    {
+        return;
+    }
+    let jmp32 = width == Width::W32;
+    let lhs_bounds = bcf_reg_bounds(state, left);
+    let rhs_bounds = match right {
+        Operand::Reg(r) => Some(bcf_reg_bounds(state, *r)),
+        _ => None,
+    };
+    let bcf = state.bcf.as_mut().expect("checked above");
+    bcf.set_current_pc(src_pc);
+    // Snapshot LHS's bcf_expr materialization PC before reg_expr lazy-
+    // materializes (see K==K rewrite gate in
+    // feedback_kernel_probe_record_path_cond_2026-05-23.md).
+    let lhs_materialize_pc: Option<usize> = bcf.get_reg_pc(l_idx);
+    let cmp_l = bcf.reg_expr(l_idx, &lhs_bounds, jmp32);
+    let cmp_r = match right {
+        Operand::Imm(c) => {
+            let v = if jmp32 { (*c as u32) as u64 } else { *c as u64 };
+            bcf.add_val(v, jmp32)
+        }
+        Operand::Reg(r) => match r.bcf_idx() {
+            Some(ri) => bcf.reg_expr(ri, &rhs_bounds.unwrap(), jmp32),
+            None => bcf.add_val(0, jmp32),
+        },
+    };
+    let pred = if op != CmpOp::Test {
+        bcf.add_pred(op_byte_for_side, cmp_l, cmp_r)
+    } else {
+        // JSET: kernel record_path_cond (verifier.c:20917-20927).
+        // The op_byte_for_side is already BPF_JNE (taken) or BPF_JEQ
+        // (not-taken) per cmp_op_to_side_pair's special-cased pair below.
+        let bits: u16 = if jmp32 { 32 } else { 64 };
+        let and_expr = bcf.add_alu(BPF_AND, cmp_l, cmp_r, bits);
+        let zero_expr = bcf.add_val(0, jmp32);
+        bcf.add_pred(op_byte_for_side, and_expr, zero_expr)
+    };
+    // Re-tag narrow_for_side's lhs_materialize_pc with this side's
+    // freshly-captured pre-reg_expr value (per-side bcf may have a
+    // different cached PC than the originator).
+    let narrow_now = narrow_for_side.map(|(k, op_b, j32, _)| (k, op_b, j32, lhs_materialize_pc));
+    bcf.add_cond_at_narrowed(pred, src_pc, narrow_now);
+}
+
+/// Legacy entry point — kept for symmetric callers. Splits to
+/// per-side calls; see `record_path_cond_for_side` for semantics.
 fn record_branch_path_conds(
     state_then: &mut State,
     state_else: &mut State,
@@ -110,6 +195,18 @@ fn record_branch_path_conds(
     // Set current_pc *before* reg_expr to tag any bound preds emitted
     // during lazy materialization with this JMP's source PC.
     then_bcf.set_current_pc(src_pc);
+    // Snapshot the PC at which LHS's bcf_expr was most recently
+    // materialized (`None` iff uncached) BEFORE the reg_expr call (which
+    // may lazy-materialize and set the PC to `src_pc`). At refinement
+    // time, the rewrite to `K op K` is gated on `would the LHS be
+    // uncached in a fresh kernel bcf_track replay starting at base_pc?`
+    // — true iff this captured PC is None or < base_pc. Kernel's
+    // `bcf_reg_expr` returns a `bcf_val(K)` literal only when the
+    // reg's bcf_expr is `-1` on entry (verifier.c:902 `tnum_is_const`
+    // path); when cached (spill/fill propagation, prior materialize),
+    // the cached var is returned and the predicate stays `VAR op K`.
+    // Ground-truth probe 2026-05-23.
+    let lhs_materialize_pc: Option<usize> = then_bcf.get_reg_pc(l_idx);
     let cmp_l = then_bcf.reg_expr(l_idx, &lhs_bounds, jmp32);
     let cmp_r = match right {
         Operand::Imm(c) => {
@@ -139,16 +236,48 @@ fn record_branch_path_conds(
         )
     };
 
+    // Kernel-mirror narrowed-LHS-to-const detection. For the side that
+    // takes a JEQ-K (taken side) or skips a JNE-K (not-taken side), LHS
+    // narrows to const K. We pre-compute K (the imm) and the op-byte +
+    // jmp32 width so canonical-hash time can rewrite `VAR op K` to
+    // `K op K`, matching kernel's fresh-replay `bcf_reg_expr` const-path
+    // (verifier.c:902 `tnum_is_const(reg->var_off)` → `bcf_val`). Only
+    // populated when `right` is BPF_K (`Operand::Imm`); reg-reg branches
+    // never produce K==K in kernel. Ground-truth probe 2026-05-23 — see
+    // feedback_kernel_probe_record_path_cond_2026-05-23.md.
+    let imm_k: Option<u64> = match right {
+        Operand::Imm(c) => Some(if jmp32 { (*c as u32) as u64 } else { *c as u64 }),
+        _ => None,
+    };
+    // Emit K==K-rewrite metadata for the side whose narrowing collapses
+    // LHS to a const K. The rewrite-gate decision is deferred to
+    // refinement time (where base_pc is known): we record the LHS's
+    // materialization PC here, and `try_prove_unreachable` rewrites iff
+    // that PC is None or < base_pc (i.e. uncached in a fresh replay
+    // starting at base_pc).
+    let (narrow_then, narrow_else): (
+        Option<(u64, u8, bool, Option<usize>)>,
+        Option<(u64, u8, bool, Option<usize>)>,
+    ) = match (op, imm_k, std_ops) {
+        (CmpOp::Eq, Some(k), Some((op_then, _))) => {
+            (Some((k, op_then, jmp32, lhs_materialize_pc)), None)
+        }
+        (CmpOp::Ne, Some(k), Some((_, op_else))) => {
+            (None, Some((k, op_else, jmp32, lhs_materialize_pc)))
+        }
+        _ => (None, None),
+    };
+
     // Now mirror the **whole post-hook DAG** into state_else's bcf. The
     // pre-hook DAGs were identical (state_else.bcf was cloned from state
     // before the hook), so a wholesale replace keeps both sides
     // consistent. Then append only the not-taken pred to state_else's
     // path_conds (state_then gets the taken pred).
     let snapshot = (**then_bcf).clone();
-    then_bcf.add_cond_at(pred_then, src_pc);
+    then_bcf.add_cond_at_narrowed(pred_then, src_pc, narrow_then);
     if let Some(else_bcf) = state_else.bcf.as_mut() {
         **else_bcf = snapshot;
-        else_bcf.add_cond_at(pred_else, src_pc);
+        else_bcf.add_cond_at_narrowed(pred_else, src_pc, narrow_else);
     }
 }
 
@@ -211,13 +340,6 @@ pub(crate) fn transfer_if(
     state_then.pc = target;
     state_else.pc = state.pc + 1;
 
-    // --- BCF symbolic mirror: append the branch predicate to each side's
-    // path_conds (taken op on `state_then`, reversed op on `state_else`).
-    // Mirrors BCF's `record_path_cond` (kernel patches set1, cheat-sheet §2).
-    // Test (JSET) is skipped for Phase 1; ALU/JMP comparisons cover
-    // shift_constraint's `if r1 > 4` (UGt) path-cond requirement. ---
-    record_branch_path_conds(&mut state_then, &mut state_else, width, left, op, &right, state.pc);
-
     // Apply constraints to refine the DBM in the destination states
     match &right {
         Operand::Imm(imm) => apply_jmp_constraints(
@@ -271,6 +393,52 @@ pub(crate) fn transfer_if(
     };
     refine_branch(&mut state_then, &instr, true);
     refine_branch(&mut state_else, &instr, false);
+
+    // --- BCF symbolic mirror: append the branch predicate to each side's
+    // path_conds. Mirrors kernel `record_path_cond` (verifier.c:21072),
+    // which fires at the NEXT insn's prologue — i.e. AFTER
+    // mark_ptr_or_null_reg has demoted OR_NULL → SCALAR_VALUE on the
+    // null branch (and promoted to non-null pointer on the other side).
+    // Per-side asymmetric emission: the function checks each state's
+    // own LHS/RHS types and skips emission when either isn't a SCALAR.
+    // This is what lets the IG seccomp PC 89 `if r0 != 0` fall-through
+    // contribute its `K0 == K0` conjunct (state_else's r0 was demoted
+    // to scalar(0) by `maybe_demote_or_null_to_scalar`) while skipping
+    // the taken side (state_then's r0 is non-null PtrToMapValue).
+    if let Some((op_then, op_else)) = cmp_op_to_bcf_pair(op) {
+        let jmp32 = width == Width::W32;
+        let imm_k: Option<u64> = match &right {
+            Operand::Imm(c) => Some(if jmp32 { (*c as u32) as u64 } else { *c as u64 }),
+            _ => None,
+        };
+        // Pre-compute K==K rewrite metadata per side. Per
+        // feedback_kernel_probe_record_path_cond_2026-05-23.md, the side
+        // whose LHS narrows to const K on entry gets the rewrite
+        // candidate; lhs_materialize_pc is filled in per-side inside
+        // record_path_cond_for_side.
+        let (narrow_then, narrow_else): (
+            Option<(u64, u8, bool, Option<usize>)>,
+            Option<(u64, u8, bool, Option<usize>)>,
+        ) = match (op, imm_k) {
+            (CmpOp::Eq, Some(k)) => (Some((k, op_then, jmp32, None)), None),
+            (CmpOp::Ne, Some(k)) => (None, Some((k, op_else, jmp32, None))),
+            _ => (None, None),
+        };
+        record_path_cond_for_side(
+            &mut state_then, width, left, op, op_then, &right, state.pc, narrow_then,
+        );
+        record_path_cond_for_side(
+            &mut state_else, width, left, op, op_else, &right, state.pc, narrow_else,
+        );
+    } else if matches!(op, CmpOp::Test) {
+        // JSET — per-side wrap into AND(dst,src) JNE/JEQ 0.
+        record_path_cond_for_side(
+            &mut state_then, width, left, op, BPF_JNE, &right, state.pc, None,
+        );
+        record_path_cond_for_side(
+            &mut state_else, width, left, op, BPF_JEQ, &right, state.pc, None,
+        );
+    }
 
     let backward_jump_forbidden = |st: &State| -> bool {
         if target >= st.pc {
@@ -369,10 +537,18 @@ pub(crate) fn transfer_if(
 
     // Return only consistent states
     let mut out = Vec::new();
-    if !state_else.domain.is_inconsistent() {
+    let else_ok = !state_else.domain.is_inconsistent();
+    let then_ok = !state_then.domain.is_inconsistent();
+    if crate::analysis::trace_pc_in_range(state.pc) {
+        eprintln!(
+            "[BRANCH] pc={} else_ok={} then_ok={} (else_target={} then_target={})",
+            state.pc, else_ok, then_ok, state_else.pc, state_then.pc,
+        );
+    }
+    if else_ok {
         out.push(state_else);
     }
-    if !state_then.domain.is_inconsistent() {
+    if then_ok {
         out.push(state_then);
     }
     out
@@ -485,10 +661,69 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
         return false;
     }
     let base_pc = unreachable_base_pc(env, state);
+    // Mirror kernel's `vstate->last_insn_idx` retrieval at bcf_track
+    // replay start: look up the prev_insn PC of the cached state AT
+    // base_pc (the cache the suffix walk landed on, not the immediate
+    // parent_cache_id of cur — they can differ). The filter uses this
+    // to identify the immediate-predecessor branch cond (the kernel's
+    // record_path_cond push at insn=base_pc, verifier.c:21117).
+    let (prev_insn_pc, base_cid_dbg) = {
+        use crate::analysis::machine::reg::Reg;
+        use crate::analysis::machine::reg_types::RegType;
+        const VARREGS: [Reg; 10] = [
+            Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4,
+            Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9,
+        ];
+        let targets: Vec<Reg> = VARREGS.iter().copied()
+            .filter(|&r| !matches!(state.types.get(r), RegType::NotInit))
+            .filter(|&r| {
+                let ty = state.types.get(r);
+                let const_off = state.get_tnum(r).is_const()
+                    || matches!(ty, RegType::PtrToMapValue { offset: Some(_), .. })
+                    || matches!(ty, RegType::PtrToMapValueOrNull { .. })
+                    || matches!(ty, RegType::PtrToCtx)
+                    || matches!(ty, RegType::PtrToPacketEnd)
+                    || matches!(ty, RegType::PtrToSocket { .. })
+                    || matches!(ty, RegType::PtrToSocketOrNull { .. })
+                    || matches!(ty, RegType::PtrToSockCommon { .. })
+                    || matches!(ty, RegType::PtrToSockCommonOrNull { .. })
+                    || matches!(ty, RegType::PtrToTcpSock { .. })
+                    || matches!(ty, RegType::PtrToTcpSockOrNull { .. })
+                    || matches!(ty, RegType::PtrToCpumask { .. })
+                    || matches!(ty, RegType::PtrToCpumaskOrNull { .. })
+                    || matches!(ty, RegType::PtrToArena { .. })
+                    || matches!(ty, RegType::PtrToArenaOrNull { .. })
+                    || matches!(ty, RegType::PtrToCgroup { .. })
+                    || matches!(ty, RegType::PtrToCgroupOrNull { .. })
+                    || matches!(ty, RegType::PtrToBtfId { .. })
+                    || matches!(ty, RegType::PtrToOwnedKptr { .. })
+                    || matches!(ty, RegType::PtrToMapKptr { .. });
+                !(!matches!(ty, RegType::ScalarValue) && const_off)
+            })
+            .collect();
+        let hidx = env.current_step_idx.or(state.history_idx);
+        let landed = hidx.and_then(|hidx| {
+            env.bcf_suffix_base_pc_and_cache_id(hidx, state.parent_cache_id, &targets)
+        });
+        // Use only the immediate cache the suffix walker landed on (no
+        // chain-skip). A previous attempt walked back through
+        // parent_cache_id to find the first branch-target cache, but
+        // that over-eagerly added upstream conds to trajectories whose
+        // kernel-faithful prev_insn was actually NOT a scalar branch,
+        // changing their hash and breaking the byte-match for existing
+        // kernel-matched entries (e.g. anchor calico_tc_main hash
+        // 0xd13031db2681349e flipped to MISS). Closing this requires
+        // also aligning cache topology (sparse caching), not just
+        // walker logic.
+        let pp = landed.and_then(|(_base_pc, base_cid)| env.cached_prev_insn_pc(base_cid));
+        let cid = landed.map(|(_, cid)| cid);
+        (pp, cid)
+    };
     if std::env::var("ZOVIA_DUMP_DISCHARGE").ok().as_deref() == Some("1") {
-        eprintln!("[disc] reject@pc={} base_pc={:?}", state.pc, base_pc);
+        eprintln!("[disc] reject@pc={} base_pc={:?} prev_insn_pc={:?} parent_cid={:?} base_cid={:?}",
+                  state.pc, base_pc, prev_insn_pc, state.parent_cache_id, base_cid_dbg);
     }
-    let Some(ok) = try_prove_unreachable(state, base_pc) else {
+    let Some(ok) = try_prove_unreachable(state, base_pc, prev_insn_pc) else {
         return false;
     };
     let entry = RefineEntry::new(

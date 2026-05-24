@@ -289,6 +289,17 @@ fn interval_check_map_access(
         // Use PtrOffset to get offset range from buffer start
         let min_off = ptr_off.min_offset() + (insn_off as i64);
         let max_off = ptr_off.max_offset() + (insn_off as i64) + size;
+        if std::env::var("ZOVIA_TRACE_MAP_ACCESS").ok().as_deref() == Some("1") {
+            eprintln!(
+                "[MAP_ACCESS] pc={} base={:?} ptr_off=[{},{}] insn_off={} size={} -> min_off={} max_off={} limit={} btf_id={:?}",
+                pc, base, ptr_off.min_offset(), ptr_off.max_offset(),
+                insn_off, size, min_off, max_off, map_limit, map_def.btf_val_type_id,
+            );
+            if let Some(btf_id) = map_def.btf_val_type_id {
+                let sf = env.ctx.btf.find_special_fields(btf_id);
+                eprintln!("[MAP_ACCESS]   special_fields(btf_id={}) = {:?}", btf_id, sf);
+            }
+        }
 
         // enforce value_size bounds even when the map carries a
         // BTF value-type. The special-fields check below is additive — a
@@ -410,28 +421,69 @@ fn try_bcf_refine_map(
     size: i64,
     map_limit: i64,
 ) -> bool {
+    let bcf_debug = std::env::var("ZOVIA_TRACE_BCF_REFINE").ok().as_deref() == Some("1");
     if state.bcf.is_none() {
+        if bcf_debug { eprintln!("[REFINE] pc={} bcf=None -> skip", state.pc); }
         return false;
     }
     let size_reg = env.bcf_size_reg;
-    // Mirror kernel `bcf_refine_access_bound` (verifier.c:5393):
-    // reg_masks = bit for ptr_reg (always set when ptr is variable;
-    // ptr-const case routes through bcf_prove_unreachable) plus bit for
-    // size_reg when non-const. Pass to `bcf_suffix_base_pc` to find the
-    // PC at which both target regs' definition chains have bottomed
-    // out.
-    let mut target_regs: Vec<Reg> = vec![base];
+    // Mirror kernel `bcf_refine_access_bound` (verifier.c:5455-5468):
+    // include ptr regno in reg_masks ONLY when its var_off is non-const,
+    // and include size_regno ONLY when its var_off is non-const. zovia
+    // previously included `base` unconditionally — for ksnoop's
+    // `bpf_perf_event_output(R4=map_value, ..., R5=size)` where R4 was
+    // spill/filled from a const-offset map_value, R4's backtrack chain
+    // crossed a helper call (pc=333 bpf_probe_read_kernel) → walker
+    // -EFAULT → base_pc=None → refine bailed. Kernel skips R4 here
+    // (reg_masks=0x20, R5 only) and the walker stops at the cached
+    // state at PC 498.
+    // Kernel `tnum_is_const(ptr_reg->var_off)` analog: use ptr_off range
+    // from the interval domain. min == max ⇒ no variable contribution.
+    // var_off_contributor is unreliable here because zovia's spill/fill
+    // doesn't always clear it when a fresh const-offset map_value is
+    // filled (ksnoop pc=520 `r4 = *(u64 *)(r10 -184)` shape).
+    let ptr_is_const = match state.domain.as_interval().and_then(|i| i.get_ptr_offset(base)) {
+        Some(ptr_off) => ptr_off.min_offset() == ptr_off.max_offset(),
+        None => true,
+    };
+    if bcf_debug {
+        let po = state.domain.as_interval().and_then(|i| i.get_ptr_offset(base));
+        eprintln!("[REFINE-TARGETS] pc={} base={:?} ptr_is_const={} ptr_off=[{:?}..{:?}]",
+                  state.pc, base, ptr_is_const,
+                  po.as_ref().map(|p| p.min_offset()), po.as_ref().map(|p| p.max_offset()));
+    }
+    let mut target_regs: Vec<Reg> = Vec::new();
+    if !ptr_is_const {
+        target_regs.push(base);
+    }
     if let Some(sr) = size_reg {
-        target_regs.push(sr);
+        // Kernel also gates size_reg inclusion on non-const; for zovia,
+        // a missing bcf_expr cache means size is const for refine
+        // purposes (case (ii)/(iv) below handles it).
+        if state.domain.get_fixed_value(sr).is_none() {
+            target_regs.push(sr);
+        }
+    }
+    if target_regs.is_empty() {
+        // Both const → no walker needed; pass empty so suffix_base_pc
+        // returns None and refine uses keep-all (kernel-faithful too:
+        // kernel returns bcf_prove_unreachable in this branch).
     }
     let base_pc = state
         .history_idx
         .and_then(|hidx| env.bcf_suffix_base_pc(hidx, state.parent_cache_id, &target_regs));
+    if bcf_debug {
+        eprintln!("[REFINE] pc={} base={:?} insn_off={} size={} limit={} size_reg={:?} base_pc={:?} parent_cid={:?} history_idx={:?}",
+                  state.pc, base, insn_off, size, map_limit, size_reg, base_pc,
+                  state.parent_cache_id, state.history_idx);
+    }
     let Some(ok) = crate::refinement::refine_map::try_refine_map_access(
         state, base, insn_off, size, map_limit, size_reg, base_pc,
     ) else {
+        if bcf_debug { eprintln!("[REFINE] pc={} try_refine_map_access -> None", state.pc); }
         return false;
     };
+    if bcf_debug { eprintln!("[REFINE] pc={} SUCCESS proof_bytes={}", state.pc, ok.proof_bytes.len()); }
     let entry = crate::refinement::bundle::RefineEntry::new(
         ok.goal_root,
         ok.sym.exprs,
@@ -453,6 +505,21 @@ fn try_bcf_refine_map(
         }
     }
     env.bcf_proofs.push(entry);
+    // Mirror kernel `bcf_refine` parent-marking (verifier.c:24904-24921):
+    // every cached ancestor on this refinement's backtrack suffix is no
+    // longer prune-safe, because a later arrival that would otherwise
+    // subsume against it may reach the same reject via a DIFFERENT path
+    // and need its own (different-hash) discharge entry. Branch-side
+    // refinement (`refine_unreachable`) already calls this in
+    // `branch/mod.rs`; the map/stack refinements were missing it, which
+    // let zovia subsume kernel-distinct paths at convergence PCs and
+    // drop their per-path discharges (inspektor-gadget seccomp PC 142:
+    // runc-neg's map-refine fires first; without this mark, its PC 141
+    // ancestor stays prune-safe and the later path-A arrival at PC 141
+    // gets subsumed there — the kernel sets `children_unsafe=1` and
+    // exempts it from subsumption, so path A continues to PC 142 and
+    // emits its own discharge with hash 0x6eb7).
+    env.mark_path_children_unsafe(state, base_pc);
     true
 }
 

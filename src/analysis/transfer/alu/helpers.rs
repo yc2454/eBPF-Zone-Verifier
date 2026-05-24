@@ -63,10 +63,11 @@ pub(crate) fn bcf_reg_bounds(state: &State, reg: Reg) -> RegBounds {
 /// snapshot `dst_bounds_pre` (and `src_bounds_pre` for the reg case)
 /// BEFORE the abstract-domain op runs, exactly like `handle_and`.
 ///
-/// Faithful to the proven template, this does NOT add an explicit
-/// post-op `tnum_is_const(dst)` clear (handle_and/add/sub/shl don't
-/// either, and they converged the cilium routes); if a future route
-/// shows a post-const divergence, address it instrument-driven.
+/// Mirrors kernel `bcf_alu`'s `tnum_is_const(dst_reg->var_off) →
+/// bcf_expr = -1; return 0` early bail-out (verifier.c:15220-15223) via
+/// `SymbolicState::clear_reg_if_const`: when the post-op value is a
+/// known constant, the cached expr is cleared and no chain is built —
+/// the next `reg_expr` call emits a pure `bcf_val(K)` literal.
 pub(crate) fn emit_bcf_alu_binop(
     state: &mut State,
     op: u8,
@@ -84,6 +85,11 @@ pub(crate) fn emit_bcf_alu_binop(
     let bits: u16 = if alu32 { 32 } else { 64 };
 
     let Some(d) = dst.bcf_idx() else { return };
+    if let Some(bcf) = state.bcf.as_mut()
+        && bcf.clear_reg_if_const(d, &dst_bounds_post)
+    {
+        return;
+    }
     let extend_back = |bcf: &mut SymbolicState, alu_result: u32| -> u32 {
         if alu32 || op_u32 {
             bcf.add_extend(false, 32, 64, alu_result)
@@ -147,6 +153,9 @@ pub(crate) fn emit_bcf_alu_unary(
 
     let Some(d) = dst.bcf_idx() else { return };
     if let Some(bcf) = state.bcf.as_mut() {
+        if bcf.clear_reg_if_const(d, &dst_bounds_post) {
+            return;
+        }
         let dst_expr = bcf.reg_expr(d, dst_bounds_pre, alu32);
         let alu_result = bcf.add_unary(op, dst_expr, bits);
         let final_idx = if alu32 || op_u32 {

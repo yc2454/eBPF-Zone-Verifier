@@ -513,51 +513,52 @@ impl IntervalState {
         }
     }
 
-    /// Record that packet has at least n bytes (from bounds check)
-    pub fn set_packet_size_bound(&mut self, min_size: u64) {
-        self.packet_size_lower_bound = Some(
-            self.packet_size_lower_bound
-                .map(|old| old.max(min_size))
-                .unwrap_or(min_size),
-        );
-    }
+    /// Record that packet has at least n bytes (from bounds check).
+    ///
+    /// **Disabled in the kernel-faithful Interval domain** because the
+    /// upstream kernel does NOT track a global packet_size — it tracks
+    /// `reg->range` per packet pointer only, so two independent packet
+    /// pointers can have independent ranges. Aggregating bounds globally
+    /// is a zovia-specific over-precision (residual from when Interval
+    /// mode was being kept closer to Zone-mode precision) that prunes
+    /// paths the kernel still explores. Measured failure: calico
+    /// `from_wep_fib_dsr_debug` `calico_tc_main` PC 1343 NOT-TAKEN —
+    /// prior bounds check pushed `packet_size_lower_bound` past 0x36,
+    /// then PC 1343 NT-side tried to set `upper = 0x36`, NT-side became
+    /// inconsistent → never explored → branches at PC 1347/1368 (R0
+    /// from `bpf_skb_load_bytes`) never reached → kernel's discharge
+    /// hash `0x034f376909db9ac8` never produced in zovia's bundle →
+    /// kernel `-EACCES`. Kernel-mode = Interval mode, so this is now
+    /// unconditionally a no-op in this domain. See
+    /// [[feedback_kernel_probe_record_path_cond_2026-05-23]].
+    pub fn set_packet_size_bound(&mut self, _min_size: u64) {}
 
-    /// Get known lower bound on packet size
+    /// Get known lower bound on packet size. Always `None` after the
+    /// kernel-faithfulness disable above — kept for source compatibility
+    /// with the gate-on-update site in `interval_packet.rs`.
     pub fn get_packet_size_bound(&self) -> Option<u64> {
         self.packet_size_lower_bound
     }
 
-    /// Record that packet has fewer than n bytes (packet too small path)
-    pub fn set_packet_size_upper_bound(&mut self, max_size_exclusive: u64) {
-        self.packet_size_upper_bound = Some(
-            self.packet_size_upper_bound
-                .map(|old| old.min(max_size_exclusive))
-                .unwrap_or(max_size_exclusive),
-        );
-    }
+    /// Record that packet has fewer than n bytes (packet too small path).
+    /// Disabled for kernel-faithfulness; see [`set_packet_size_bound`].
+    pub fn set_packet_size_upper_bound(&mut self, _max_size_exclusive: u64) {}
 
-    /// Record that meta region has at least n bytes (from bounds check)
-    pub fn set_meta_size_bound(&mut self, min_size: u64) {
-        self.meta_size_lower_bound = Some(
-            self.meta_size_lower_bound
-                .map(|old| old.max(min_size))
-                .unwrap_or(min_size),
-        );
-    }
+    /// Record that meta region has at least n bytes (from bounds check).
+    /// Disabled for kernel-faithfulness (same reason as
+    /// [`set_packet_size_bound`] — kernel tracks per-pointer
+    /// `reg->range`, not a global meta_size).
+    pub fn set_meta_size_bound(&mut self, _min_size: u64) {}
 
-    /// Get known lower bound on meta region size
+    /// Get known lower bound on meta region size. Always `None` post the
+    /// kernel-faithfulness disable above.
     pub fn get_meta_size_bound(&self) -> Option<u64> {
         self.meta_size_lower_bound
     }
 
-    /// Record that meta region has fewer than n bytes
-    pub fn set_meta_size_upper_bound(&mut self, max_size_exclusive: u64) {
-        self.meta_size_upper_bound = Some(
-            self.meta_size_upper_bound
-                .map(|old| old.min(max_size_exclusive))
-                .unwrap_or(max_size_exclusive),
-        );
-    }
+    /// Record that meta region has fewer than n bytes. Disabled for
+    /// kernel-faithfulness (see [`set_meta_size_bound`]).
+    pub fn set_meta_size_upper_bound(&mut self, _max_size_exclusive: u64) {}
 
     /// Compact string of global (non-per-register) constraints for log lines.
     ///

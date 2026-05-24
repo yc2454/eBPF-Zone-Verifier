@@ -145,7 +145,12 @@ pub(crate) fn handle_shr(state: &mut State, width: Width, dst: Reg, src: &Operan
     //     where dst fits in u32, emits RSH_32(reg_expr32, k_32) then ZEXT
     //     to 64. Reg-source path stays conservative (clear) for now. ---
     if let (Some(d), Operand::Imm(k)) = (dst.bcf_idx(), src) {
+        let dst_bounds_post = bcf_reg_bounds(state, dst);
         if let Some(bcf) = state.bcf.as_mut() {
+            // Kernel-mirror bcf_alu early bail-out (verifier.c:15220-15223).
+            if bcf.clear_reg_if_const(d, &dst_bounds_post) {
+                return;
+            }
             let shift_amount = if width == Width::W32 {
                 (*k as u32) & 0x1F
             } else {
@@ -184,7 +189,12 @@ pub(crate) fn handle_shr(state: &mut State, width: Width, dst: Reg, src: &Operan
             } else {
                 (c as u32) & 0x3F
             };
+            let dst_bounds_post = bcf_reg_bounds(state, dst);
             if let Some(bcf) = state.bcf.as_mut() {
+                // Kernel-mirror bcf_alu early bail-out (verifier.c:15220-15223).
+                if bcf.clear_reg_if_const(d, &dst_bounds_post) {
+                    return;
+                }
                 let op_u32 = dst_bounds_pre.fit_u32();
                 let op_s32 = dst_bounds_pre.fit_s32();
                 let alu32_class = width == Width::W32;
@@ -363,6 +373,10 @@ pub(crate) fn handle_shl(state: &mut State, width: Width, dst: Reg, src: &Operan
         // widens the value out of u32 range.
         let dst_bounds_post = bcf_reg_bounds(state, dst);
         if let Some(bcf) = state.bcf.as_mut() {
+            // Kernel-mirror bcf_alu early bail-out (verifier.c:15220-15223).
+            if bcf.clear_reg_if_const(d, &dst_bounds_post) {
+                return;
+            }
             let shift_amount = if width == Width::W32 {
                 (*k as u32) & 0x1F
             } else {
@@ -412,6 +426,10 @@ pub(crate) fn handle_shl(state: &mut State, width: Width, dst: Reg, src: &Operan
             };
             let dst_bounds_post = bcf_reg_bounds(state, dst);
             if let Some(bcf) = state.bcf.as_mut() {
+                // Kernel-mirror bcf_alu early bail-out (verifier.c:15220-15223).
+                if bcf.clear_reg_if_const(d, &dst_bounds_post) {
+                    return;
+                }
                 let op_u32 = dst_bounds_pre.fit_u32() && dst_bounds_post.fit_u32();
                 let op_s32 = dst_bounds_pre.fit_s32() && dst_bounds_post.fit_s32();
                 let alu32_class = width == Width::W32;
@@ -584,7 +602,12 @@ pub(crate) fn handle_arsh(state: &mut State, width: Width, dst: Reg, src: &Opera
     //     ZEXT (or SEXT for s32) to 64 for the cached form. Reg-source
     //     ARSH stays conservative (clear) for now. ---
     if let (Some(d), Operand::Imm(k)) = (dst.bcf_idx(), src) {
+        let dst_bounds_post = bcf_reg_bounds(state, dst);
         if let Some(bcf) = state.bcf.as_mut() {
+            // Kernel-mirror bcf_alu early bail-out (verifier.c:15220-15223).
+            if bcf.clear_reg_if_const(d, &dst_bounds_post) {
+                return;
+            }
             let shift_amount = if width == Width::W32 {
                 (*k as u32) & 0x1F
             } else {
@@ -625,7 +648,12 @@ pub(crate) fn handle_arsh(state: &mut State, width: Width, dst: Reg, src: &Opera
             } else {
                 (c as u32) & 0x3F
             };
+            let dst_bounds_post = bcf_reg_bounds(state, dst);
             if let Some(bcf) = state.bcf.as_mut() {
+                // Kernel-mirror bcf_alu early bail-out (verifier.c:15220-15223).
+                if bcf.clear_reg_if_const(d, &dst_bounds_post) {
+                    return;
+                }
                 let op_u32 = dst_bounds_pre_bcf.fit_u32();
                 let op_s32 = dst_bounds_pre_bcf.fit_s32();
                 let alu32_class = width == Width::W32;

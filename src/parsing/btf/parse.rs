@@ -108,10 +108,47 @@ pub fn parse_btf(bytes: &[u8]) -> Result<BtfContext, String> {
                 }
             }
             BTF_KIND_ENUM64 => {
-                cursor += vlen * 12;
+                // Each value: { u32 name_off; u32 val_lo32; u32 val_hi32; }
+                // We pack into BtfMember by repurposing fields:
+                //   name_off = enum-value name string offset
+                //   type_id  = val_hi32 (upper 32 bits)
+                //   offset   = val_lo32 (lower 32 bits)
+                // BtfType.kind() being ENUM64 disambiguates the layout.
+                // Used by CO-RE EnumvalExists/EnumvalValue relo resolution
+                // — without this, enum values can't be looked up by name.
+                for _ in 0..vlen {
+                    if cursor + 12 > type_end {
+                        break;
+                    }
+                    let v_name = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
+                    let v_lo = u32::from_le_bytes(bytes[cursor + 4..cursor + 8].try_into().unwrap());
+                    let v_hi = u32::from_le_bytes(bytes[cursor + 8..cursor + 12].try_into().unwrap());
+                    cursor += 12;
+                    members.push(BtfMember {
+                        name_off: v_name,
+                        type_id: v_hi,
+                        offset: v_lo,
+                    });
+                }
             }
             BTF_KIND_ENUM => {
-                cursor += vlen * 8;
+                // Each value: { u32 name_off; i32 val; }
+                // Pack into BtfMember: name_off = value-name string offset,
+                // offset = value as u32 (signed → u32 reinterpret).
+                // BtfType.kind() being ENUM disambiguates the layout.
+                for _ in 0..vlen {
+                    if cursor + 8 > type_end {
+                        break;
+                    }
+                    let v_name = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
+                    let v_val = u32::from_le_bytes(bytes[cursor + 4..cursor + 8].try_into().unwrap());
+                    cursor += 8;
+                    members.push(BtfMember {
+                        name_off: v_name,
+                        type_id: 0,
+                        offset: v_val,
+                    });
+                }
             }
             BTF_KIND_FUNC_PROTO => {
                 // Each param is `struct btf_param { u32 name_off; u32 type; }`.

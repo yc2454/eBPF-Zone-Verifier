@@ -86,6 +86,13 @@ pub struct GlobalOpts {
     #[arg(long, global = true, value_name = "PC")]
     pub debug_pc: Option<usize>,
 
+    /// Path to target kernel BTF blob (e.g. snapshot of /sys/kernel/btf/vmlinux).
+    /// When set, CO-RE relocations in ELF objects carrying .BTF.ext are
+    /// applied during ELF→AST lowering. Default off — programs without
+    /// CO-RE relos are unaffected.
+    #[arg(long = "target-btf", global = true, value_name = "PATH")]
+    pub target_btf: Option<String>,
+
     /// Map size override `NAME:SIZE` (repeatable)
     #[arg(long = "map-override", global = true, value_name = "NAME:SIZE")]
     pub map_overrides: Vec<String>,
@@ -314,7 +321,14 @@ impl GlobalOpts {
         if self.kernel_mode {
             c.domain_mode = DomainMode::Interval;
             c.detect_bounded_loops = false;
-            c.require_single_loop_entry = true;
+            // Kernel-faithful: verifier.c:18370 short-circuits the
+            // back-edge reject with `if (env->bpf_capable) return
+            // DONE_EXPLORING`. kernel-mode is the always-privileged
+            // mirror, so back-edges (including jump-into-loop-middle
+            // patterns clang emits in tracing programs) must be
+            // allowed. Surfaced via bcc ksnoop false-reject "back-edge
+            // from insn 380 to 423" against an oracle-accepted prog.
+            c.require_single_loop_entry = false;
         }
         if self.zone_mode {
             c.domain_mode = DomainMode::Zone;
@@ -363,6 +377,9 @@ impl GlobalOpts {
         }
         if let Some(pc) = self.debug_pc {
             c.debug_pc = Some(pc);
+        }
+        if let Some(p) = &self.target_btf {
+            c.target_btf_path = Some(p.clone());
         }
 
         for spec in &self.map_overrides {

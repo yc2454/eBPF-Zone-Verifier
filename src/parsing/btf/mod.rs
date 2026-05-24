@@ -10,14 +10,16 @@ mod context;
 mod ext;
 mod map_defs;
 mod parse;
+pub mod relo_apply;
 mod types;
 
 #[cfg(test)]
 mod tests;
 
-pub use ext::parse_btf_ext;
+pub use ext::{CoreRelo, CoreReloKind, parse_btf_ext};
 pub use map_defs::parse_btf_map_defs;
 pub use parse::parse_btf;
+pub use relo_apply::{ReloStats, apply_core_relos};
 pub use types::{
     BTF_KIND_FUNC_PROTO, BtfContext, BtfFieldKind, BtfMember, BtfType, GlobalFuncArg,
     SpecialFieldKind, StructOpsArg,
