@@ -250,10 +250,52 @@ pub(crate) fn refine_branch(state: &mut State, instr: &Instr, branch_taken: bool
             maybe_promote_map_val(state, *left);
             maybe_promote_btf_id(state, *left);
             maybe_promote_mem(state, *left);
+        } else {
+            // Kernel-mirror `mark_ptr_or_null_reg` null-branch arm
+            // (verifier.c:17318-17328): when the branch proves the OR_NULL
+            // ptr is NULL, demote `type` to SCALAR_VALUE and pin var_off /
+            // bounds to const-0. Without this, `record_path_cond`-style
+            // discharge sites that fire on the null branch see the reg as
+            // non-scalar and skip the conjunct (kernel records it, since
+            // its scalar typing happened at the branch). Closes the
+            // inspektor-gadget seccomp PC 142 missing-conjunct gap: kernel
+            // emits `(K0_64 JEQ K0_64)` for the PC 89 `if r0 == 0`
+            // fall-through after map_lookup_elem's R0=PtrToMapValueOrNull.
+            // Acquired-ref OR_NULL types (Socket / Cgroup / OwnedKptr / …)
+            // already get this in `maybe_refine_acquired_ref` below.
+            maybe_demote_or_null_to_scalar(state, *left);
         }
 
         // refine acquired references (handles both paths)
         maybe_refine_acquired_ref(state, *left, is_non_null);
+    }
+}
+
+/// Null-branch mirror of [`maybe_promote_map_val`] / [`maybe_promote_btf_id`]:
+/// on the side where the OR_NULL pointer is proved NULL, demote every
+/// register sharing the OR_NULL `id` to `SCALAR_VALUE` and pin its abstract
+/// value to const-0. Mirrors kernel `mark_ptr_or_null_reg` (verifier.c:17318).
+///
+/// Acquired-ref OR_NULL families (Socket / TcpSock / Cpumask / Arena /
+/// Cgroup / Task / OwnedKptr / MapKptr) are handled by
+/// `maybe_refine_acquired_ref`, which also unrefs.
+fn maybe_demote_or_null_to_scalar(state: &mut State, reg: Reg) {
+    let target_id = match state.types.get(reg) {
+        RegType::PtrToMapValueOrNull { id, .. } => id,
+        RegType::PtrToBtfIdOrNull { id, .. } => id,
+        _ => return,
+    };
+    for r in Reg::ALL {
+        let same_id = match state.types.get(r) {
+            RegType::PtrToMapValueOrNull { id, .. } if id == target_id => true,
+            RegType::PtrToBtfIdOrNull { id, .. } if id == target_id => true,
+            _ => false,
+        };
+        if same_id {
+            state.types.set(r, RegType::ScalarValue);
+            state.domain.assign_imm(r, 0);
+            state.set_tnum(r, crate::domains::tnum::Tnum::constant(0));
+        }
     }
 }
 

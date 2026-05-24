@@ -45,15 +45,100 @@ fn cmp_op_to_bcf_pair(op: CmpOp) -> Option<(u8, u8)> {
     })
 }
 
-/// Append the taken/not-taken predicates to each side's `path_conds`.
-/// Skips the hook entirely when symbolic tracking is off or when either
-/// side can't be materialized as a tracked register (anchor regs, etc.).
+/// Kernel-mirror of `record_path_cond` (verifier.c:21072) for one branch
+/// successor. Builds the branch's predicate in `state`'s own bcf DAG and
+/// appends it to that state's `path_conds`. Called once per side from
+/// `transfer_if` after `refine_branch` has finalized the side's reg
+/// types (which is when the kernel runs `record_path_cond`, at the next
+/// insn's prologue — by then any `mark_ptr_or_null_reg` demote/promote
+/// has already happened).
 ///
-/// `src_pc` is the PC of the JMP insn — used to tag each emitted
-/// path_cond (and any bound preds emitted by `reg_expr`'s lazy
-/// materialization). The refine-time filter
-/// (`SymbolicState::filter_path_conds_from_pc`) keeps path_conds with
-/// `pc >= base_pc` (the kernel's bcf_track suffix-only emission rule).
+/// `op_byte_for_side` is the BPF jump-op encoding for this side's
+/// predicate (taken op for state_then, reversed for state_else). For
+/// JSET, the side's pred wraps `AND(dst,src)` in a JEQ/JNE against 0
+/// per verifier.c:20917-20927.
+///
+/// `narrow_for_side` carries the K==K-rewrite metadata for this side
+/// (None on the side where LHS doesn't collapse to a const). See
+/// `try_prove_unreachable` rewrite gate.
+///
+/// `src_pc` tags emitted path_conds (and lazy bound preds) for the
+/// kernel's `bcf_track` suffix-only filter at refinement time.
+fn record_path_cond_for_side(
+    state: &mut State,
+    width: Width,
+    left: Reg,
+    op: CmpOp,
+    op_byte_for_side: u8,
+    right: &Operand,
+    src_pc: usize,
+    narrow_for_side: Option<(u64, u8, bool, Option<usize>)>,
+) {
+    if state.bcf.is_none() {
+        return;
+    }
+    let Some(l_idx) = left.bcf_idx() else {
+        return;
+    };
+    // Mirror kernel `record_path_cond` (verifier.c:21104): skip
+    // emission when either operand isn't a SCALAR_VALUE. Checked
+    // per-side because OR_NULL pointers demote to SCALAR_VALUE only
+    // on the null branch (`mark_ptr_or_null_reg`, verifier.c:17318),
+    // so kernel records the path_cond on the null side and skips
+    // the non-null side. Without per-side checks, zovia missed the
+    // null-branch conjunct (inspektor-gadget seccomp PC 142, PC 89
+    // `if r0 != 0` fall-through after map_lookup_elem).
+    if !state.types.get(left).is_scalar() {
+        return;
+    }
+    if let Operand::Reg(r) = right
+        && !state.types.get(*r).is_scalar()
+    {
+        return;
+    }
+    let jmp32 = width == Width::W32;
+    let lhs_bounds = bcf_reg_bounds(state, left);
+    let rhs_bounds = match right {
+        Operand::Reg(r) => Some(bcf_reg_bounds(state, *r)),
+        _ => None,
+    };
+    let bcf = state.bcf.as_mut().expect("checked above");
+    bcf.set_current_pc(src_pc);
+    // Snapshot LHS's bcf_expr materialization PC before reg_expr lazy-
+    // materializes (see K==K rewrite gate in
+    // feedback_kernel_probe_record_path_cond_2026-05-23.md).
+    let lhs_materialize_pc: Option<usize> = bcf.get_reg_pc(l_idx);
+    let cmp_l = bcf.reg_expr(l_idx, &lhs_bounds, jmp32);
+    let cmp_r = match right {
+        Operand::Imm(c) => {
+            let v = if jmp32 { (*c as u32) as u64 } else { *c as u64 };
+            bcf.add_val(v, jmp32)
+        }
+        Operand::Reg(r) => match r.bcf_idx() {
+            Some(ri) => bcf.reg_expr(ri, &rhs_bounds.unwrap(), jmp32),
+            None => bcf.add_val(0, jmp32),
+        },
+    };
+    let pred = if op != CmpOp::Test {
+        bcf.add_pred(op_byte_for_side, cmp_l, cmp_r)
+    } else {
+        // JSET: kernel record_path_cond (verifier.c:20917-20927).
+        // The op_byte_for_side is already BPF_JNE (taken) or BPF_JEQ
+        // (not-taken) per cmp_op_to_side_pair's special-cased pair below.
+        let bits: u16 = if jmp32 { 32 } else { 64 };
+        let and_expr = bcf.add_alu(BPF_AND, cmp_l, cmp_r, bits);
+        let zero_expr = bcf.add_val(0, jmp32);
+        bcf.add_pred(op_byte_for_side, and_expr, zero_expr)
+    };
+    // Re-tag narrow_for_side's lhs_materialize_pc with this side's
+    // freshly-captured pre-reg_expr value (per-side bcf may have a
+    // different cached PC than the originator).
+    let narrow_now = narrow_for_side.map(|(k, op_b, j32, _)| (k, op_b, j32, lhs_materialize_pc));
+    bcf.add_cond_at_narrowed(pred, src_pc, narrow_now);
+}
+
+/// Legacy entry point — kept for symmetric callers. Splits to
+/// per-side calls; see `record_path_cond_for_side` for semantics.
 fn record_branch_path_conds(
     state_then: &mut State,
     state_else: &mut State,
@@ -255,13 +340,6 @@ pub(crate) fn transfer_if(
     state_then.pc = target;
     state_else.pc = state.pc + 1;
 
-    // --- BCF symbolic mirror: append the branch predicate to each side's
-    // path_conds (taken op on `state_then`, reversed op on `state_else`).
-    // Mirrors BCF's `record_path_cond` (kernel patches set1, cheat-sheet §2).
-    // Test (JSET) is skipped for Phase 1; ALU/JMP comparisons cover
-    // shift_constraint's `if r1 > 4` (UGt) path-cond requirement. ---
-    record_branch_path_conds(&mut state_then, &mut state_else, width, left, op, &right, state.pc);
-
     // Apply constraints to refine the DBM in the destination states
     match &right {
         Operand::Imm(imm) => apply_jmp_constraints(
@@ -315,6 +393,52 @@ pub(crate) fn transfer_if(
     };
     refine_branch(&mut state_then, &instr, true);
     refine_branch(&mut state_else, &instr, false);
+
+    // --- BCF symbolic mirror: append the branch predicate to each side's
+    // path_conds. Mirrors kernel `record_path_cond` (verifier.c:21072),
+    // which fires at the NEXT insn's prologue — i.e. AFTER
+    // mark_ptr_or_null_reg has demoted OR_NULL → SCALAR_VALUE on the
+    // null branch (and promoted to non-null pointer on the other side).
+    // Per-side asymmetric emission: the function checks each state's
+    // own LHS/RHS types and skips emission when either isn't a SCALAR.
+    // This is what lets the IG seccomp PC 89 `if r0 != 0` fall-through
+    // contribute its `K0 == K0` conjunct (state_else's r0 was demoted
+    // to scalar(0) by `maybe_demote_or_null_to_scalar`) while skipping
+    // the taken side (state_then's r0 is non-null PtrToMapValue).
+    if let Some((op_then, op_else)) = cmp_op_to_bcf_pair(op) {
+        let jmp32 = width == Width::W32;
+        let imm_k: Option<u64> = match &right {
+            Operand::Imm(c) => Some(if jmp32 { (*c as u32) as u64 } else { *c as u64 }),
+            _ => None,
+        };
+        // Pre-compute K==K rewrite metadata per side. Per
+        // feedback_kernel_probe_record_path_cond_2026-05-23.md, the side
+        // whose LHS narrows to const K on entry gets the rewrite
+        // candidate; lhs_materialize_pc is filled in per-side inside
+        // record_path_cond_for_side.
+        let (narrow_then, narrow_else): (
+            Option<(u64, u8, bool, Option<usize>)>,
+            Option<(u64, u8, bool, Option<usize>)>,
+        ) = match (op, imm_k) {
+            (CmpOp::Eq, Some(k)) => (Some((k, op_then, jmp32, None)), None),
+            (CmpOp::Ne, Some(k)) => (None, Some((k, op_else, jmp32, None))),
+            _ => (None, None),
+        };
+        record_path_cond_for_side(
+            &mut state_then, width, left, op, op_then, &right, state.pc, narrow_then,
+        );
+        record_path_cond_for_side(
+            &mut state_else, width, left, op, op_else, &right, state.pc, narrow_else,
+        );
+    } else if matches!(op, CmpOp::Test) {
+        // JSET — per-side wrap into AND(dst,src) JNE/JEQ 0.
+        record_path_cond_for_side(
+            &mut state_then, width, left, op, BPF_JNE, &right, state.pc, None,
+        );
+        record_path_cond_for_side(
+            &mut state_else, width, left, op, BPF_JEQ, &right, state.pc, None,
+        );
+    }
 
     let backward_jump_forbidden = |st: &State| -> bool {
         if target >= st.pc {
