@@ -171,6 +171,24 @@ ssh -i ~/BCF/imgs/bookworm.id_rsa -p 10023 root@localhost \
 # Expected: SUCCESS: loaded 1/1 program(s)
 ```
 
+## 9. Interactive end-to-end demo
+
+Once the smoke test passes, [`scripts/demo_e2e.sh`](scripts/demo_e2e.sh)
+walks any BPF object through the full kernel-rejects → zovia-discharges →
+kernel-accepts story, with pauses between steps and a bundle-contents
+dump:
+
+```bash
+~/eBPF-Zone-Verifier/scripts/demo_e2e.sh <prog.bpf.o> [--type TYPE] [--no-pause]
+
+# example:
+~/eBPF-Zone-Verifier/scripts/demo_e2e.sh ~/BCF/examples/shift_constraint.bpf.o
+```
+
+If `<prog.bpf.o>` lives outside `~/BCF/`, the script copies it into
+`~/BCF/sweep/` so the VM can see it via virtiofs. Default program type
+is `classifier`; pass `--type xdp` / `kprobe` / etc. for other hooks.
+
 ---
 
 ## Environment variables
