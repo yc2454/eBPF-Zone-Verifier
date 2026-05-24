@@ -14,9 +14,21 @@ ship our own kernel `bzImage` and the verifier binary.
 ```bash
 git clone https://github.com/SunHao-0/BCF ~/BCF
 cd ~/BCF
-./scripts/install-deps.sh                          # kernel + cvc5 + qemu + rustup + virtiofsd
+./scripts/install-deps.sh                          # kernel + cvc5 + qemu deps
 sudo apt install -y clang llvm libbpf-dev dwarves  # zovia extras: BPF compile + pahole (for BTF)
-source "$HOME/.cargo/env"                          # if rustup was just installed
+```
+
+`install-deps.sh` is supposed to install rustup and virtiofsd too, but it
+sometimes skips them. Install both explicitly:
+
+```bash
+# Rust toolchain (needed to build zovia and virtiofsd)
+command -v cargo >/dev/null || \
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+source "$HOME/.cargo/env"
+
+# virtiofsd (used by BCF's boot_vm.sh to share ~/BCF into the VM)
+command -v virtiofsd >/dev/null || cargo install virtiofsd
 ```
 
 ## 2. Download the BCF VM image
@@ -65,7 +77,7 @@ Current pin: `6.18.0-rc4-g47b3934f7ad8`, branch `userspace-bcf`, sha256
 ## 5. Build zovia
 
 ```bash
-git clone <THIS_REPO_URL> ~/eBPF-Zone-Verifier
+git clone https://github.com/yc2454/eBPF-Zone-Verifier.git ~/eBPF-Zone-Verifier
 cd ~/eBPF-Zone-Verifier
 cargo build --release
 export ZOVIA_CVC5=~/BCF/output/cvc5-libs/bin/cvc5
@@ -130,27 +142,6 @@ ssh -i ~/BCF/imgs/bookworm.id_rsa -p 10023 root@localhost \
 | `ZOVIA_KERNEL_ENGINE=1`     | Enable kernel-shape exploration engine                        |
 | `ZOVIA_KERNEL_ENGINE_AND=1` | AND-mode bundle merge (with `ZOVIA_KERNEL_ENGINE=1`)          |
 | `ZOVIA_BCF_DUMP_SMT=1`      | Dump per-site SMT-LIB to disk (debugging)                     |
-
-## Rebuilding the kernel
-
-Only if you're modifying zovia's kernel side:
-
-```bash
-git clone <BPF_NEXT_ZOVIA_URL> ~/bpf-next-zovia
-cd ~/bpf-next-zovia
-git checkout userspace-bcf
-cp ~/BCF/scripts/kernel-config .config
-cat tools/testing/selftests/bpf/config \
-    tools/testing/selftests/bpf/config.x86_64 \
-    tools/testing/selftests/bpf/config.vm >> .config
-make olddefconfig
-make -j"$(nproc)" bzImage
-cp arch/x86/boot/bzImage ~/BCF/output/bzImage
-```
-
-`bpf-next-zovia` is **not** upstream BCF + patches — it's a downstream
-that diverged. Applying BCF's `patches-kernel/` to vanilla bpf-next won't
-give you our kernel.
 
 ## Troubleshooting
 
