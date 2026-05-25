@@ -49,6 +49,19 @@ pub(crate) fn transfer_alu(
     let dst_type = state.types.get(dst);
 
     if !validation::check_ptr_arithmetic(env, &state, op, width, dst, &dst_type, &src_type, &src) {
+        // Reactive BCF emission at the rejection site. Mirrors kernel
+        // patch set1/0014 which wraps `adjust_reg_min_max_vals` with
+        // `bcf_prove_unreachable(env)` on err: the kernel attempts to
+        // discharge this rejection via a path-unreachable bundle
+        // lookup. To make that discharge succeed we need to emit a
+        // kind=UNREACHABLE entry here with the matching path_cond
+        // hash. Helps programs like tcp_conn_tuner.bpf.o whose `r0 %=
+        // r7; r0 <<= 2; r1 += r0` hits the "math between fp pointer
+        // and register with unbounded min value" rejection — the
+        // surrounding path constraints (e.g. `r7 = 4`) prove the
+        // operand is bounded even though kernel-faithful BPF_MOD
+        // tracking lost the precise bound.
+        super::branch::try_emit_path_unreachable_entry(env, &state);
         env.fail(VerificationError::InvalidPointerArithmetic { pc: state.pc });
         return vec![];
     }
