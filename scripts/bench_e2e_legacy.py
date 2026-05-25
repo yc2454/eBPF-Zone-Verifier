@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""End-to-end BCF bundle benchmark harness.
+"""LEGACY end-to-end BCF bundle benchmark harness.
+
+⚠️ Superseded by `bench_e2e.py`, which calls `zovia --bcf` once per
+object and relies on zovia's internal thorough mode for the multi-pass
+discharge-entry merge. Use the new script unless you specifically need
+to drive each pass from Python (e.g., per-pass timing diagnostics).
 
 For each .o in the input list:
-  Phase 1 (parallel, zovia-side): build the bundle via a single
-    `zovia --bcf --kernel-mode verify <obj>` invocation. By default
-    `--bcf` enables thorough mode internally (zovia spawns its own
-    multi-pass children with varied state-cache placement and merges
-    their discharge entries). The legacy harness that drove three
-    separate zovia invocations from this script lives at
-    `bench_e2e_legacy.py`.
+  Phase 1 (parallel, zovia-side): build a unified bundle by running
+    zovia 3× with ZOVIA_BUNDLE_KEEP=1 — flag-OFF, flag-ON AND,
+    flag-ON OR. Each mode contributes different rejection-discharge
+    entries (kernel writes dedup by hash via write_bundle).
   Phase 2 (sequential, kernel-side via cloudlab→VM ssh chain):
     ship anchor + bundle, run test_loader, parse loaded=N/M.
 
@@ -16,14 +18,14 @@ Output: TSV with columns
   obj  zovia_ok  bundle_bytes  zovia_elapsed  kernel_loaded  kernel_total
 
 Usage:
-  scripts/bench_e2e.py --list /tmp/calico_repr_list.txt --jobs 8 \\
+  scripts/bench_e2e_legacy.py --list /tmp/calico_repr_list.txt --jobs 8 \\
       --out /tmp/bench_calico71.tsv --kernel-test
 
   # skip the kernel-load step (just build bundles + measure zovia):
-  scripts/bench_e2e.py --list ... --no-kernel-test
+  scripts/bench_e2e_legacy.py --list ... --no-kernel-test
 
   # rerun only the kernel-load step against existing bundles:
-  scripts/bench_e2e.py --list ... --skip-bundle-build --kernel-test
+  scripts/bench_e2e_legacy.py --list ... --skip-bundle-build --kernel-test
 """
 from __future__ import annotations
 
@@ -72,22 +74,27 @@ def build_one(args):
     except OSError:
         pass
 
-    # zovia's --bcf flag enables internal thorough mode by default: it
-    # spawns its own multi-pass children with varied state-cache
-    # placement and merges their discharge entries into the same
-    # bundle file. One invocation per object is now sufficient.
-    cmd = [zovia_bin, "-q", "--bcf", "--kernel-mode", "verify", obj_path]
+    modes = [
+        ("OFF", {}),
+        ("AND", {"ZOVIA_KERNEL_ENGINE": "1", "ZOVIA_KERNEL_ENGINE_AND": "1"}),
+        ("OR",  {"ZOVIA_KERNEL_ENGINE": "1"}),
+    ]
     t0 = time.time()
-    note = ""
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        note = f"rc{r.returncode}"
-    except subprocess.TimeoutExpired:
-        note = "TO"
+    notes = []
+    for label, extra_env in modes:
+        env = {**os.environ, "ZOVIA_BUNDLE_KEEP": "1", **extra_env}
+        cmd = [zovia_bin, "-q", "--bcf", "--kernel-mode", "verify", obj_path]
+        try:
+            r = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=timeout)
+            # we only care that the bundle file ends up populated;
+            # individual mode rc=1 is fine if other modes added entries
+            notes.append(f"{label}:rc{r.returncode}")
+        except subprocess.TimeoutExpired:
+            notes.append(f"{label}:TO")
     elapsed = time.time() - t0
     ok = os.path.exists(bundle)
     size = os.path.getsize(bundle) if ok else 0
-    return (obj_path, ok, size, elapsed, note)
+    return (obj_path, ok, size, elapsed, ",".join(notes))
 
 
 def phase1_build_bundles(objs: list[str], zovia: str, jobs: int, timeout: int,

@@ -2,18 +2,14 @@
 # Builds a kernel-loadable BCF bundle for the calico anchor object
 # (clang-15_-O1_felix_bin_bpf_to_tnl_debug_v6.o, 7 programs).
 #
-# Iterates over all 7 programs, running zovia in three modes and
-# accumulating bundle entries via ZOVIA_BUNDLE_KEEP=1:
-#   1. flag-OFF (default zovia behavior — dense caching)
-#   2. flag-ON AND mode (sparser caching → more exploration → more entries)
-#   3. flag-ON OR  mode (default flag-ON behavior)
+# Iterates over all 7 programs and runs `zovia --bcf` once per
+# program — `--bcf` enables zovia's internal thorough mode by default,
+# so each invocation already spawns the multi-pass children that
+# previously had to be driven from the outside.
 #
-# Each program contributes its rejection-discharge entries to the
-# shared bundle file. Entries dedup by hash via write_bundle.
-#
-# Verified 2026-05-21 at HEAD a44b922: whole-object kernel load
-# returns "SUCCESS: loaded 7/7 program(s)" on the cloudlab VM
-# (kernel 6.18.0-rc4-g47b3934f7ad8 with BCF patches).
+# The legacy three-mode driver lives at
+# `calico_anchor_unified_bundle_legacy.sh` for archival reference
+# (manually setting ZOVIA_KERNEL_ENGINE / _AND and looping).
 #
 # Usage:
 #   ANCHOR=/path/to/anchor.o ZOVIA=./target/release/zovia ./calico_anchor_unified_bundle.sh
@@ -34,23 +30,18 @@ PROGS=(
 )
 
 rm -f "$BUNDLE"
-echo "=== three-mode unified bundle build for $ANCHOR ==="
+echo "=== thorough-mode unified bundle build for $ANCHOR ==="
 for prog in "${PROGS[@]}"; do
   echo ""
   echo "### $prog ###"
-  echo "  flag-OFF:"
+  # ZOVIA_BUNDLE_KEEP=1 prevents the per-invocation wipe so each
+  # program's contribution accumulates into the same bundle file.
   ZOVIA_BUNDLE_KEEP=1 \
     "$ZOVIA" --bcf --kernel-mode verify "$ANCHOR" --func "$prog" 2>&1 \
-    | grep -E 'Verified|bundle:|FAILURE|TIMEOUT|Aborting' | tail -2 | sed 's/^/    /'
-  echo "  flag-ON AND:"
-  ZOVIA_KERNEL_ENGINE=1 ZOVIA_KERNEL_ENGINE_AND=1 ZOVIA_BUNDLE_KEEP=1 \
-    "$ZOVIA" --bcf --kernel-mode verify "$ANCHOR" --func "$prog" 2>&1 \
-    | grep -E 'Verified|bundle:|FAILURE|TIMEOUT|Aborting' | tail -2 | sed 's/^/    /'
-  echo "  flag-ON OR :"
-  ZOVIA_KERNEL_ENGINE=1 ZOVIA_BUNDLE_KEEP=1 \
-    "$ZOVIA" --bcf --kernel-mode verify "$ANCHOR" --func "$prog" 2>&1 \
-    | grep -E 'Verified|bundle:|FAILURE|TIMEOUT|Aborting' | tail -2 | sed 's/^/    /'
+    | grep -E 'Verified|bundle:|FAILURE|TIMEOUT|Aborting|^--- pass' \
+    | tail -5 | sed 's/^/    /'
 done
+
 echo ""
-echo "=== final unified bundle ==="
-ls -la "$BUNDLE"
+echo "=== final bundle ==="
+ls -l "$BUNDLE" 2>/dev/null
