@@ -117,6 +117,7 @@ libbpf = bpf-next + BCF set5 + 3 zovia patches (adds
 ```bash
 git clone https://github.com/yc2454/eBPF-Zone-Verifier.git ~/eBPF-Zone-Verifier
 cd ~/eBPF-Zone-Verifier
+git checkout 37d9fdeca8dd75f12bab435546ade867f9539eb5 # Stable commit
 cargo build --release
 export ZOVIA_CVC5=~/BCF/output/cvc5-libs/bin/cvc5
 ```
@@ -180,9 +181,15 @@ dump:
 
 ```bash
 ~/eBPF-Zone-Verifier/scripts/demo_e2e.sh <prog.bpf.o> [--type TYPE] [--no-pause]
+```
 
-# example:
+Three good starter objects ship with BCF — each is a small program the
+kernel verifier rejects on its own but zovia can discharge:
+
+```bash
 ~/eBPF-Zone-Verifier/scripts/demo_e2e.sh ~/BCF/examples/shift_constraint.bpf.o
+~/eBPF-Zone-Verifier/scripts/demo_e2e.sh ~/BCF/examples/stack_ptr_varoff.bpf.o
+~/eBPF-Zone-Verifier/scripts/demo_e2e.sh ~/BCF/examples/unreachable_arsh.bpf.o
 ```
 
 If `<prog.bpf.o>` lives outside `~/BCF/`, the script copies it into
