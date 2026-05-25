@@ -173,6 +173,40 @@ impl NumericDomain {
         }
     }
 
+    /// Restore the unsigned view of a register to full range, for
+    /// mixed-sign cases where the signed narrowing
+    /// (e.g. helper-return `[-MAX_ERRNO, msize]`) silently corrupted
+    /// umax via cross-propagation in `assume_sle`. The unsigned
+    /// representation of a mixed-sign signed range is two disjoint
+    /// pieces `[0, smax] ∪ [smin as u64, u64::MAX]` and can't be
+    /// represented by a single contiguous unsigned interval; the
+    /// kernel-faithful answer is `[0, u64::MAX]`. Re-runs sync_bounds
+    /// so the 32-bit halves get re-derived correctly without the
+    /// stale narrowed umax dragging s32_min to 0 (sync_bounds path 1).
+    pub fn restore_full_unsigned_range(&mut self, x: Reg) {
+        match self {
+            NumericDomain::Zone(_) => {
+                // Zone domain doesn't track umin/umax explicitly;
+                // its DBM bounds are inherently signed. Nothing to
+                // restore.
+            }
+            NumericDomain::Interval(ivl) => {
+                let b = ivl.get_bounds_mut(x);
+                b.umin = 0;
+                b.umax = u64::MAX;
+                b.u32_min = 0;
+                b.u32_max = u32::MAX;
+                // Reset 32-bit signed to full range too so sync_bounds
+                // re-derives them from the (now correct) 64-bit signed
+                // interval without retaining the bogus s32_min=0 set
+                // earlier by the path-1 propagation.
+                b.s32_min = i32::MIN;
+                b.s32_max = i32::MAX;
+                b.sync_bounds();
+            }
+        }
+    }
+
     /// Explicitly sets the 32-bit signed bounds for a register
     pub fn set_s32_bounds(&mut self, x: Reg, min: i32, max: i32) {
         match self {

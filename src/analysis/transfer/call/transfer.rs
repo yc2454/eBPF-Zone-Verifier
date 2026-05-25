@@ -1040,6 +1040,30 @@ pub(super) fn apply_return_bounds(state: &mut State, helper: u32) {
                 state.domain.assume_le_imm(Reg::R0, hi);
             }
             state.domain.assume_ge_imm(Reg::R0, -constants::MAX_ERRNO);
+            // Helper return is documented mixed-sign [-MAX_ERRNO,
+            // msize_max]. The kernel's `do_refine_retval_range` sets
+            // s32/s64 bounds and `reg_bounds_sync` correctly leaves
+            // u32_max=u32::MAX / umax=u64::MAX (mixed-sign → unsigned
+            // view spans the full range, two disjoint pieces). Zovia's
+            // `assume_le_imm` path narrowed umax=hi (because hi >= 0),
+            // and sync_bounds path-1 then propagated to s32_min=0
+            // instead of -MAX_ERRNO. That made bound_reg32 emit a
+            // spurious `JLE(v, hi)` instead of the kernel-matching
+            // `JSLE(v, hi)`, breaking the canonical-hash match for
+            // any program that builds a path_cond off this register
+            // (e.g. trace_sys_enter_execve PC 30 reject hash
+            // 0x928a475f03d2eaca via=refine_cond).
+            //
+            // Restore the kernel-faithful mixed-sign unsigned view
+            // explicitly. Narrow scope: only when smin < 0 (we're
+            // genuinely mixed-sign) AND hi >= 0 (the narrowing we just
+            // did was the one that corrupted u-bounds).
+            if hi >= 0 {
+                let (smin, _) = state.domain.get_interval(Reg::R0);
+                if smin < 0 {
+                    state.domain.restore_full_unsigned_range(Reg::R0);
+                }
+            }
         }
         constants::BPF_KFUNC_CALL_DUMMY => {
             // Assume unsupported external kfuncs return an unknown opaque pointer that can be dereferenced
