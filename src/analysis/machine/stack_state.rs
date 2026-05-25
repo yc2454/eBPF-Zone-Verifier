@@ -243,16 +243,32 @@ pub struct SpilledReg {
     pub bcf_expr: Option<u32>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// Spilled-register stack snapshot.
+///
+/// The `BTreeMap` is `Arc`-wrapped so `State::clone` at branch-fork (the hot
+/// path — see dhat profile 2026-05-24, top two allocators were
+/// `<BTreeMap as Clone>::clone::clone_subtree` rooted in `run_worklist`) is
+/// O(1). Mutators route through [`StackState::slots_mut`] (`Arc::make_mut`),
+/// which is CoW: free on a uniquely-owned value, one full clone the first
+/// time a shared value is mutated. Forks that don't touch the stack — the
+/// common case on register-only insns — pay nothing.
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct StackState {
-    /// Spilled registers, keyed by stack offset
-    pub slots: BTreeMap<i16, SpilledReg>,
+    slots: std::sync::Arc<BTreeMap<i16, SpilledReg>>,
+}
+
+// Explicit `Clone` for visibility: this is the cheap pointer-bump, not a
+// deep copy. The deep copy happens lazily inside `slots_mut`.
+impl Clone for StackState {
+    fn clone(&self) -> Self {
+        Self { slots: std::sync::Arc::clone(&self.slots) }
+    }
 }
 
 impl std::fmt::Display for StackState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut entries: Vec<String> = Vec::new();
-        for (offset, spilled) in &self.slots {
+        for (offset, spilled) in self.slots.iter() {
             entries.push(format!(
                 "offset {}: type={:?}, bounds=[{}, {}], source_reg={:?}, ptr_bounds={:?}",
                 offset,
@@ -268,8 +284,33 @@ impl std::fmt::Display for StackState {
 }
 
 impl StackState {
+    /// CoW mutation gate. Every `&mut self` method below routes through
+    /// this; direct field access from inside this module is also fine
+    /// but must call `slots_mut` to materialize a uniquely-owned map.
+    /// Pays one full `BTreeMap` clone iff this value's `Arc` is shared;
+    /// subsequent calls on the same value are free until the next fork.
+    #[inline]
+    fn slots_mut(&mut self) -> &mut BTreeMap<i16, SpilledReg> {
+        std::sync::Arc::make_mut(&mut self.slots)
+    }
+
+    /// Read-only iteration over `(offset, slot)`. Free — no CoW.
+    pub fn iter(&self) -> std::collections::btree_map::Iter<'_, i16, SpilledReg> {
+        self.slots.iter()
+    }
+
+    /// Mutable iteration. Triggers CoW on first call after a fork.
+    pub fn iter_mut(&mut self) -> std::collections::btree_map::IterMut<'_, i16, SpilledReg> {
+        self.slots_mut().iter_mut()
+    }
+
+    /// Remove a slot, returning its previous value. CoW.
+    pub fn remove_slot(&mut self, offset: i16) -> Option<SpilledReg> {
+        self.slots_mut().remove(&offset)
+    }
+
     pub fn invalidate_ref(&mut self, id: u32) {
-        for (_, spilled) in self.slots.iter_mut() {
+        for (_, spilled) in self.slots_mut().iter_mut() {
             if spilled.reg_type.get_ref_id() == Some(id) {
                 spilled.reg_type = RegType::ScalarValue;
             }
@@ -293,7 +334,7 @@ impl StackState {
     }
 
     pub fn get_slot_mut(&mut self, offset: i16) -> Option<&mut SpilledReg> {
-        self.slots.get_mut(&offset)
+        self.slots_mut().get_mut(&offset)
     }
 
     pub fn slot_offsets(&self) -> Vec<i16> {
@@ -301,10 +342,11 @@ impl StackState {
     }
 
     pub fn set_slot_type(&mut self, offset: i16, reg_type: RegType, source_reg: Option<Reg>) {
-        if let Some(spilled) = self.slots.get_mut(&offset) {
+        let map = self.slots_mut();
+        if let Some(spilled) = map.get_mut(&offset) {
             spilled.reg_type = reg_type;
         } else {
-            self.slots.insert(
+            map.insert(
                 offset,
                 SpilledReg {
                     source_reg,
@@ -328,7 +370,7 @@ impl StackState {
     }
 
     pub fn invalidate_packet_pointers(&mut self) {
-        for (_, spilled) in self.slots.iter_mut() {
+        for (_, spilled) in self.slots_mut().iter_mut() {
             if spilled.reg_type == RegType::PtrToPacket {
                 spilled.reg_type = RegType::ScalarValue;
             }
@@ -336,11 +378,11 @@ impl StackState {
     }
 
     pub fn insert(&mut self, offset: i16, spilled: SpilledReg) {
-        self.slots.insert(offset, spilled);
+        self.slots_mut().insert(offset, spilled);
     }
 
     pub fn invalidate_slot(&mut self, offset: i16) {
-        self.slots.insert(
+        self.slots_mut().insert(
             offset,
             SpilledReg {
                 source_reg: None,
@@ -375,7 +417,7 @@ impl StackState {
     ///
     /// Caller must verify the slot exists; no-op if absent.
     pub fn widen_slot(&mut self, offset: i16, prev: &SpilledReg) {
-        let Some(cur) = self.slots.get_mut(&offset) else {
+        let Some(cur) = self.slots_mut().get_mut(&offset) else {
             return;
         };
         if !matches!(cur.reg_type, RegType::ScalarValue)
@@ -405,7 +447,7 @@ impl StackState {
     /// Demote a stack slot's type to ScalarValue while preserving bounds/tnum.
     /// Used at merge points where different paths have incompatible pointer types.
     pub fn demote_slot_to_scalar(&mut self, offset: i16) {
-        if let Some(spilled) = self.slots.get_mut(&offset) {
+        if let Some(spilled) = self.slots_mut().get_mut(&offset) {
             spilled.reg_type = RegType::ScalarValue;
         }
     }
@@ -421,7 +463,7 @@ impl StackState {
     /// slot. The slot must exist — callers are expected to have
     /// reserved the iterator struct bytes on the stack first.
     pub fn stack_set_iterator(&mut self, offset: i16, iter: IteratorSlot) {
-        if let Some(spilled) = self.slots.get_mut(&offset) {
+        if let Some(spilled) = self.slots_mut().get_mut(&offset) {
             spilled.iterator = Some(iter);
         }
     }
@@ -429,7 +471,7 @@ impl StackState {
     /// Clear the iterator annotation at a stack offset. No-op if
     /// the slot doesn't exist or doesn't carry one.
     pub fn stack_clear_iterator(&mut self, offset: i16) {
-        if let Some(spilled) = self.slots.get_mut(&offset) {
+        if let Some(spilled) = self.slots_mut().get_mut(&offset) {
             spilled.iterator = None;
         }
     }
@@ -457,7 +499,7 @@ impl StackState {
     /// first and to write *both* slots of the pair (base with
     /// `first_slot: true`, trailing with `first_slot: false`).
     pub fn stack_set_dynptr(&mut self, offset: i16, dynptr: DynptrSlot) {
-        if let Some(spilled) = self.slots.get_mut(&offset) {
+        if let Some(spilled) = self.slots_mut().get_mut(&offset) {
             spilled.dynptr = Some(dynptr);
         }
     }
@@ -466,7 +508,7 @@ impl StackState {
     /// the slot doesn't exist or doesn't carry one. Callers releasing a
     /// dynptr should clear both slots of the pair.
     pub fn stack_clear_dynptr(&mut self, offset: i16) {
-        if let Some(spilled) = self.slots.get_mut(&offset) {
+        if let Some(spilled) = self.slots_mut().get_mut(&offset) {
             spilled.dynptr = None;
         }
     }
@@ -492,7 +534,7 @@ impl StackState {
     /// Callers must have written the slot's 8 bytes first
     /// (typically via `update_store_types`).
     pub fn stack_set_irq_flag(&mut self, offset: i16, flag: IrqFlagSlot) {
-        if let Some(spilled) = self.slots.get_mut(&offset) {
+        if let Some(spilled) = self.slots_mut().get_mut(&offset) {
             spilled.irq_flag = Some(flag);
         }
     }
@@ -500,7 +542,7 @@ impl StackState {
     /// Clear the IRQ-flag annotation at a stack offset (matched
     /// `_restore`). No-op if absent.
     pub fn stack_clear_irq_flag(&mut self, offset: i16) {
-        if let Some(spilled) = self.slots.get_mut(&offset) {
+        if let Some(spilled) = self.slots_mut().get_mut(&offset) {
             spilled.irq_flag = None;
         }
     }
@@ -545,7 +587,7 @@ impl StackState {
     pub fn dynptr_pairs_touched_by_write(&self, off: i64, size: i64) -> Vec<(i16, u32)> {
         let write_end = off + size;
         let mut out: Vec<(i16, u32)> = Vec::new();
-        for (slot_off, spilled) in &self.slots {
+        for (slot_off, spilled) in self.slots.iter() {
             let Some(d) = spilled.dynptr else { continue };
             let slot_start = *slot_off as i64;
             let slot_end = slot_start + 8;

@@ -85,7 +85,7 @@ fn fanout_scalar_bounds(state: &mut State, left: Reg) {
     // Only propagate to scalar slots; apply the same consistency guard as for
     // registers so that a subsequent fill_at doesn't load inconsistent bounds.
     for frame in state.frames.iter_mut() {
-        for (_, slot) in frame.stack.slots.iter_mut() {
+        for (_, slot) in frame.stack.iter_mut() {
             if slot.scalar_id != Some(id) {
                 continue;
             }

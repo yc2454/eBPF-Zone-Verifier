@@ -77,6 +77,15 @@ pub struct GlobalOpts {
     #[arg(long = "bcf", global = true)]
     pub bcf: bool,
 
+    /// Opt out of BCF "thorough" mode. By default, `--bcf` runs the ELF
+    /// analysis as multiple internal passes that vary the state-cache
+    /// placement and merge per-pass discharge entries into one bundle —
+    /// this widens the set of rejection sites covered. Pass this flag to
+    /// fall back to a single-pass analysis. No effect when `--bcf` is
+    /// off. The exact passes are an implementation detail.
+    #[arg(long = "no-bcf-thorough", global = true)]
+    pub no_bcf_thorough: bool,
+
     #[arg(long, global = true, value_name = "N")]
     pub max_insn: Option<usize>,
     #[arg(long, global = true, value_name = "N")]
@@ -364,6 +373,9 @@ impl GlobalOpts {
         }
         if self.bcf {
             c.bcf_enabled = true;
+            // Thorough mode defaults ON whenever --bcf is set;
+            // --no-bcf-thorough forces it off. Never on without --bcf.
+            c.bcf_thorough = !self.no_bcf_thorough;
         }
 
         if let Some(n) = self.max_insn {

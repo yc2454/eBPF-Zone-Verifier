@@ -963,7 +963,19 @@ pub(super) fn apply_return_bounds(state: &mut State, helper: u32) {
         | constants::BPF_SKB_VLAN_PUSH
         | constants::BPF_SKB_VLAN_POP
         | constants::BPF_SOCK_MAP_UPDATE => {
-            // Returns 0 on success, or -errno
+            // Returns 0 on success, or -errno. Note: kernel
+            // `do_refine_retval_range` (verifier.c:11733) does NOT narrow
+            // R0 for these helpers — only for get_stack family +
+            // get_smp_processor_id. Zovia's narrowing here is tighter
+            // than kernel's, which can break canonical-hash byte-match
+            // on downstream ALU chains (cilium bpf_wireguard 2/21
+            // kernel hash 0xcaf9557f9c3ce9e3, 2026-05-24). Tried
+            // removing it: bundle exploded 18MB → 579MB on bpf_wireguard
+            // because R0-unbounded triggers far more discharge sites,
+            // way over kernel's E2BIG (~100MB). Kept — fix the byte-
+            // match by another route (e.g. don't propagate the narrowed
+            // domain into the bcf_expr's reg_expr-via-bounds chain
+            // for tnums sourced from these helpers).
             state.domain.assume_le_imm(Reg::R0, 0);
             state.domain.assume_ge_imm(Reg::R0, -constants::MAX_ERRNO);
         }

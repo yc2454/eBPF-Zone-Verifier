@@ -1012,7 +1012,7 @@ impl<'a> VerifierEnv<'a> {
                 })
                 .collect();
             for off in off_to_clean {
-                frame.stack.slots.remove(&off);
+                frame.stack.remove_slot(off);
             }
             // Caller-frame reg snapshot clean (only for non-innermost
             // frames; innermost frame's regs live in top-level
