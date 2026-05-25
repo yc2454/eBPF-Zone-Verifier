@@ -862,6 +862,49 @@ pub(crate) fn apply_return_bounds_for_cb_helper(state: &mut State, helper: u32) 
     apply_return_bounds(state, helper);
 }
 
+/// Narrow R0 to a documented mixed-sign helper-return range
+/// `[lo, hi]` where `lo < 0 ≤ hi`. Mirrors the kernel's
+/// `do_refine_retval_range` shape: set s32/s64 bounds via signed
+/// constraints, then ensure the unsigned view stays at full range
+/// (mixed-sign → two disjoint unsigned pieces, kernel-faithful
+/// answer is `[0, u64::MAX]`).
+///
+/// Without the unsigned restore, `assume_le_imm(R0, hi)` (which
+/// calls `assume_sle`) would cross-propagate `umax = min(umax, hi)`,
+/// corrupting the unsigned view; `sync_bounds` path-1 then
+/// propagates the wrong umax back to `s32_min = 0` (instead of
+/// `lo`). Downstream `bound_reg32` emits `JLE(v, hi)` instead of
+/// `JSLE(v, hi)` and skips the matching `JSGE(v, lo)` — silently
+/// changing the canonical hash so the kernel's BCF refine_cond
+/// lookup misses (calico-style byte-match arc).
+///
+/// Concrete victims:
+/// - `bpf_probe_read_str` (trace_sys_enter_execve PC 30, kernel
+///   hash `0x928a475f03d2eaca`).
+/// - `bpf_get_stack` (test_get_stack_rawtp PC 61, kernel hash
+///   `0x9e258c0726905994`).
+/// - `bpf_csum_diff`, `bpf_get_branch_snapshot` (similar shape;
+///   no concrete reject site yet, but the same divergence
+///   would silently break their bundles).
+fn apply_mixed_sign_ret_bounds(state: &mut State, lo: i64, hi: i64) {
+    debug_assert!(lo < 0 && hi >= 0,
+        "apply_mixed_sign_ret_bounds requires lo<0<=hi; got lo={lo} hi={hi}");
+    if hi != i64::MAX {
+        state.domain.assume_le_imm(Reg::R0, hi);
+    }
+    state.domain.assume_ge_imm(Reg::R0, lo);
+    // After both narrowings, R0 should be mixed-sign. The
+    // `assume_le_imm` step likely corrupted umax (it cross-
+    // propagated to umax=hi because hi>=0). Restore the unsigned
+    // view to full range, then re-derive 32-bit halves via
+    // sync_bounds so the signed s32 view ends up matching the
+    // (now-correct) 64-bit signed interval.
+    let (smin, _) = state.domain.get_interval(Reg::R0);
+    if smin < 0 {
+        state.domain.restore_full_unsigned_range(Reg::R0);
+    }
+}
+
 pub(super) fn apply_return_bounds(state: &mut State, helper: u32) {
     // `update_call_types` (run just before this) sets up domain offset
     // tracking for map-value-returning helpers via `init_map_value_ptr`
@@ -990,9 +1033,9 @@ pub(super) fn apply_return_bounds(state: &mut State, helper: u32) {
             interval_set_scalar_id(&mut state.domain, Reg::R0);
         }
         constants::BPF_CSUM_DIFF => {
-            // Returns a positive u32 (checksum) or negative error
-            state.domain.assume_ge_imm(Reg::R0, -constants::MAX_ERRNO);
-            state.domain.assume_le_imm(Reg::R0, 0xFFFF_FFFF);
+            // Returns a positive u32 (checksum) or negative error.
+            // Mixed-sign [-MAX_ERRNO, 0xFFFF_FFFF].
+            apply_mixed_sign_ret_bounds(state, -constants::MAX_ERRNO, 0xFFFF_FFFF);
             state.set_tnum(Reg::R0, Tnum::u32_unknown());
         }
         constants::BPF_GET_TASK_STACK => {
@@ -1002,25 +1045,20 @@ pub(super) fn apply_return_bounds(state: &mut State, helper: u32) {
             state.domain.assume_le_imm(Reg::R0, hi);
         }
         constants::BPF_GET_STACK => {
+            // Mixed-sign [-MAX_ERRNO, size_max].
             let pairs = get_helper_proto(helper).map(|p| p.mem_size_pairs).unwrap_or(&[]);
             let size_reg = pairs[0].size_reg;
             let (_, hi) = state.domain.get_interval(size_reg);
-            state.domain.assume_le_imm(Reg::R0, hi);
-            state.domain.assume_ge_imm(Reg::R0, -constants::MAX_ERRNO);
+            apply_mixed_sign_ret_bounds(state, -constants::MAX_ERRNO, hi);
         }
         constants::BPF_GET_BRANCH_SNAPSHOT => {
             // R0 = bytes written into the buffer (success) or -errno.
-            // Bound by the size arg (R2) so consumers like
-            // `total = R0 / sizeof(entry)` and the loop test
-            // `i < total` get a usable upper bound on iterations.
+            // Bound by the size arg (R2). Mixed-sign.
             let pairs = get_helper_proto(helper).map(|p| p.mem_size_pairs).unwrap_or(&[]);
-            if let Some(p) = pairs.first() {
-                let (_, hi) = state.domain.get_interval(p.size_reg);
-                if hi != i64::MAX {
-                    state.domain.assume_le_imm(Reg::R0, hi);
-                }
-            }
-            state.domain.assume_ge_imm(Reg::R0, -constants::MAX_ERRNO);
+            let hi = pairs.first()
+                .map(|p| state.domain.get_interval(p.size_reg).1)
+                .unwrap_or(i64::MAX);
+            apply_mixed_sign_ret_bounds(state, -constants::MAX_ERRNO, hi);
         }
         // Mirrors kernel's `do_refine_retval_range()` for the str-family
         // probe-read helpers: R0 is bounded by [-MAX_ERRNO, R2_max].
@@ -1035,35 +1073,9 @@ pub(super) fn apply_return_bounds(state: &mut State, helper: u32) {
         constants::BPF_PROBE_READ_STR
         | constants::BPF_PROBE_READ_USER_STR
         | constants::BPF_PROBE_READ_KERNEL_STR => {
+            // Mixed-sign [-MAX_ERRNO, R2_max].
             let (_, hi) = state.domain.get_interval(Reg::R2);
-            if hi != i64::MAX {
-                state.domain.assume_le_imm(Reg::R0, hi);
-            }
-            state.domain.assume_ge_imm(Reg::R0, -constants::MAX_ERRNO);
-            // Helper return is documented mixed-sign [-MAX_ERRNO,
-            // msize_max]. The kernel's `do_refine_retval_range` sets
-            // s32/s64 bounds and `reg_bounds_sync` correctly leaves
-            // u32_max=u32::MAX / umax=u64::MAX (mixed-sign → unsigned
-            // view spans the full range, two disjoint pieces). Zovia's
-            // `assume_le_imm` path narrowed umax=hi (because hi >= 0),
-            // and sync_bounds path-1 then propagated to s32_min=0
-            // instead of -MAX_ERRNO. That made bound_reg32 emit a
-            // spurious `JLE(v, hi)` instead of the kernel-matching
-            // `JSLE(v, hi)`, breaking the canonical-hash match for
-            // any program that builds a path_cond off this register
-            // (e.g. trace_sys_enter_execve PC 30 reject hash
-            // 0x928a475f03d2eaca via=refine_cond).
-            //
-            // Restore the kernel-faithful mixed-sign unsigned view
-            // explicitly. Narrow scope: only when smin < 0 (we're
-            // genuinely mixed-sign) AND hi >= 0 (the narrowing we just
-            // did was the one that corrupted u-bounds).
-            if hi >= 0 {
-                let (smin, _) = state.domain.get_interval(Reg::R0);
-                if smin < 0 {
-                    state.domain.restore_full_unsigned_range(Reg::R0);
-                }
-            }
+            apply_mixed_sign_ret_bounds(state, -constants::MAX_ERRNO, hi);
         }
         constants::BPF_KFUNC_CALL_DUMMY => {
             // Assume unsupported external kfuncs return an unknown opaque pointer that can be dereferenced
