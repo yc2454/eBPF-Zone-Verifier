@@ -204,13 +204,13 @@ do_one() {{
   out="$WORK/$sid.log"
   {{
     echo "===BEGIN $sid==="
-    timeout {per_call_timeout} /root/bcf/build/test_loader --type classifier "$obj" "$bundle" 2>&1 \\
+    timeout {per_call_timeout} /root/bcf/build/test_loader "$obj" "$bundle" 2>&1 \\
       | grep -E 'SUCCESS:|libbpf: prog .* failed to load:|programs:|loaded ' | head -20
     echo "===WHOLE_RC $sid $?==="
 """
     if run_per_prog:
         vm_runner += f"""    echo "---perprog $sid---"
-    timeout {per_call_timeout} /root/bcf/build/test_loader --type classifier --per-prog "$obj" "$bundle" 2>&1 \\
+    timeout {per_call_timeout} /root/bcf/build/test_loader --per-prog "$obj" "$bundle" 2>&1 \\
       | grep -E 'PERPROG SUMMARY' | tail -1
 """
     vm_runner += f"""    echo "===END $sid==="
