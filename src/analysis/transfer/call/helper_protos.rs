@@ -1517,12 +1517,14 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         .mem_size_pairs(&pairs::LOAD_HDR_OPT)
         .ret(RetKind::Scalar),
 
-        // ---- TCP raw syncookie (IPv4) ----
+        // ---- TCP raw syncookie (IPv4 + IPv6, gen + check) ----
+        // Kernel arg1 (and arg2 for the `check_` pair) is
+        // ARG_PTR_TO_FIXED_SIZE_MEM; we don't model fixed-size mem here,
+        // so it falls through to plain PtrToMem (kernel verifies the
+        // fixed size internally on its side). For `gen_`, arg2/arg3 is
+        // the normal mem+size pair (R2 mem, R3 const_size_or_zero).
+        // For `check_`, both args are fixed-size pointers, no size reg.
         // bpf_tcp_raw_gen_syncookie_ipv4(iph, th, th_len) -> int.
-        // Kernel arg1 = ARG_PTR_TO_FIXED_SIZE_MEM (size=sizeof(iphdr));
-        // not modeled here as fixed-size, falls through to plain
-        // PtrToMem (no explicit pair on R1). arg2/arg3 is the normal
-        // mem+size pair (R2 mem, R3 const_size_or_zero).
         constants::BPF_TCP_RAW_GEN_SYNCOOKIE_IPV4 => CallProto::with_args([
             PtrToMem,        // R1: iph (kernel verifies fixed size internally)
             PtrToMem,        // R2: th
@@ -1531,6 +1533,38 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             DontCare,
         ])
         .mem_size_pairs(&pairs::TCP_RAW_GEN_SYNCOOKIE_IPV4)
+        .ret(RetKind::Scalar),
+
+        // bpf_tcp_raw_gen_syncookie_ipv6(iph, th, th_len) -> int.
+        constants::BPF_TCP_RAW_GEN_SYNCOOKIE_IPV6 => CallProto::with_args([
+            PtrToMem,        // R1: iph (kernel verifies fixed size internally)
+            PtrToMem,        // R2: th
+            ConstSizeOrZero, // R3: th_len
+            DontCare,
+            DontCare,
+        ])
+        .mem_size_pairs(&pairs::TCP_RAW_GEN_SYNCOOKIE_IPV6)
+        .ret(RetKind::Scalar),
+
+        // bpf_tcp_raw_check_syncookie_ipv4(iph, th) -> int.
+        // Both args are FIXED_SIZE_MEM; no explicit size register.
+        constants::BPF_TCP_RAW_CHECK_SYNCOOKIE_IPV4 => CallProto::with_args([
+            PtrToMem, // R1: iph (kernel verifies fixed size internally)
+            PtrToMem, // R2: th (kernel verifies fixed size internally)
+            DontCare,
+            DontCare,
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // bpf_tcp_raw_check_syncookie_ipv6(iph, th) -> int.
+        constants::BPF_TCP_RAW_CHECK_SYNCOOKIE_IPV6 => CallProto::with_args([
+            PtrToMem, // R1: iph (kernel verifies fixed size internally)
+            PtrToMem, // R2: th (kernel verifies fixed size internally)
+            DontCare,
+            DontCare,
+            DontCare,
+        ])
         .ret(RetKind::Scalar),
 
         // ============================================================
