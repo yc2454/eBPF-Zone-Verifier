@@ -857,7 +857,7 @@ fn run_worklist(
                 slot_keys.sort();
                 let mut sn = 0;
                 for off in slot_keys.iter().rev() {
-                    let Some(slot) = frame.stack.slots.get(off) else { continue; };
+                    let Some(slot) = frame.stack.get_slot(*off) else { continue; };
                     if !matches!(slot.reg_type, RegType::ScalarValue) {
                         continue;
                     }
@@ -892,7 +892,9 @@ fn run_worklist(
         }
 
         // A.c RECORD STATE — kernel-faithful `is_state_visited` shape.
-        // Gated by `ZOVIA_KERNEL_ENGINE=1`. Two kernel-shape gates layered:
+        // Gated by `config.kernel_engine` (formerly env `ZOVIA_KERNEL_ENGINE=1`,
+        // kept as fallback below for legacy callers). Two kernel-shape gates
+        // layered:
         //   (1) Outer: cache only at PRUNE POINTS (kernel `do_check` only
         //       calls `is_state_visited` when is_prune_point fires).
         //       zovia's dense default mode caches at EVERY popped state;
@@ -901,8 +903,8 @@ fn run_worklist(
         //   (2) Inner: `add_new_state` heuristic (verifier.c v6.15
         //       L18998-L19013): force_new_state || (jmps_delta>=2 &&
         //       insns_delta>=8). Counters are PER-PATH on State.
-        let kernel_engine =
-            std::env::var("ZOVIA_KERNEL_ENGINE").ok().as_deref() == Some("1");
+        let kernel_engine = config.kernel_engine
+            || std::env::var("ZOVIA_KERNEL_ENGINE").ok().as_deref() == Some("1");
         let at_prune_point = pruning::widening::is_prune_point(env, state.pc);
         let insn_aux_force = env
             .insn_aux_data
@@ -963,8 +965,8 @@ fn run_worklist(
         // the existing write_bundle dedup. 61d60ac measured 20 unique
         // entries across AND+OR merge for calico_tc_main, covering all
         // 9 known kernel discharge hashes.
-        let kernel_engine_and =
-            std::env::var("ZOVIA_KERNEL_ENGINE_AND").ok().as_deref() == Some("1");
+        let kernel_engine_and = config.kernel_engine_and
+            || std::env::var("ZOVIA_KERNEL_ENGINE_AND").ok().as_deref() == Some("1");
         // Kernel-engine (non-AND): env-OR-path. Under linear DFS the kernel's
         // env-wide counters are effectively per-path between cache events;
         // zovia's interleaved worklist makes path-only too tight at major

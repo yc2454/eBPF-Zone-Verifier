@@ -107,6 +107,15 @@ pub fn record_state(
     // when a downstream sink requires it for safety.
     state.mark_all_scalars_imprecise();
 
+    // Drop the BCF symbolic DAG before caching. Cached states are
+    // subsumption oracles only (never re-entered by the worklist for
+    // transfer), and BCF is not consulted by regsafe/stacksafe — so
+    // retaining the per-state `SymbolicState.exprs: Vec<BcfExpr>` on
+    // every cache entry adds memory without earning pruning back. On
+    // cilium bpf_host's 2/15/2/17/2/38 sections this dominated RSS
+    // (multi-GB peaks under --bcf vs <1 GB without).
+    state.bcf = None;
+
     let states = env.explored_states.entry(pc).or_default();
     let idx = states.len();
     states.push(state);

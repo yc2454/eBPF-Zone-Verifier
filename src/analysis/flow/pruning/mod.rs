@@ -634,15 +634,15 @@ pub fn should_prune(
                     let pf = prev.frames.get(top);
                     let cf = state.frames.get(top);
                     // explicit: dump the fp-0x128 (-296) slot specifically
-                    let pslot = pf.stack.slots.get(&-296i16);
-                    let cslot = cf.stack.slots.get(&-296i16);
+                    let pslot = pf.stack.get_slot(-296);
+                    let cslot = cf.stack.get_slot(-296);
                     eprintln!("[TRAP] fp-296 (= fp-0x128): prev={:?}", pslot);
                     eprintln!("[TRAP] fp-296 (= fp-0x128): cur ={:?}", cslot);
                     let mut all_offs: std::collections::BTreeSet<i16> = pf.stack.slot_offsets().into_iter().collect();
                     all_offs.extend(cf.stack.slot_offsets());
                     for off in all_offs {
-                        let ps = pf.stack.slots.get(&off);
-                        let cs = cf.stack.slots.get(&off);
+                        let ps = pf.stack.get_slot(off);
+                        let cs = cf.stack.get_slot(off);
                         let same = match (ps, cs) {
                             (Some(a), Some(b)) => a == b,
                             (None, None) => true,
@@ -821,7 +821,7 @@ fn may_goto_range_within_prune(
         let level = FrameLevel::from_index(fi);
         let stack = &mut relaxed.frames.get_mut(level).stack;
         for off in stack.slot_offsets() {
-            if let Some(slot) = stack.slots.get_mut(&off) {
+            if let Some(slot) = stack.get_slot_mut(off) {
                 slot.precise = false;
             }
         }

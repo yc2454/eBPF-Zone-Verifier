@@ -80,14 +80,14 @@ pub(super) fn iter_active_depths_differ(prev: &State, cur: &State) -> bool {
         let prev_frame = prev.frames.get(level);
         let cur_frame = cur.frames.get(level);
         for off in prev_frame.stack.slot_offsets() {
-            let Some(prev_slot) = prev_frame.stack.slots.get(&off) else { continue; };
+            let Some(prev_slot) = prev_frame.stack.get_slot(off) else { continue; };
             let Some(prev_it) = prev_slot.iterator else { continue; };
             if prev_it.state != IterState::Active {
                 continue;
             }
             // The matching slot in cur. If absent or no iter ⇒ treat as
             // different depth (the loop's iter context changed).
-            let Some(cur_slot) = cur_frame.stack.slots.get(&off) else { return true; };
+            let Some(cur_slot) = cur_frame.stack.get_slot(off) else { return true; };
             let Some(cur_it) = cur_slot.iterator else { return true; };
             if cur_it.depth != prev_it.depth {
                 return true;

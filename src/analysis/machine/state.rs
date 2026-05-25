@@ -702,7 +702,7 @@ impl State {
             demote_one(&mut self.types.regs[i]);
         }
         for frame in self.frames.iter_mut() {
-            for (_off, spilled) in frame.stack.slots.iter_mut() {
+            for (_off, spilled) in frame.stack.iter_mut() {
                 demote_one(&mut spilled.reg_type);
             }
         }
@@ -800,7 +800,7 @@ impl State {
             }
         }
         for frame in self.frames.iter_mut() {
-            for (_off, spilled) in frame.stack.slots.iter_mut() {
+            for (_off, spilled) in frame.stack.iter_mut() {
                 let demote = matches!(
                     spilled.reg_type,
                     RegType::PtrToAllocMem { dynptr_id: Some(did), .. }

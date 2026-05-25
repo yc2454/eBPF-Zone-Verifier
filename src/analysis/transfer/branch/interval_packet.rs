@@ -371,7 +371,7 @@ fn propagate_packet_range_to_all_frames_stack(
         let frame_level = crate::analysis::machine::frame_stack::FrameLevel::from_index(frame_idx);
         let stack = state.stack_at_mut(frame_level);
 
-        for (_, spilled) in stack.slots.iter_mut() {
+        for (_, spilled) in stack.iter_mut() {
             // Only update PtrToPacket slots
             if spilled.reg_type != RegType::PtrToPacket {
                 continue;
@@ -481,7 +481,7 @@ fn propagate_meta_range_to_stack(state: &mut State, checked_var_off: u64, proven
         let frame_level = crate::analysis::machine::frame_stack::FrameLevel::from_index(frame_idx);
         let stack = state.stack_at_mut(frame_level);
 
-        for (_, spilled) in stack.slots.iter_mut() {
+        for (_, spilled) in stack.iter_mut() {
             // Only update PtrToPacketMeta slots
             if spilled.reg_type != RegType::PtrToPacketMeta {
                 continue;
