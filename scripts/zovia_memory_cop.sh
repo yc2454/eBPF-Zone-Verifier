@@ -1,36 +1,81 @@
 #!/bin/bash
-# zovia memory cop: polls ps and SIGKILLs any zovia process whose RSS
-# exceeds a threshold. Lets us run phase 1 at high --jobs without the
-# risk of one pathological program OOM-thrashing the box.
+# zovia memory cop: polls ps and SIGKILLs zovia workers when their
+# *cumulative* RSS exceeds a threshold. With --bcf thorough mode each
+# bench job spawns several zovia children; capping per-process lets the
+# aggregate blow past system RAM while no single worker trips the cap.
+# Cumulative tracking is the meaningful budget — kill the largest worker
+# until we're back under cap.
 #
 # Usage:
-#   scripts/zovia_memory_cop.sh [RSS_CAP_MB] [POLL_SEC]
-# Defaults: 4096 MB, 5s poll.
+#   scripts/zovia_memory_cop.sh [CUMULATIVE_CAP_MB] [POLL_SEC]
+# Defaults: 32768 MB (32G), 5s poll.
 #
-# The cop logs each kill (and current top RSS) to /tmp/zovia_memory_cop.log
-# so we can later inspect which objects blew up.
+# Logs each kill (with cumulative + per-victim RSS) to
+# /tmp/zovia_memory_cop.log.
 
 set -u
-CAP_MB=${1:-4096}
+CAP_MB=${1:-32768}
 POLL=${2:-5}
 LOG=/tmp/zovia_memory_cop.log
 
-echo "[cop] starting; cap=${CAP_MB}MB; poll=${POLL}s; log=$LOG" | tee -a "$LOG"
+echo "[cop] starting; cumulative cap=${CAP_MB}MB; poll=${POLL}s; log=$LOG" | tee -a "$LOG"
 
 while true; do
-  # ps reports RSS in KB.
-  # We match `./target/release/zovia` to scope to bench workers and
-  # avoid accidentally killing other rust binaries.
-  while IFS= read -r line; do
-    rss_kb=$(echo "$line" | awk '{print $1}')
-    pid=$(echo "$line" | awk '{print $2}')
-    obj=$(echo "$line" | grep -oE '/[^ ]+\.o' | head -1)
-    rss_mb=$((rss_kb / 1024))
-    if [ "$rss_mb" -gt "$CAP_MB" ]; then
-      ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-      echo "[cop] KILL pid=$pid rss=${rss_mb}MB > cap=${CAP_MB}MB  obj=$obj  ts=$ts" | tee -a "$LOG"
-      kill -9 "$pid" 2>/dev/null
+  # Snapshot all zovia bench workers: "rss_kb pid obj_path".
+  # ps reports RSS in KB. Match `./target/release/zovia ` to scope to
+  # the bench binary and avoid other rust processes.
+  snap=$(ps -ax -o rss,pid,command \
+         | awk '/[\.]\/target\/release\/zovia / {
+             obj="?";
+             for (i=4;i<=NF;i++) if ($i ~ /\.o$/) { obj=$i; break }
+             print $1, $2, obj
+           }')
+
+  if [ -z "$snap" ]; then
+    sleep "$POLL"
+    continue
+  fi
+
+  total_kb=$(echo "$snap" | awk '{s+=$1} END {print s+0}')
+  total_mb=$((total_kb / 1024))
+
+  if [ "$total_mb" -le "$CAP_MB" ]; then
+    sleep "$POLL"
+    continue
+  fi
+
+  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  nprocs=$(echo "$snap" | wc -l | tr -d ' ')
+  echo "[cop] OVER cap: cumulative=${total_mb}MB > ${CAP_MB}MB across ${nprocs} workers  ts=$ts" | tee -a "$LOG"
+
+  # Kill largest-first until cumulative is back under cap. Re-snapshot
+  # after each kill so we don't over-shoot when a worker already exited.
+  while [ "$total_mb" -gt "$CAP_MB" ]; do
+    # largest line by rss_kb
+    victim=$(echo "$snap" | sort -rn -k1,1 | head -1)
+    [ -z "$victim" ] && break
+    v_kb=$(echo "$victim"  | awk '{print $1}')
+    v_pid=$(echo "$victim" | awk '{print $2}')
+    v_obj=$(echo "$victim" | awk '{print $3}')
+    v_mb=$((v_kb / 1024))
+    echo "[cop] KILL pid=$v_pid rss=${v_mb}MB obj=$v_obj  (cumulative ${total_mb}MB > ${CAP_MB}MB)" | tee -a "$LOG"
+    kill -9 "$v_pid" 2>/dev/null
+
+    # Re-snapshot
+    snap=$(ps -ax -o rss,pid,command \
+           | awk '/[\.]\/target\/release\/zovia / {
+               obj="?";
+               for (i=4;i<=NF;i++) if ($i ~ /\.o$/) { obj=$i; break }
+               print $1, $2, obj
+             }')
+    if [ -z "$snap" ]; then
+      total_mb=0
+      break
     fi
-  done < <(ps -ax -o rss,pid,command | awk '/[\.]\/target\/release\/zovia / {print}')
+    total_kb=$(echo "$snap" | awk '{s+=$1} END {print s+0}')
+    total_mb=$((total_kb / 1024))
+  done
+
+  echo "[cop] under cap again: cumulative=${total_mb}MB" | tee -a "$LOG"
   sleep "$POLL"
 done

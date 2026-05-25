@@ -28,15 +28,86 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional
+
+
+# ───── Program-type lookup (obj_prog_type.json + libbpf fallback) ───
+
+
+DEFAULT_OBJ_PROG_TYPE_JSON = "/Users/yalucai/BCF/bpf-progs/obj_prog_type.json"
+
+# Map from the JSON's SEC-name style (lowercased path prefix) to the
+# `test_loader --type` keyword libbpf accepts. The JSON values are the
+# raw SEC name (e.g. "kprobe", "tracepoint/syscalls/sys_enter_execve",
+# "xdp"). test_loader maps these through libbpf's section-name matcher
+# when `--type` is supplied; for unambiguous cases we strip the
+# subprogram suffix and map to the canonical type word.
+_SEC_TO_TYPE = {
+    "classifier": "classifier",
+    "xdp": "xdp",
+    "kprobe": "kprobe",
+    "kretprobe": "kprobe",
+    "tracepoint": "tracepoint",
+    "raw_tracepoint": "raw_tracepoint",
+    "raw_tp": "raw_tracepoint",
+    "sockops": "sockops",
+    "sk_msg": "sk_msg",
+    "sk_skb": "sk_skb",
+    "socket": "socket",
+    "cgroup": "cgroup",  # cgroup/* subtypes — libbpf needs full SEC, fallback
+    "perf_event": "perf_event",
+    "lwt_in": "lwt_in",
+    "lwt_out": "lwt_out",
+    "lwt_xmit": "lwt_xmit",
+    "lwt_seg6local": "lwt_seg6local",
+    "fentry": "fentry",
+    "fexit": "fexit",
+}
+
+
+def load_obj_prog_types(path: Optional[str]) -> dict[str, str]:
+    """Load the obj→SEC-name JSON if present. Returns {} on missing or
+    error. Keys are bare basenames (e.g. `clang-19_-O1_seccomp_x86_bpfel.o`);
+    values are the raw SEC name string (sometimes None when the populator
+    couldn't detect a SEC).
+    """
+    if not path:
+        return {}
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return {}
+        return data
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"[bench] warn: couldn't read {path}: {e}", file=sys.stderr)
+        return {}
+
+
+def lookup_prog_type(obj_path: str, types_map: dict[str, str]) -> Optional[str]:
+    """Return `--type` keyword for `obj_path` using the JSON, or None
+    to fall back to libbpf SEC auto-detect. Returns None when the JSON
+    is silent (key absent or value null/empty) OR when the SEC string
+    isn't in our keyword map.
+    """
+    base = os.path.basename(obj_path)
+    raw = types_map.get(base)
+    if not raw or not isinstance(raw, str):
+        return None
+    # SEC names like "tracepoint/syscalls/sys_enter_execve" → take first
+    # path component as the type keyword.
+    head = raw.split("/", 1)[0].strip().lower()
+    return _SEC_TO_TYPE.get(head)
 
 
 # ───── Phase 1: parallel zovia bundle build ─────────────────────────
@@ -79,10 +150,27 @@ def build_one(args):
     cmd = [zovia_bin, "-q", "--bcf", "--kernel-mode", "verify", obj_path]
     t0 = time.time()
     note = ""
+    # --bcf thorough mode spawns child zovia workers for multi-pass
+    # state-cache placement. subprocess.run(..., timeout=) only kills the
+    # parent on TimeoutExpired, leaving the children to keep eating RAM
+    # well past the deadline. Run the parent in its own process group and
+    # SIGKILL the whole group on timeout so no orphan workers survive.
+    p = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        start_new_session=True,
+    )
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        note = f"rc{r.returncode}"
+        p.communicate(timeout=timeout)
+        note = f"rc{p.returncode}"
     except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        try:
+            p.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
         note = "TO"
     elapsed = time.time() - t0
     ok = os.path.exists(bundle)
@@ -126,7 +214,8 @@ def map_to_vm_path(local_path: str) -> str:
 
 def phase2_kernel_load(objs: list[str], cloudlab_host: str, timeout: int,
                        vm_jobs: int = 4, run_per_prog: bool = False,
-                       per_call_timeout: int = 60) -> dict[str, tuple]:
+                       per_call_timeout: int = 300,
+                       types_map: Optional[dict[str, str]] = None) -> dict[str, tuple]:
     """For each .o, scp the bundle to cloudlab (its virtiofs is the VM's
     /root/bcf), then ssh to VM and run test_loader.
 
@@ -179,16 +268,27 @@ def phase2_kernel_load(objs: list[str], cloudlab_host: str, timeout: int,
     print(f"[bench] phase 2: VM-side parallel (P={vm_jobs}, per-call timeout={per_call_timeout}s)"
           f"{pp_label}", file=sys.stderr)
 
-    # Build manifest lines: each line = "<vm_obj> <vm_bundle> <safe_id>"
+    # Build manifest lines: each line = "<vm_obj> <vm_bundle> <safe_id> <type_or_empty>"
+    # The type column is the `--type` keyword from obj_prog_type.json when
+    # available; empty means "let libbpf auto-detect from SEC name". Empty
+    # is the safe default (works for any program whose SEC is unambiguous).
     manifest_lines = []
     obj_by_id: dict[str, str] = {}
+    n_typed = 0
+    types_map = types_map or {}
     for idx, o in enumerate(objs):
         vm_obj = map_to_vm_path(o)
         vm_bundle = f"{vm_obj}.bcf-bundle"
         safe_id = f"o{idx:04d}_{os.path.basename(o)}"
-        manifest_lines.append(f"{vm_obj}\t{vm_bundle}\t{safe_id}")
+        ptype = lookup_prog_type(o, types_map) or ""
+        if ptype:
+            n_typed += 1
+        manifest_lines.append(f"{vm_obj}\t{vm_bundle}\t{safe_id}\t{ptype}")
         obj_by_id[safe_id] = o
     manifest = "\n".join(manifest_lines)
+    print(f"[bench] phase 2: {n_typed}/{len(objs)} objs have explicit --type "
+          f"from obj_prog_type.json; rest fall back to libbpf SEC auto-detect",
+          file=sys.stderr)
 
     # The VM-side runner: reads manifest, runs N parallel test_loader
     # invocations, writes per-call log, then concatenates. Quoting is
@@ -200,17 +300,21 @@ WORK=$(mktemp -d /tmp/bench_e2e.XXXXXX)
 cat > "$WORK/manifest"
 export WORK
 do_one() {{
-  obj=$1; bundle=$2; sid=$3
+  obj=$1; bundle=$2; sid=$3; ptype=$4
   out="$WORK/$sid.log"
+  type_args=""
+  if [ -n "$ptype" ]; then
+    type_args="--type $ptype"
+  fi
   {{
     echo "===BEGIN $sid==="
-    timeout {per_call_timeout} /root/bcf/build/test_loader --type classifier "$obj" "$bundle" 2>&1 \\
+    timeout {per_call_timeout} /root/bcf/build/test_loader $type_args "$obj" "$bundle" 2>&1 \\
       | grep -E 'SUCCESS:|libbpf: prog .* failed to load:|programs:|loaded ' | head -20
     echo "===WHOLE_RC $sid $?==="
 """
     if run_per_prog:
         vm_runner += f"""    echo "---perprog $sid---"
-    timeout {per_call_timeout} /root/bcf/build/test_loader --type classifier --per-prog "$obj" "$bundle" 2>&1 \\
+    timeout {per_call_timeout} /root/bcf/build/test_loader $type_args --per-prog "$obj" "$bundle" 2>&1 \\
       | grep -E 'PERPROG SUMMARY' | tail -1
 """
     vm_runner += f"""    echo "===END $sid==="
@@ -219,9 +323,9 @@ do_one() {{
 export -f do_one
 # Feed manifest lines to xargs; each worker bash invocation re-parses
 # the tab-separated fields and calls do_one.
-xargs -P {vm_jobs} -I LINE -d '\\n' bash -c 'IFS=$'"'"'\\t'"'"' read -r o b s <<< "$0"; do_one "$o" "$b" "$s"' LINE < "$WORK/manifest"
+xargs -P {vm_jobs} -I LINE -d '\\n' bash -c 'IFS=$'"'"'\\t'"'"' read -r o b s t <<< "$0"; do_one "$o" "$b" "$s" "$t"' LINE < "$WORK/manifest"
 # Concatenate per-call logs in manifest order so output is deterministic
-while IFS=$'\\t' read -r obj bundle sid; do
+while IFS=$'\\t' read -r obj bundle sid ptype; do
   if [ -f "$WORK/$sid.log" ]; then
     cat "$WORK/$sid.log"
   else
@@ -313,10 +417,18 @@ def main() -> int:
     ap.add_argument("--per-prog", action="store_true",
                     help="also run --per-prog (slower; underreports bundle benefits "
                          "due to subprog isolation). Default: whole-object only.")
-    ap.add_argument("--per-call-timeout", type=int, default=60,
-                    help="per-test_loader timeout in seconds (default 60)")
+    ap.add_argument("--per-call-timeout", type=int, default=300,
+                    help="per-test_loader timeout in seconds (default 300). "
+                         "Large bundles (calico tail-call tables, cilium DSR) "
+                         "can take a minute+ for the kernel verifier alone; "
+                         "60s was killing legitimate loads as TO.")
     ap.add_argument("--phase2-timeout", type=int, default=1800,
                     help="overall phase 2 ssh timeout in seconds (default 30min)")
+    ap.add_argument("--obj-prog-type-json", default=DEFAULT_OBJ_PROG_TYPE_JSON,
+                    help=f"path to obj→SEC-name JSON for explicit --type "
+                         f"selection in phase 2; pass empty string to disable "
+                         f"and use libbpf SEC auto-detect for everything. "
+                         f"Default: {DEFAULT_OBJ_PROG_TYPE_JSON}")
     args = ap.parse_args()
 
     # Resolve cloudlab from git remote if not provided
@@ -359,6 +471,7 @@ def main() -> int:
         # (we pass these in the ssh args directly below; keeping the rsync
         # one separate so concurrent rsync+ssh use distinct sockets and
         # don't race on a single ControlMaster).
+        types_map = load_obj_prog_types(args.obj_prog_type_json or None)
         try:
             kresults = phase2_kernel_load(
                 ok_objs, args.cloudlab,
@@ -366,6 +479,7 @@ def main() -> int:
                 vm_jobs=args.vm_jobs,
                 run_per_prog=args.per_prog,
                 per_call_timeout=args.per_call_timeout,
+                types_map=types_map,
             )
         finally:
             # tear down ControlMaster sockets if any

@@ -254,14 +254,18 @@ Corpus walking, filtering, baseline diffing, bench reports, and CI
 gating live in Python on top of `dev verify-corpus`. The Rust binary
 stays focused on verification.
 
-| Script | Replaces | What it does |
-| --- | --- | --- |
-| `scripts/baseline_diff.py` | `dev selftest-baseline-check{,-modern}`'s printer | Diffs two baseline JSONs (regressions / improvements / new / removed). `--modern-only` drops `legacy/...` rows. Exit 1 on any PASS→non-PASS regression. |
-| `scripts/bench.py` | `dev bcf-benchmark` (deleted) | BCF-style corpus benchmark. Walks a dir, parses `clang-<VER>_-<OPT>_<SOURCE>.o`, filters by `--project`/`--compiler`/`--opt`/`--source`, calls verify-corpus, aggregates and writes `results/bcf/<base>_<ts>_{report.txt,results.json}`. |
-| `scripts/prevail.py` | `dev prevail {list,run,single,benchmark}` (deleted) | Prevail catalogue runner + benchmark. Same JSON output shape as the old Rust path. |
-| `scripts/canonicalize_selftest_report.py` | (renamed from `tests/baselines/canonicalize.py`) | Canonicalizes a selftest report into the frozen baseline format. |
-| `scripts/capture_baselines.sh` | (renamed) | CI driver: refresh all four `selftest_*` baselines + `prevail.json` under `tests/baselines/`. |
-| `scripts/diff_baselines.sh` | (renamed) | CI gate: re-run and diff against the frozen baselines; exit 1 on diff. |
+| Script | What it does |
+| --- | --- |
+| `scripts/bench_e2e.py` | End-to-end BCF bundle bench: phase 1 builds bundles via `zovia --bcf --kernel-mode verify`, phase 2 ships to cloudlab + kernel-loads via `test_loader`. Writes TSV. See script docstring. |
+| `scripts/fa_scorecard.py` | Per-commit BCF gate: runs zovia against the cil42 / shift_constraint oracles, prints `CA/CR/FA/BP/FR/POSTVERIF` counts. Exit non-zero on any FA. |
+| `scripts/parallel_selftest.py` | Fast upstream-selftest gate (minutes, not 2h). Runs the selftest suite in parallel and compares to the FA=2 baseline. |
+| `scripts/l3_sweep.py` | L3 corpus sweep harness (cilium/calico, scored against an oracle). |
+| `scripts/triage_frs.py` | FR triage tool — buckets failure reasons across a corpus run. |
+| `scripts/calico_anchor_unified_bundle.sh` | Builds the 7/7-anchor unified bundle and runs `test_loader --type classifier` against it; gate for calico anchor regressions. |
+| `scripts/zovia_memory_cop.sh` | Background memory cop: kills the largest zovia worker(s) when cumulative RSS across `./target/release/zovia` workers exceeds the cap. |
+| `scripts/prevail.py` | Prevail catalogue runner + benchmark. Same JSON output shape as the old Rust path. |
+| `scripts/demo_e2e.sh`, `scripts/demo_e2e_cilium.sh` | Demo drivers for the end-to-end flow. |
+| `scripts/bench_e2e_legacy.py`, `scripts/calico_anchor_unified_bundle_legacy.sh` | Older single-pass variants kept for reference; use the non-`_legacy` versions for current work. |
 
 ## Examples
 
@@ -288,18 +292,14 @@ zovia pcc cycle pcc-tests/pcc_examples.json \
     --test "pcc motivating: var add packet access (zone ok, kernel reject)"
 ```
 
-**5. Refresh and diff the v6.15 modernization baseline:**
+**5. End-to-end BCF bundle bench on a corpus:**
 ```bash
-# Full sweep against a kernel checkout (~5 min)
-zovia -q dev selftest-baseline-write-upstream vendor/linux /tmp/current.json
-
-# Diff against the committed baseline
-scripts/baseline_diff.py selftests/baseline_v6.15_full.json /tmp/current.json --modern-only
+scripts/bench_e2e.py --list /tmp/calico_repr_list.txt --jobs 8 \
+    --out /tmp/bench.tsv --kernel-test
 ```
 
-**6. BCF / prevail bench on a real-world corpus:**
+**6. Prevail bench on a real-world corpus:**
 ```bash
-scripts/bench.py   ~/ebpf-samples --project cilium --compiler clang-16
 scripts/prevail.py benchmark ~/ebpf-samples --project cilium
 ```
 

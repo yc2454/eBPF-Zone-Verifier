@@ -244,23 +244,71 @@ pub fn apply_add_imm(state: &mut IntervalState, dst: Reg, imm: i64) {
     }
 
     let bounds = state.get_bounds_mut(dst);
-    bounds.smin = bounds.smin.saturating_add(imm);
-    bounds.smax = bounds.smax.saturating_add(imm);
-    bounds.umin = bounds.umin.saturating_add(imm as u64);
-    bounds.umax = bounds.umax.saturating_add(imm as u64);
+
+    // Kernel-faithful wrap-detection. Mirrors `scalar_min_max_add` in
+    // verifier.c v6.15 (~L13700): if `min + imm` and `max + imm` don't
+    // agree on overflow, the post-op range straddles the wrap boundary
+    // (two disjoint pieces in unsigned modular arithmetic) and can't be
+    // represented by a single contiguous interval. The kernel resets
+    // such ranges to the full domain instead of using saturating
+    // arithmetic, which silently produces inconsistent (min > max)
+    // bounds when later constraints intersect with the wrong piece.
+    //
+    // Concrete: r1 ∈ u32 [0, 0xFFFFFFFF], r1 += -4 with saturating_add
+    // produced umin=0xFFF..FFFC (no overflow), umax=u64::MAX
+    // (saturated from overflow). A subsequent `umax := min(umax, 1)`
+    // then leaves umin > umax and the whole state is dropped as
+    // infeasible — wrongly excluding the kernel-reachable case where
+    // r1 was 4 or 5 (so r1-4 ∈ {0, 1}).
+    //
+    // We do separate overflow checks for the four bound pairs: u64
+    // (umin/umax) and i64 (smin/smax) for the 64-bit halves, plus u32
+    // (u32_min/u32_max) and i32 (s32_min/s32_max) for the 32-bit
+    // halves. Each pair is reset to its full domain independently
+    // when wrap-disagreement is detected.
+    let imm_u64 = imm as u64;
+    let (new_umin, ovf_umin) = bounds.umin.overflowing_add(imm_u64);
+    let (new_umax, ovf_umax) = bounds.umax.overflowing_add(imm_u64);
+    if ovf_umin == ovf_umax {
+        bounds.umin = new_umin;
+        bounds.umax = new_umax;
+    } else {
+        bounds.umin = 0;
+        bounds.umax = u64::MAX;
+    }
+    let (new_smin, ovf_smin) = bounds.smin.overflowing_add(imm);
+    let (new_smax, ovf_smax) = bounds.smax.overflowing_add(imm);
+    if ovf_smin == ovf_smax {
+        bounds.smin = new_smin;
+        bounds.smax = new_smax;
+    } else {
+        bounds.smin = i64::MIN;
+        bounds.smax = i64::MAX;
+    }
     bounds.scalar_id = None; // Arithmetic breaks scalar relationship
-    // 8-bound: also tighten the 32-bit halves by adding imm
-    // truncated to 32 bits. Mirrors kernel `adjust_scalar_min_max_vals`
-    // 32-bit path. `reg_bounds_sync` (called via sync_bounds below)
-    // would also derive these from the updated 64-bit fields when
-    // upper 32 bits stay constant, but direct update is tighter for
-    // the case where 64-bit add wraps but 32-bit add doesn't.
-    let imm32 = imm as u32;
-    let imm32_signed = imm as i32;
-    bounds.u32_min = bounds.u32_min.saturating_add(imm32);
-    bounds.u32_max = bounds.u32_max.saturating_add(imm32);
-    bounds.s32_min = bounds.s32_min.saturating_add(imm32_signed);
-    bounds.s32_max = bounds.s32_max.saturating_add(imm32_signed);
+
+    // 32-bit halves: mirror `adjust_scalar_min_max_vals` 32-bit path.
+    // Same wrap-disagreement reset as the 64-bit pairs above.
+    let imm32_u = imm as u32;
+    let imm32_s = imm as i32;
+    let (new_u32_min, ovf_u32_min) = bounds.u32_min.overflowing_add(imm32_u);
+    let (new_u32_max, ovf_u32_max) = bounds.u32_max.overflowing_add(imm32_u);
+    if ovf_u32_min == ovf_u32_max {
+        bounds.u32_min = new_u32_min;
+        bounds.u32_max = new_u32_max;
+    } else {
+        bounds.u32_min = 0;
+        bounds.u32_max = u32::MAX;
+    }
+    let (new_s32_min, ovf_s32_min) = bounds.s32_min.overflowing_add(imm32_s);
+    let (new_s32_max, ovf_s32_max) = bounds.s32_max.overflowing_add(imm32_s);
+    if ovf_s32_min == ovf_s32_max {
+        bounds.s32_min = new_s32_min;
+        bounds.s32_max = new_s32_max;
+    } else {
+        bounds.s32_min = i32::MIN;
+        bounds.s32_max = i32::MAX;
+    }
     bounds.sync_bounds();
 
     // Update pointer offset if present

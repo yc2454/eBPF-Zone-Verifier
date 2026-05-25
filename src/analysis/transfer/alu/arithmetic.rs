@@ -532,26 +532,42 @@ pub(crate) fn handle_mul(state: &mut State, width: Width, dst: Reg, src: &Operan
     );
 }
 
-pub(crate) fn handle_mod(state: &mut State, width: Width, dst: Reg, src: &Operand) {
+pub(crate) fn handle_mod(
+    state: &mut State,
+    width: Width,
+    dst: Reg,
+    src: &Operand,
+    kernel_faithful: bool,
+) {
+    // The kernel models BPF_MOD with `__mark_reg_unknown` semantics:
+    // `is_safe_to_compute_dst_reg_range` (verifier.c v6.15 L16050)
+    // excludes MOD, so dst's bounds are cleared completely. In
+    // `kernel_faithful` mode we mirror that — drop bounds entirely so
+    // later pointer-arith sites see the same "unbounded min" picture
+    // as the kernel does and BCF can emit a bound-refine discharge.
+    //
+    // Outside kernel_faithful mode (e.g. zone domain), keep the
+    // tighter `r0 ∈ [0, divisor-1]` refinement: it's sound and
+    // produces fewer benign rejects at non-kernel-mode sites.
     match src {
         Operand::Imm(c) => {
-            if *c > 0 {
-                state.domain.forget(dst);
+            state.domain.forget(dst);
+            if !kernel_faithful && *c > 0 {
                 state.domain.assume_ge_imm(dst, 0);
                 state.domain.assume_le_imm(dst, c - 1);
-            } else {
-                state.domain.forget(dst);
             }
         }
         Operand::Reg(r) => {
             let (r_lo, r_hi) = state.domain.get_interval(*r);
             state.domain.forget(dst);
 
-            if r_lo > 0 && r_hi != i64::MAX {
-                state.domain.assume_ge_imm(dst, 0);
-                state.domain.assume_le_imm(dst, r_hi - 1);
-            } else if r_lo > 0 {
-                state.domain.assume_ge_imm(dst, 0);
+            if !kernel_faithful {
+                if r_lo > 0 && r_hi != i64::MAX {
+                    state.domain.assume_ge_imm(dst, 0);
+                    state.domain.assume_le_imm(dst, r_hi - 1);
+                } else if r_lo > 0 {
+                    state.domain.assume_ge_imm(dst, 0);
+                }
             }
         }
     }

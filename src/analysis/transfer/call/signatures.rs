@@ -758,6 +758,9 @@ pub(crate) mod pairs {
     // bpf_tcp_raw_gen_syncookie_ipv4(iph, th, th_len): R2/R3 (size_or_zero)
     pub static TCP_RAW_GEN_SYNCOOKIE_IPV4: [MemSizePair; 1] =
         [MemSizePair::new_nullable(Reg::R2, Reg::R3)];
+    // bpf_tcp_raw_gen_syncookie_ipv6(iph, th, th_len): R2/R3 (size_or_zero)
+    pub static TCP_RAW_GEN_SYNCOOKIE_IPV6: [MemSizePair; 1] =
+        [MemSizePair::new_nullable(Reg::R2, Reg::R3)];
     // bpf_snprintf_btf(str, str_sz, ptr, ptr_size, flags): R1/R2 + R3/R4
     pub static SNPRINTF_BTF: [MemSizePair; 2] = [
         MemSizePair::new(Reg::R1, Reg::R2),
