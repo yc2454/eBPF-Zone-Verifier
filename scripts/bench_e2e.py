@@ -32,6 +32,7 @@ import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import time
@@ -149,10 +150,27 @@ def build_one(args):
     cmd = [zovia_bin, "-q", "--bcf", "--kernel-mode", "verify", obj_path]
     t0 = time.time()
     note = ""
+    # --bcf thorough mode spawns child zovia workers for multi-pass
+    # state-cache placement. subprocess.run(..., timeout=) only kills the
+    # parent on TimeoutExpired, leaving the children to keep eating RAM
+    # well past the deadline. Run the parent in its own process group and
+    # SIGKILL the whole group on timeout so no orphan workers survive.
+    p = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        start_new_session=True,
+    )
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        note = f"rc{r.returncode}"
+        p.communicate(timeout=timeout)
+        note = f"rc{p.returncode}"
     except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        try:
+            p.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
         note = "TO"
     elapsed = time.time() - t0
     ok = os.path.exists(bundle)
@@ -196,7 +214,7 @@ def map_to_vm_path(local_path: str) -> str:
 
 def phase2_kernel_load(objs: list[str], cloudlab_host: str, timeout: int,
                        vm_jobs: int = 4, run_per_prog: bool = False,
-                       per_call_timeout: int = 60,
+                       per_call_timeout: int = 300,
                        types_map: Optional[dict[str, str]] = None) -> dict[str, tuple]:
     """For each .o, scp the bundle to cloudlab (its virtiofs is the VM's
     /root/bcf), then ssh to VM and run test_loader.
@@ -399,8 +417,11 @@ def main() -> int:
     ap.add_argument("--per-prog", action="store_true",
                     help="also run --per-prog (slower; underreports bundle benefits "
                          "due to subprog isolation). Default: whole-object only.")
-    ap.add_argument("--per-call-timeout", type=int, default=60,
-                    help="per-test_loader timeout in seconds (default 60)")
+    ap.add_argument("--per-call-timeout", type=int, default=300,
+                    help="per-test_loader timeout in seconds (default 300). "
+                         "Large bundles (calico tail-call tables, cilium DSR) "
+                         "can take a minute+ for the kernel verifier alone; "
+                         "60s was killing legitimate loads as TO.")
     ap.add_argument("--phase2-timeout", type=int, default=1800,
                     help="overall phase 2 ssh timeout in seconds (default 30min)")
     ap.add_argument("--obj-prog-type-json", default=DEFAULT_OBJ_PROG_TYPE_JSON,
