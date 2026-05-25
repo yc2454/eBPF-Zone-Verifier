@@ -11,6 +11,14 @@ track.patch
 .DS_Store
 vendor/
 
+# Python bytecode caches
+__pycache__/
+*.pyc
+
+# Local agent + bench scratch (regenerated per session; not for version control)
+.claude/
+bench/
+
 # Local-only full-scale baselines (regenerate via tests/baselines/capture_baseline.sh)
 tests/baselines/selftest_zone.json
 tests/baselines/selftest_kernel.json
