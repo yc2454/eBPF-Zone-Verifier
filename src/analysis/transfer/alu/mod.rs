@@ -125,7 +125,7 @@ pub(crate) fn transfer_alu(
         AluOp::Shr => shift::handle_shr(&mut state, width, dst, &src),
         AluOp::Shl => shift::handle_shl(&mut state, width, dst, &src),
         AluOp::Mul => arithmetic::handle_mul(&mut state, width, dst, &src),
-        AluOp::Mod => arithmetic::handle_mod(&mut state, width, dst, &src),
+        AluOp::Mod => arithmetic::handle_mod(&mut state, width, dst, &src, env.kernel_faithful_alu),
         AluOp::Div => arithmetic::handle_div(&mut state, width, dst, &src),
         AluOp::Arsh => shift::handle_arsh(&mut state, width, dst, &src),
         AluOp::Rsh => shift::handle_rsh(&mut state, width, dst, &src),

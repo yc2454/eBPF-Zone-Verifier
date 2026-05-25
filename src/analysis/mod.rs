@@ -56,7 +56,12 @@ pub fn analyze_program_full(
     config: &VerifierConfig,
 ) -> AnalysisResult {
     // 1. Initialize Verifier Environment and control flow checks
-    let mut env = VerifierEnv::new(ctx, prog, config.certificate.clone());
+    let mut env = VerifierEnv::new(
+        ctx,
+        prog,
+        config.certificate.clone(),
+        matches!(config.domain_mode, crate::common::config::DomainMode::Interval),
+    );
     if let Some(ref cert) = env.certificate {
         let computed_hash = program_hash(prog);
         if cert.program_hash != computed_hash {
@@ -459,7 +464,12 @@ pub fn analyze_exception_cb(
     config: &VerifierConfig,
     cb_entry_pc: usize,
 ) -> Option<VerificationError> {
-    let mut env = VerifierEnv::new(ctx, prog, None);
+    let mut env = VerifierEnv::new(
+        ctx,
+        prog,
+        None,
+        matches!(config.domain_mode, crate::common::config::DomainMode::Interval),
+    );
     env.analyzing_exception_cb = true;
 
     // Reuse program-level structural checks. These are idempotent — main

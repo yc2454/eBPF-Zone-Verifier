@@ -185,6 +185,15 @@ pub struct VerifierEnv<'a> {
     /// holds the hit/miss counters for `explored_states[pc][i]`. Drop
     /// the same index from both vectors on eviction.
     pub state_metrics: HashMap<usize, Vec<StateMetrics>>,
+
+    /// When true, ALU ops that the kernel models with
+    /// `__mark_reg_unknown`-style imprecision (e.g. `BPF_MOD`) clear
+    /// dst bounds completely instead of refining via zovia's more
+    /// precise interval. Set from `config.domain_mode ==
+    /// DomainMode::Interval` (i.e. `--kernel-mode`). Lets zovia surface
+    /// the same kernel-side "unbounded min" rejections at later
+    /// pointer-arith sites so BCF can emit a bound-refine discharge.
+    pub kernel_faithful_alu: bool,
     /// Per-PC histogram of subsumption-miss reasons (one bucket per
     /// `SubsumptionMissReason` variant). `subsumption_misses[pc][r.idx()]`
     /// is incremented every time the per-cached-state subsumption check
@@ -346,12 +355,14 @@ impl<'a> VerifierEnv<'a> {
         ctx: &'a ExecContext,
         prog: &'a Program,
         certificate: Option<ProgramCertificate>,
+        kernel_faithful_alu: bool,
     ) -> Self {
         VerifierEnv {
             ctx,
             explored_states: HashMap::new(),
             iter_pc_slot: HashMap::new(),
             state_metrics: HashMap::new(),
+            kernel_faithful_alu,
             subsumption_misses: HashMap::new(),
             pruning_stats: PruningStats::default(),
             insn_aux_data: vec![InsnAuxData::default(); prog.instrs.len()],
