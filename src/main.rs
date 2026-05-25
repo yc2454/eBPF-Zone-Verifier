@@ -223,6 +223,75 @@ fn run_analyze_all(path: &str, config: VerifierConfig) {
     println!("\n=== Done ===");
 }
 
+/// BCF thorough mode: run the per-object analysis as multiple child
+/// processes with varied state-cache placement and let the on-disk
+/// bundle merge accumulate discharge entries across them. Each child
+/// is invoked with `--no-bcf-thorough` and inherits the parent's argv;
+/// `ZOVIA_BUNDLE_KEEP=1` prevents the child from wiping the sidecar so
+/// entries from earlier children survive.
+///
+/// We spawn separate processes (not in-process iteration) because the
+/// underlying walker uses Rust `HashMap`, whose random hasher seed is
+/// fixed per process — independent processes give independent
+/// iteration orders, which matters on programs that hit the
+/// complexity-limit during exploration (the bundle then captures a
+/// different subset of pre-limit discharge sites per process). The
+/// variations probed are an implementation detail and may change.
+fn run_analyze_all_thorough(path: &str, _config: VerifierConfig) {
+    use std::process::Command;
+    println!("=== Thorough Batch Analysis: '{}' ===\n", path);
+
+    let argv: Vec<String> = std::env::args().collect();
+    let bin = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("[thorough] cannot resolve own binary: {e}; falling back to single pass");
+            return run_analyze_all(path, _config);
+        }
+    };
+    // Forward all of parent's CLI args; append --no-bcf-thorough so the
+    // child runs the single-pass path. If the user already passed it,
+    // don't append a duplicate.
+    let mut child_args: Vec<String> = argv.iter().skip(1).cloned().collect();
+    if !child_args.iter().any(|a| a == "--no-bcf-thorough") {
+        child_args.push("--no-bcf-thorough".to_string());
+    }
+
+    // Variations: (label, env_kernel_engine, env_kernel_engine_and).
+    // First = original dense-cache baseline; the kernel-shape variations
+    // cover rejection sites the baseline's cache pattern misses on
+    // certain program shapes.
+    let variations: &[(&str, Option<&str>, Option<&str>)] = &[
+        ("baseline",  None,      None),
+        ("variant a", Some("1"), Some("1")),
+        ("variant b", Some("1"), None),
+    ];
+
+    for (label, ke, ke_and) in variations {
+        println!("--- pass: {} ---", label);
+        let mut cmd = Command::new(&bin);
+        cmd.args(&child_args);
+        // KEEP=1: child does NOT wipe the on-disk bundle. The parent
+        // (`run_verify`) has already wiped once at startup; subsequent
+        // children just merge into the existing file.
+        cmd.env("ZOVIA_BUNDLE_KEEP", "1");
+        match ke {
+            Some(v) => { cmd.env("ZOVIA_KERNEL_ENGINE", v); }
+            None    => { cmd.env_remove("ZOVIA_KERNEL_ENGINE"); }
+        }
+        match ke_and {
+            Some(v) => { cmd.env("ZOVIA_KERNEL_ENGINE_AND", v); }
+            None    => { cmd.env_remove("ZOVIA_KERNEL_ENGINE_AND"); }
+        }
+        match cmd.status() {
+            Ok(s) if s.success() => {}
+            Ok(s) => eprintln!("[thorough] pass {label} exited with {s}"),
+            Err(e) => eprintln!("[thorough] pass {label} failed to spawn: {e}"),
+        }
+    }
+    println!("\n=== Done ===");
+}
+
 // ============================================================
 // `verify` — auto-detect ELF / .c / legacy .json
 // ============================================================
@@ -254,6 +323,8 @@ fn run_verify(args: VerifyArgs, mut config: VerifierConfig) {
                 run_analyze_section(&args.path, &section, config);
             } else if let Some(func) = args.func {
                 run_analyze_func(&args.path, &func, config);
+            } else if config.bcf_enabled && config.bcf_thorough {
+                run_analyze_all_thorough(&args.path, config);
             } else {
                 run_analyze_all(&args.path, config);
             }

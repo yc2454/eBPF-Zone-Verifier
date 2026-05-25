@@ -106,6 +106,27 @@ pub struct VerifierConfig {
     /// non-`None` and `env.bcf_proofs` is non-empty at the end of analysis,
     /// the bundle is written here.
     pub bcf_bundle_out: Option<String>,
+
+    /// Kernel-shape state-cache placement (formerly `ZOVIA_KERNEL_ENGINE`
+    /// env var). When true, the walker only caches at `is_prune_point`
+    /// PCs and uses the kernel's `add_new_state` heuristic; when false,
+    /// the original dense per-popped-state caching is used.
+    pub kernel_engine: bool,
+
+    /// Restrict the kernel-shape `add_new_state` heuristic to AND of
+    /// env-wide and per-path counters (formerly `ZOVIA_KERNEL_ENGINE_AND`
+    /// env var). Effective only when `kernel_engine` is true. False
+    /// selects the looser OR variant.
+    pub kernel_engine_and: bool,
+
+    /// BCF "thorough" mode. When true with `--bcf`, the ELF analysis runs
+    /// internally as multiple passes that vary the state-cache placement
+    /// and merge per-pass discharge entries into one bundle. The exact
+    /// passes are an implementation detail; the *intent* is broader
+    /// coverage of kernel-rejection sites. Default `true` whenever
+    /// `bcf_enabled` is set (opt-out via `--no-bcf-thorough`); always
+    /// `false` when `bcf_enabled` is false.
+    pub bcf_thorough: bool,
 }
 
 impl Default for VerifierConfig {
@@ -130,6 +151,9 @@ impl Default for VerifierConfig {
             certificate: None,
             bcf_enabled: false,
             bcf_bundle_out: None,
+            kernel_engine: false,
+            kernel_engine_and: false,
+            bcf_thorough: false,
         }
     }
 }
