@@ -89,8 +89,27 @@ pub fn compute_scc(prog: &Program, env: &mut VerifierEnv) {
             // All successors visited. Check whether `w` is the root of
             // a completed SCC.
             if low[w] < pre[w] {
-                // Not a root — leave on stack, propagate up.
+                // Not a root — leave on the SCC stack and pop the DFS
+                // frame. Standard Tarjan back-propagation: the parent's
+                // lowlink absorbs the child's, since this child's
+                // subtree is now fully explored and any back-edges it
+                // reached are part of the parent's component too. The
+                // iterative form has to do this explicitly here — the
+                // `continue 'outer` recursion path never returned the
+                // value to the caller, so without this step low values
+                // never flow up the DFS chain. Effect: most non-trivial
+                // SCCs (any loop reached by a single fall-through
+                // chain) were being misclassified as singletons because
+                // their interior vertices had `low == pre` after the
+                // child popped without propagating. See
+                // feedback_compute_scc_missing_backprop_2026-05-25.md.
+                let child_low = low[w];
                 dfs.pop();
+                if let Some(&parent) = dfs.last()
+                    && child_low < low[parent]
+                {
+                    low[parent] = child_low;
+                }
                 continue;
             }
 
