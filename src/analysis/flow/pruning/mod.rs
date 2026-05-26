@@ -117,40 +117,24 @@ fn handle_loop_pruning(
             }
             // SCC force_exact: prev is on the current DFS path iff its
             // branches > 0 (cached but DFS through it not yet finished).
-            // The kernel uses `get_loop_entry(sl)->branches > 0`; the
-            // simpler "prev itself open" approximation captures the
-            // load-bearing case for loop-state-deps and avoids the
-            // multi-hop chain walk on the hot path.
-            // Kernel `force_exact = loop_entry && loop_entry->branches > 0`
-            // (verifier.c L19175): walk prev's loop_entry chain to its
-            // outermost loop header, then check whether THAT header is
-            // still on the DFS path. The simpler `prev.branches > 0`
-            // misses cases where prev itself has finished but is part of
-            // a still-open enclosing SCC (e.g. inner-loop body state in
-            // loop_state_deps2). We also keep `prev.branches > 0` as a
-            // direct trigger: prev itself open ⇒ enclosing loop open.
-            let force_exact = prev.branches > 0
-                || prev
-                    .cache_id
-                    .and_then(|cid| env.get_loop_entry(cid))
-                    .and_then(|lcid| env.cache_loc_by_id.get(&lcid).copied())
-                    .and_then(|(lpc, lidx)| {
-                        env.explored_states
-                            .get(&lpc)
-                            .and_then(|v| v.get(lidx))
-                            .map(|s| s.branches > 0)
-                    })
-                    .unwrap_or(false)
-                // Kernel `incomplete_read_marks` (verifier.c v6.15
-                // L2327) — true iff prev's SCC visit has pending
-                // backedges (collected on prior loop-pruning hits,
-                // not yet flushed by propagate_backedges at SCC
-                // exit). Additive: catches the rare case where
-                // prev.branches has hit 0 but the propagate_backedges
-                // fixpoint hasn't run yet (e.g. an inner SCC closed
-                // while an outer is still in flight), so we want
-                // RANGE_WITHIN strictness anyway.
-                || env.incomplete_read_marks(prev);
+            // Kernel-faithful force_exact: the kernel gates RANGE_WITHIN
+            // strictness on `incomplete_read_marks(old)` alone
+            // (verifier.c v6.15 L20574: `loop = incomplete_read_marks();
+            // states_equal(..., loop ? RANGE_WITHIN : NOT_EXACT)`).
+            // Earlier zovia ORed in two extra triggers — `prev.branches
+            // > 0` and a loop_entry walk — because the SCC machinery
+            // was broken (compute_scc misclassified most loop vertices
+            // as singletons → callchain=None → backedges never
+            // accumulated → incomplete_read_marks always false). With
+            // the Tarjan back-prop fix (6f35e7b), incomplete_read_marks
+            // is now accurate; the over-broad triggers were forcing
+            // RANGE_WITHIN on every non-iter loop iteration whose
+            // cached subtree was still open, which prevented imprecise
+            // regs (loop counters / accumulators) from short-circuiting
+            // in regsafe and caused convergence failure (loop4 → 1M
+            // insns / 0 prunes; ksnoop AND mode → 970k bundle entries
+            // at one PC).
+            let force_exact = env.incomplete_read_marks(prev);
             match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
                 Ok(()) => {
                     if crate::analysis::trace_pc_in_range(pc) {
@@ -202,21 +186,23 @@ fn handle_loop_pruning(
                     env.update_loop_entry(state, lcid);
                 }
             }
-            // Kernel `add_scc_backedge` (verifier.c v6.15 L20506):
-            // when a loop-pruning hit happens at a cached state that
-            // belongs to an OPEN SCC visit (prev.branches > 0 ⇒
-            // visit's entry hasn't exited), save cur as a backedge.
-            // `propagate_backedges` at SCC exit will replay
-            // propagate_precision until fixpoint, ensuring the
-            // RANGE_WITHIN convergence's precision marks are
-            // complete.
-            //
-            // Slightly more permissive than the kernel (which gates
-            // on `incomplete_read_marks`, i.e. visit.backedges
-            // non-empty). Overcollecting is sound — extra backedges
-            // just re-run propagate_precision (already-fixed-points
-            // exit the loop quickly via the `changed` flag).
-            if prev.branches > 0
+            // Kernel-faithful add_scc_backedge gate (verifier.c v6.15
+            // L20671-20686): backedges are only added when `loop` was
+            // already true at this hit — i.e. visit.backedges was
+            // already non-empty. Earlier zovia gated on `prev.branches
+            // > 0` (a strict superset of the kernel's gate), claiming
+            // "overcollecting is sound." It is not — overcollecting
+            // inflates incomplete_read_marks for non-iter loops, which
+            // forces every subsequent pruning attempt into RANGE_WITHIN
+            // mode and defeats the regsafe SCALAR imprecise short-
+            // circuit. Result: loop4-class loops never converge past
+            // their first hit. The kernel's stricter gate means
+            // backedges never accumulate from this site on a fresh
+            // SCC visit, so non-iter loops stay in NOT_EXACT mode and
+            // converge naturally; iter loops handle their own
+            // convergence via widen_imprecise_scalars at iter_next
+            // (kfunc.rs::iter_next_fork — independent of backedges).
+            if env.incomplete_read_marks(&prev)
                 && let Some(prev_cid) = prev.cache_id
             {
                 env.add_scc_backedge(state, prev_cid, pc);
@@ -255,36 +241,9 @@ fn handle_standard_pruning(
                 local_children_unsafe_skips += 1;
                 continue;
             }
-            // Kernel `force_exact = loop_entry && loop_entry->branches > 0`
-            // (verifier.c L19175): walk prev's loop_entry chain to its
-            // outermost loop header, then check whether THAT header is
-            // still on the DFS path. The simpler `prev.branches > 0`
-            // misses cases where prev itself has finished but is part of
-            // a still-open enclosing SCC (e.g. inner-loop body state in
-            // loop_state_deps2). We also keep `prev.branches > 0` as a
-            // direct trigger: prev itself open ⇒ enclosing loop open.
-            let force_exact = prev.branches > 0
-                || prev
-                    .cache_id
-                    .and_then(|cid| env.get_loop_entry(cid))
-                    .and_then(|lcid| env.cache_loc_by_id.get(&lcid).copied())
-                    .and_then(|(lpc, lidx)| {
-                        env.explored_states
-                            .get(&lpc)
-                            .and_then(|v| v.get(lidx))
-                            .map(|s| s.branches > 0)
-                    })
-                    .unwrap_or(false)
-                // Kernel `incomplete_read_marks` (verifier.c v6.15
-                // L2327) — true iff prev's SCC visit has pending
-                // backedges (collected on prior loop-pruning hits,
-                // not yet flushed by propagate_backedges at SCC
-                // exit). Additive: catches the rare case where
-                // prev.branches has hit 0 but the propagate_backedges
-                // fixpoint hasn't run yet (e.g. an inner SCC closed
-                // while an outer is still in flight), so we want
-                // RANGE_WITHIN strictness anyway.
-                || env.incomplete_read_marks(prev);
+            // Kernel-faithful force_exact (see matching block above for
+            // full rationale and history).
+            let force_exact = env.incomplete_read_marks(prev);
             match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
                 Ok(()) => {
                     hit_idx = Some(i);
