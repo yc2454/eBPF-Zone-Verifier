@@ -117,40 +117,24 @@ fn handle_loop_pruning(
             }
             // SCC force_exact: prev is on the current DFS path iff its
             // branches > 0 (cached but DFS through it not yet finished).
-            // The kernel uses `get_loop_entry(sl)->branches > 0`; the
-            // simpler "prev itself open" approximation captures the
-            // load-bearing case for loop-state-deps and avoids the
-            // multi-hop chain walk on the hot path.
-            // Kernel `force_exact = loop_entry && loop_entry->branches > 0`
-            // (verifier.c L19175): walk prev's loop_entry chain to its
-            // outermost loop header, then check whether THAT header is
-            // still on the DFS path. The simpler `prev.branches > 0`
-            // misses cases where prev itself has finished but is part of
-            // a still-open enclosing SCC (e.g. inner-loop body state in
-            // loop_state_deps2). We also keep `prev.branches > 0` as a
-            // direct trigger: prev itself open ⇒ enclosing loop open.
-            let force_exact = prev.branches > 0
-                || prev
-                    .cache_id
-                    .and_then(|cid| env.get_loop_entry(cid))
-                    .and_then(|lcid| env.cache_loc_by_id.get(&lcid).copied())
-                    .and_then(|(lpc, lidx)| {
-                        env.explored_states
-                            .get(&lpc)
-                            .and_then(|v| v.get(lidx))
-                            .map(|s| s.branches > 0)
-                    })
-                    .unwrap_or(false)
-                // Kernel `incomplete_read_marks` (verifier.c v6.15
-                // L2327) — true iff prev's SCC visit has pending
-                // backedges (collected on prior loop-pruning hits,
-                // not yet flushed by propagate_backedges at SCC
-                // exit). Additive: catches the rare case where
-                // prev.branches has hit 0 but the propagate_backedges
-                // fixpoint hasn't run yet (e.g. an inner SCC closed
-                // while an outer is still in flight), so we want
-                // RANGE_WITHIN strictness anyway.
-                || env.incomplete_read_marks(prev);
+            // Kernel-faithful force_exact: the kernel gates RANGE_WITHIN
+            // strictness on `incomplete_read_marks(old)` alone
+            // (verifier.c v6.15 L20574: `loop = incomplete_read_marks();
+            // states_equal(..., loop ? RANGE_WITHIN : NOT_EXACT)`).
+            // Earlier zovia ORed in two extra triggers — `prev.branches
+            // > 0` and a loop_entry walk — because the SCC machinery
+            // was broken (compute_scc misclassified most loop vertices
+            // as singletons → callchain=None → backedges never
+            // accumulated → incomplete_read_marks always false). With
+            // the Tarjan back-prop fix (6f35e7b), incomplete_read_marks
+            // is now accurate; the over-broad triggers were forcing
+            // RANGE_WITHIN on every non-iter loop iteration whose
+            // cached subtree was still open, which prevented imprecise
+            // regs (loop counters / accumulators) from short-circuiting
+            // in regsafe and caused convergence failure (loop4 → 1M
+            // insns / 0 prunes; ksnoop AND mode → 970k bundle entries
+            // at one PC).
+            let force_exact = env.incomplete_read_marks(prev);
             match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
                 Ok(()) => {
                     if crate::analysis::trace_pc_in_range(pc) {
@@ -255,36 +239,9 @@ fn handle_standard_pruning(
                 local_children_unsafe_skips += 1;
                 continue;
             }
-            // Kernel `force_exact = loop_entry && loop_entry->branches > 0`
-            // (verifier.c L19175): walk prev's loop_entry chain to its
-            // outermost loop header, then check whether THAT header is
-            // still on the DFS path. The simpler `prev.branches > 0`
-            // misses cases where prev itself has finished but is part of
-            // a still-open enclosing SCC (e.g. inner-loop body state in
-            // loop_state_deps2). We also keep `prev.branches > 0` as a
-            // direct trigger: prev itself open ⇒ enclosing loop open.
-            let force_exact = prev.branches > 0
-                || prev
-                    .cache_id
-                    .and_then(|cid| env.get_loop_entry(cid))
-                    .and_then(|lcid| env.cache_loc_by_id.get(&lcid).copied())
-                    .and_then(|(lpc, lidx)| {
-                        env.explored_states
-                            .get(&lpc)
-                            .and_then(|v| v.get(lidx))
-                            .map(|s| s.branches > 0)
-                    })
-                    .unwrap_or(false)
-                // Kernel `incomplete_read_marks` (verifier.c v6.15
-                // L2327) — true iff prev's SCC visit has pending
-                // backedges (collected on prior loop-pruning hits,
-                // not yet flushed by propagate_backedges at SCC
-                // exit). Additive: catches the rare case where
-                // prev.branches has hit 0 but the propagate_backedges
-                // fixpoint hasn't run yet (e.g. an inner SCC closed
-                // while an outer is still in flight), so we want
-                // RANGE_WITHIN strictness anyway.
-                || env.incomplete_read_marks(prev);
+            // Kernel-faithful force_exact (see matching block above for
+            // full rationale and history).
+            let force_exact = env.incomplete_read_marks(prev);
             match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
                 Ok(()) => {
                     hit_idx = Some(i);
