@@ -372,6 +372,26 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
                 env.bcf_path_unreachable = true;
                 return;
             }
+            // EXPERIMENT (env-gated, default off): on cvc5-can't-prove,
+            // drop THIS path instead of halting whole-section analysis.
+            // Rationale: zovia's interval-only kernel-mode can produce
+            // spurious unreachable paths (e.g. pc 366/369 same-predicate
+            // correlation lost in interval domain). Halting blocks DFS
+            // from exploring other branches that DO reach pc 246 via
+            // shorter trajectories — needed for cilium wireguard 2/21
+            // kernel hash 0xf4f14bfbef845f45 (BCF#1 Q45, kernel
+            // discharges via the "v9 > 60, v7 != 6" branch combo zovia
+            // misses today). End-to-end safety preserved: a genuinely
+            // reachable unsafe load is still rejected by kernel at load.
+            if std::env::var("ZOVIA_DROP_UNSAFE_PATH").ok().as_deref() == Some("1") {
+                log::warn!(
+                    target: "app",
+                    "[bcf] dropping unprovable unsafe-load path at pc {} (base {:?}+{}, Type: {:?}) — DFS continues",
+                    pc, base, off, base_type
+                );
+                env.bcf_path_unreachable = true;
+                return;
+            }
             error!(
                 "Non-stack, non-ctx load at pc {} from base {:?}+{} (Type: {:?})",
                 pc, base, off, base_type
