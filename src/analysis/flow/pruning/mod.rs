@@ -186,21 +186,23 @@ fn handle_loop_pruning(
                     env.update_loop_entry(state, lcid);
                 }
             }
-            // Kernel `add_scc_backedge` (verifier.c v6.15 L20506):
-            // when a loop-pruning hit happens at a cached state that
-            // belongs to an OPEN SCC visit (prev.branches > 0 ⇒
-            // visit's entry hasn't exited), save cur as a backedge.
-            // `propagate_backedges` at SCC exit will replay
-            // propagate_precision until fixpoint, ensuring the
-            // RANGE_WITHIN convergence's precision marks are
-            // complete.
-            //
-            // Slightly more permissive than the kernel (which gates
-            // on `incomplete_read_marks`, i.e. visit.backedges
-            // non-empty). Overcollecting is sound — extra backedges
-            // just re-run propagate_precision (already-fixed-points
-            // exit the loop quickly via the `changed` flag).
-            if prev.branches > 0
+            // Kernel-faithful add_scc_backedge gate (verifier.c v6.15
+            // L20671-20686): backedges are only added when `loop` was
+            // already true at this hit — i.e. visit.backedges was
+            // already non-empty. Earlier zovia gated on `prev.branches
+            // > 0` (a strict superset of the kernel's gate), claiming
+            // "overcollecting is sound." It is not — overcollecting
+            // inflates incomplete_read_marks for non-iter loops, which
+            // forces every subsequent pruning attempt into RANGE_WITHIN
+            // mode and defeats the regsafe SCALAR imprecise short-
+            // circuit. Result: loop4-class loops never converge past
+            // their first hit. The kernel's stricter gate means
+            // backedges never accumulate from this site on a fresh
+            // SCC visit, so non-iter loops stay in NOT_EXACT mode and
+            // converge naturally; iter loops handle their own
+            // convergence via widen_imprecise_scalars at iter_next
+            // (kfunc.rs::iter_next_fork — independent of backedges).
+            if env.incomplete_read_marks(&prev)
                 && let Some(prev_cid) = prev.cache_id
             {
                 env.add_scc_backedge(state, prev_cid, pc);
