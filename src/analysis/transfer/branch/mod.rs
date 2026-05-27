@@ -747,6 +747,76 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
         }
     }
     env.bcf_proofs.push(entry);
+
+    // Synthetic ancestor-discharge emission. After the immediate-cache
+    // discharge succeeds, walk the parent_cache_id chain backward and
+    // emit additional discharges anchored at each ancestor cache. The
+    // kernel sometimes queries a hash whose suffix base is DEEPER than
+    // zovia's walker reaches in one segment of jmp_history — zovia's
+    // jmp_history is segmented per-cache-event, so a single walker
+    // call can only collect predicates within one segment; the kernel's
+    // walker traverses one long history. Example: calico
+    // from_nat_debug_co-re reject_pc=1732, kernel demands 8-conj hash
+    // 0x673434f3469c3018 that requires base anchored pre-1562; zovia
+    // walker stops at base_pc=1680. Anchoring at each chain ancestor
+    // produces the kernel-needed deeper hashes.
+    //
+    // ADDITIVE only: keeps the immediate-cache discharge (so existing
+    // matched hashes preserve their byte-for-byte alignment) and dedup
+    // by cond_hash before pushing. Validated 2026-05-27 against the
+    // calico-19 + cilium-17 + collected-9 VM-load gate.
+    //
+    // Note the existing comment above (`A previous attempt walked back
+    // through parent_cache_id…`) — that attempt REPLACED the immediate
+    // discharge with a chain-walked one and broke matched hashes. This
+    // is the additive variant that closes the same case without that
+    // regression class.
+    {
+        const MAX_ANCESTOR_DEPTH: usize = 64;
+        let mut cur_cid_opt = base_cid_dbg;
+        let mut depth = 0;
+        while depth < MAX_ANCESTOR_DEPTH {
+            let Some(cur_cid) = cur_cid_opt else { break };
+            let Some(&(cur_pc, cur_idx)) = env.cache_loc_by_id.get(&cur_cid) else { break };
+            let Some(parent_cid) = env
+                .explored_states
+                .get(&cur_pc)
+                .and_then(|v| v.get(cur_idx))
+                .and_then(|s| s.parent_cache_id)
+            else { break };
+            let Some(&(ancestor_pc, _)) = env.cache_loc_by_id.get(&parent_cid) else { break };
+            let ancestor_prev_pc = env.cached_prev_insn_pc(parent_cid);
+            if let Some(ok) = try_prove_unreachable(state, Some(ancestor_pc), ancestor_prev_pc) {
+                let extra_entry = RefineEntry::new(
+                    ok.goal_root,
+                    ok.sym.exprs,
+                    ok.proof_bytes,
+                    BCF_BUNDLE_KIND_UNREACHABLE,
+                );
+                let already_have = env.bcf_proofs.iter().any(|e| e.cond_hash == extra_entry.cond_hash);
+                if std::env::var("ZOVIA_DUMP_DISCHARGE").ok().as_deref() == Some("1") {
+                    eprintln!(
+                        "[disc-ancestor] depth={} anchor_pc={} anchor_cid={} prev_pc={:?} hash={:016x} dup={}",
+                        depth, ancestor_pc, parent_cid, ancestor_prev_pc,
+                        extra_entry.cond_hash, already_have,
+                    );
+                }
+                if !already_have {
+                    info!(
+                        target: "app",
+                        "[bcf] ancestor-discharge: cvc5 proof {} bytes (hash {:016x}, depth={})",
+                        extra_entry.proof_bytes.len(),
+                        extra_entry.cond_hash,
+                        depth,
+                    );
+                    env.bcf_proofs.push(extra_entry);
+                }
+            }
+            cur_cid_opt = Some(parent_cid);
+            depth += 1;
+        }
+    }
+
     // Mirror kernel bcf_refine (verifier.c:24580-81): cached
     // ancestors on the backtrack suffix of this path-unreachable
     // refinement are no longer prune-safe — a later arrival they'd
