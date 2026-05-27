@@ -134,7 +134,7 @@ fn record_path_cond_for_side(
     // freshly-captured pre-reg_expr value (per-side bcf may have a
     // different cached PC than the originator).
     let narrow_now = narrow_for_side.map(|(k, op_b, j32, _)| (k, op_b, j32, lhs_materialize_pc));
-    bcf.add_cond_at_narrowed(pred, src_pc, narrow_now);
+    bcf.add_cond_at_narrowed(pred, src_pc, narrow_now, Some((l_idx, lhs_materialize_pc, jmp32, lhs_bounds.clone())));
 }
 
 /// Legacy entry point — kept for symmetric callers. Splits to
@@ -274,10 +274,11 @@ fn record_branch_path_conds(
     // consistent. Then append only the not-taken pred to state_else's
     // path_conds (state_then gets the taken pred).
     let snapshot = (**then_bcf).clone();
-    then_bcf.add_cond_at_narrowed(pred_then, src_pc, narrow_then);
+    let lhs_meta = Some((l_idx, lhs_materialize_pc, jmp32, lhs_bounds.clone()));
+    then_bcf.add_cond_at_narrowed(pred_then, src_pc, narrow_then, lhs_meta.clone());
     if let Some(else_bcf) = state_else.bcf.as_mut() {
         **else_bcf = snapshot;
-        else_bcf.add_cond_at_narrowed(pred_else, src_pc, narrow_else);
+        else_bcf.add_cond_at_narrowed(pred_else, src_pc, narrow_else, lhs_meta);
     }
 }
 
@@ -747,6 +748,31 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
         }
     }
     env.bcf_proofs.push(entry);
+    // Also push the un-rewritten (aliased-VAR) form so previously-
+    // matched hashes that happened to be the aliased shape stay in the
+    // bundle alongside the kernel-shape rewrites. Without this, the
+    // fresh-VAR rewrite is destructive for programs whose discharge
+    // hash the kernel queries via the aliased form (calico-19
+    // regressed 19/19 → 9/19 when only the rewritten form was pushed,
+    // 2026-05-27).
+    if let Some(ok_no_rw) = crate::refinement::refine_unreachable::try_prove_unreachable_no_rewrite(state, base_pc, prev_insn_pc) {
+        let entry_no_rw = RefineEntry::new(
+            ok_no_rw.goal_root,
+            ok_no_rw.sym.exprs,
+            ok_no_rw.proof_bytes,
+            BCF_BUNDLE_KIND_UNREACHABLE,
+        );
+        let already_have = env.bcf_proofs.iter().any(|e| e.cond_hash == entry_no_rw.cond_hash);
+        if !already_have {
+            info!(
+                target: "app",
+                "[bcf] path-unreachable (no-rewrite): cvc5 proof {} bytes (hash {:016x})",
+                entry_no_rw.proof_bytes.len(),
+                entry_no_rw.cond_hash
+            );
+            env.bcf_proofs.push(entry_no_rw);
+        }
+    }
 
     // Synthetic ancestor-discharge emission. After the immediate-cache
     // discharge succeeds, walk the parent_cache_id chain backward and
@@ -786,30 +812,39 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
             else { break };
             let Some(&(ancestor_pc, _)) = env.cache_loc_by_id.get(&parent_cid) else { break };
             let ancestor_prev_pc = env.cached_prev_insn_pc(parent_cid);
-            if let Some(ok) = try_prove_unreachable(state, Some(ancestor_pc), ancestor_prev_pc) {
-                let extra_entry = RefineEntry::new(
-                    ok.goal_root,
-                    ok.sym.exprs,
-                    ok.proof_bytes,
-                    BCF_BUNDLE_KIND_UNREACHABLE,
-                );
-                let already_have = env.bcf_proofs.iter().any(|e| e.cond_hash == extra_entry.cond_hash);
-                if std::env::var("ZOVIA_DUMP_DISCHARGE").ok().as_deref() == Some("1") {
-                    eprintln!(
-                        "[disc-ancestor] depth={} anchor_pc={} anchor_cid={} prev_pc={:?} hash={:016x} dup={}",
-                        depth, ancestor_pc, parent_cid, ancestor_prev_pc,
-                        extra_entry.cond_hash, already_have,
+            for &use_rewrite in &[true, false] {
+                let ok_opt = if use_rewrite {
+                    try_prove_unreachable(state, Some(ancestor_pc), ancestor_prev_pc)
+                } else {
+                    crate::refinement::refine_unreachable::try_prove_unreachable_no_rewrite(
+                        state, Some(ancestor_pc), ancestor_prev_pc)
+                };
+                if let Some(ok) = ok_opt {
+                    let extra_entry = RefineEntry::new(
+                        ok.goal_root,
+                        ok.sym.exprs,
+                        ok.proof_bytes,
+                        BCF_BUNDLE_KIND_UNREACHABLE,
                     );
-                }
-                if !already_have {
-                    info!(
-                        target: "app",
-                        "[bcf] ancestor-discharge: cvc5 proof {} bytes (hash {:016x}, depth={})",
-                        extra_entry.proof_bytes.len(),
-                        extra_entry.cond_hash,
-                        depth,
-                    );
-                    env.bcf_proofs.push(extra_entry);
+                    let already_have = env.bcf_proofs.iter().any(|e| e.cond_hash == extra_entry.cond_hash);
+                    if std::env::var("ZOVIA_DUMP_DISCHARGE").ok().as_deref() == Some("1") {
+                        eprintln!(
+                            "[disc-ancestor] depth={} anchor_pc={} anchor_cid={} prev_pc={:?} rw={} hash={:016x} dup={}",
+                            depth, ancestor_pc, parent_cid, ancestor_prev_pc, use_rewrite,
+                            extra_entry.cond_hash, already_have,
+                        );
+                    }
+                    if !already_have {
+                        info!(
+                            target: "app",
+                            "[bcf] ancestor-discharge: cvc5 proof {} bytes (hash {:016x}, depth={}, rw={})",
+                            extra_entry.proof_bytes.len(),
+                            extra_entry.cond_hash,
+                            depth,
+                            use_rewrite,
+                        );
+                        env.bcf_proofs.push(extra_entry);
+                    }
                 }
             }
             cur_cid_opt = Some(parent_cid);

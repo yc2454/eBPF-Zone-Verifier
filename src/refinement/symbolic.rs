@@ -138,6 +138,27 @@ pub struct SymbolicState {
     /// Kernel-probe ground truth 2026-05-23 — see
     /// feedback_kernel_probe_record_path_cond_2026-05-23.md.
     pub path_cond_narrowed_const: Vec<Option<(u64, u8, bool, Option<usize>)>>,
+    /// Parallel to `path_conds`: when this entry is a branch path_cond
+    /// emitted by [`add_cond_at_narrowed`] with a known LHS reg, holds
+    /// `Some((lhs_reg_idx, lhs_materialize_pc))`. The reg index is
+    /// `Reg::bcf_idx()` (0..NUM_REGS). `lhs_materialize_pc` mirrors the
+    /// 4th element of `path_cond_narrowed_const` but is also populated
+    /// for NON-narrowing branches (where narrowed_const stays None).
+    ///
+    /// Used at discharge time for the kernel-mirror per-reg fresh-VAR
+    /// rewrite: when `lhs_materialize_pc < base_pc`, the kernel's
+    /// `bcf_track` replay re-materializes the LHS reg fresh — assigning
+    /// a new bcf_expr distinct from any other reg's. Zovia's live state
+    /// may alias the LHS reg's expr with another reg's via spill/fill
+    /// propagation; without the rewrite, the canonical hash collapses
+    /// two semantically-distinct regs into one VAR (calico
+    /// from_l3_debug_co-re pc=1276: w1 from pc=1144 and w9 from pc=1222
+    /// share an expr_idx → 3-conj single-VAR hash vs kernel's 5-conj
+    /// V0/V1-split).
+    ///
+    /// `None` for bound preds and branch path_conds whose LHS isn't a
+    /// reg-backed scalar (e.g. JSET with non-reg LHS).
+    pub path_cond_lhs_meta: Vec<Option<(usize, Option<usize>, bool, RegBounds)>>,
     /// Final refinement condition (set by a site-specific callback).
     pub refine_cond: Option<u32>,
     /// Transient: the PC currently being processed by symbolic-tracking
@@ -351,6 +372,7 @@ impl SymbolicState {
         self.path_cond_pcs.push(pc);
         self.path_cond_is_branch.push(true);
         self.path_cond_narrowed_const.push(None);
+        self.path_cond_lhs_meta.push(None);
     }
 
     /// Same as [`add_cond_at`] but also records the narrowed-LHS const
@@ -359,16 +381,23 @@ impl SymbolicState {
     /// when the branch transfer has confirmed LHS narrowed to K on this
     /// side (e.g. JEQ-K taken / JNE-K not-taken). Mirrors kernel
     /// `record_path_cond` post-`___mark_reg_known` semantics.
+    ///
+    /// `lhs_meta` records the LHS reg index + materialize_pc for the
+    /// per-reg fresh-VAR rewrite at discharge time (broader case than
+    /// the narrowed-const-only K==K rewrite). Pass `None` when the LHS
+    /// isn't a reg-backed scalar or isn't tracked.
     pub fn add_cond_at_narrowed(
         &mut self,
         pred_idx: u32,
         pc: usize,
         narrowed: Option<(u64, u8, bool, Option<usize>)>,
+        lhs_meta: Option<(usize, Option<usize>, bool, RegBounds)>,
     ) {
         self.path_conds.push(pred_idx);
         self.path_cond_pcs.push(pc);
         self.path_cond_is_branch.push(true);
         self.path_cond_narrowed_const.push(narrowed);
+        self.path_cond_lhs_meta.push(lhs_meta);
     }
 
     /// Walk the expression tree rooted at `root` and return the set of
@@ -455,6 +484,7 @@ impl SymbolicState {
         let mut kept_pcs = Vec::with_capacity(self.path_cond_pcs.len());
         let mut kept_is_branch = Vec::with_capacity(self.path_cond_is_branch.len());
         let mut kept_narrowed = Vec::with_capacity(self.path_cond_narrowed_const.len());
+        let mut kept_lhs_meta = Vec::with_capacity(self.path_cond_lhs_meta.len());
         for (idx, &pc) in self.path_cond_pcs.iter().enumerate() {
             let is_branch = self.path_cond_is_branch[idx];
             let keep = pc == 0
@@ -486,6 +516,7 @@ impl SymbolicState {
                 kept_pcs.push(pc);
                 kept_is_branch.push(is_branch);
                 kept_narrowed.push(self.path_cond_narrowed_const[idx]);
+                kept_lhs_meta.push(self.path_cond_lhs_meta[idx]);
             }
         }
         // If the filter empties the path_cond set, the resulting SMT goal
@@ -507,6 +538,7 @@ impl SymbolicState {
         self.path_cond_pcs = kept_pcs;
         self.path_cond_is_branch = kept_is_branch;
         self.path_cond_narrowed_const = kept_narrowed;
+        self.path_cond_lhs_meta = kept_lhs_meta;
     }
 
     /// Set the PC tag for subsequently-emitted bound preds via
@@ -626,7 +658,75 @@ impl SymbolicState {
         self.path_cond_pcs.push(pc);
         self.path_cond_is_branch.push(false);
         self.path_cond_narrowed_const.push(None);
+        self.path_cond_lhs_meta.push(None);
         pred
+    }
+
+    /// Public variant of [`bound_reg32`]/[`bound_reg64`] that returns
+    /// the emitted bound-pred expr slots WITHOUT pushing them onto
+    /// `path_conds`. Used by [`crate::refinement::refine_unreachable`]
+    /// to insert bound preds for fresh per-reg VARs at the correct
+    /// position in the rewritten path_conds (interleaved with the
+    /// branches they materialize for, matching the kernel's
+    /// bcf_canonical_hash byte order).
+    pub fn bound_reg_emit_preds(&mut self, expr: u32, bounds: &RegBounds, bit32: bool) -> Vec<u32> {
+        let mut emitted: Vec<u32> = Vec::new();
+        if bit32 {
+            let (u32_min, u32_max) = (bounds.u32_min, bounds.u32_max);
+            let (s32_min, s32_max) = (bounds.s32_min, bounds.s32_max);
+            if u32_min != 0 {
+                let rhs = self.add_val(u32_min as u64, true);
+                emitted.push(self.add_pred(BPF_JGE, expr, rhs));
+            }
+            if u32_max != u32::MAX {
+                let rhs = self.add_val(u32_max as u64, true);
+                emitted.push(self.add_pred(BPF_JLE, expr, rhs));
+            }
+            if s32_min != i32::MIN && s32_min as u64 != u32_min as u64 {
+                let rhs = self.add_val(s32_min as i64 as u64, true);
+                emitted.push(self.add_pred(BPF_JSGE, expr, rhs));
+            }
+            if s32_max != i32::MAX && s32_max as u64 != u32_max as u64 {
+                let rhs = self.add_val(s32_max as i64 as u64, true);
+                emitted.push(self.add_pred(BPF_JSLE, expr, rhs));
+            }
+        } else {
+            let umin: Option<u64> = if bounds.smin >= 0 {
+                Some(bounds.smin as u64)
+            } else if bounds.smax < 0 {
+                Some(bounds.smin as u64)
+            } else {
+                None
+            };
+            let umax: Option<u64> = if bounds.smin >= 0 && bounds.smax != i64::MAX {
+                Some(bounds.smax as u64)
+            } else if bounds.smax < 0 {
+                Some(bounds.smax as u64)
+            } else {
+                None
+            };
+            if let Some(umin) = umin {
+                if umin != 0 {
+                    let rhs = self.add_val(umin, false);
+                    emitted.push(self.add_pred(BPF_JGE, expr, rhs));
+                }
+            }
+            if let Some(umax) = umax {
+                if umax != u64::MAX {
+                    let rhs = self.add_val(umax, false);
+                    emitted.push(self.add_pred(BPF_JLE, expr, rhs));
+                }
+            }
+            if bounds.smin != i64::MIN && umin.map(|u| bounds.smin as u64 != u).unwrap_or(true) {
+                let rhs = self.add_val(bounds.smin as u64, false);
+                emitted.push(self.add_pred(BPF_JSGE, expr, rhs));
+            }
+            if bounds.smax != i64::MAX && umax.map(|u| bounds.smax as u64 != u).unwrap_or(true) {
+                let rhs = self.add_val(bounds.smax as u64, false);
+                emitted.push(self.add_pred(BPF_JSLE, expr, rhs));
+            }
+        }
+        emitted
     }
 
     /// 32-bit version of `bound_reg`. Emits umin/umax/smin/smax bound

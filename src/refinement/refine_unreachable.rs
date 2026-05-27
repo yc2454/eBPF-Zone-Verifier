@@ -15,7 +15,7 @@
 use crate::analysis::machine::state::State;
 use crate::refinement::smtlib;
 use crate::refinement::solver;
-use crate::refinement::symbolic::SymbolicState;
+use crate::refinement::symbolic::{RegBounds, SymbolicState};
 use log::{debug, warn};
 
 /// Returned on success: the goal-root expr-id and the symbolic-state
@@ -39,6 +39,30 @@ pub fn try_prove_unreachable(
     state: &State,
     base_pc: Option<usize>,
     prev_insn_pc: Option<usize>,
+) -> Option<UnreachableOk> {
+    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, true)
+}
+
+/// Like [`try_prove_unreachable`] but with the per-reg fresh-VAR rewrite
+/// disabled. Used by the chain emission loop to ALSO push the
+/// un-rewritten (aliased-VAR) form, so previously-matched hashes (that
+/// the kernel may query via its `bcf_track` replay on this specific
+/// reject site) stay in the bundle alongside the kernel-shape rewrites.
+/// Without this, the rewrite is destructive for any program whose
+/// previously-matched hash happens to be the aliased form.
+pub fn try_prove_unreachable_no_rewrite(
+    state: &State,
+    base_pc: Option<usize>,
+    prev_insn_pc: Option<usize>,
+) -> Option<UnreachableOk> {
+    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, false)
+}
+
+fn try_prove_unreachable_inner(
+    state: &State,
+    base_pc: Option<usize>,
+    prev_insn_pc: Option<usize>,
+    do_fresh_var_rewrite: bool,
 ) -> Option<UnreachableOk> {
     let bcf_ref = state.bcf.as_ref()?;
     let mut sym: SymbolicState = (**bcf_ref).clone();
@@ -125,6 +149,7 @@ pub fn try_prove_unreachable(
         let mut kept_pcs = Vec::with_capacity(sym.path_cond_pcs.len());
         let mut kept_is_branch = Vec::with_capacity(sym.path_cond_is_branch.len());
         let mut kept_narrowed = Vec::with_capacity(sym.path_cond_narrowed_const.len());
+        let mut kept_lhs_meta = Vec::with_capacity(sym.path_cond_lhs_meta.len());
         for i in 0..sym.path_conds.len() {
             let drop = !sym.path_cond_is_branch[i] && {
                 let vars = sym.collect_vars(sym.path_conds[i]);
@@ -135,13 +160,171 @@ pub fn try_prove_unreachable(
                 kept_pcs.push(sym.path_cond_pcs[i]);
                 kept_is_branch.push(sym.path_cond_is_branch[i]);
                 kept_narrowed.push(sym.path_cond_narrowed_const[i]);
+                kept_lhs_meta.push(sym.path_cond_lhs_meta[i]);
             }
         }
         sym.path_conds = kept_conds;
         sym.path_cond_pcs = kept_pcs;
         sym.path_cond_is_branch = kept_is_branch;
         sym.path_cond_narrowed_const = kept_narrowed;
+        sym.path_cond_lhs_meta = kept_lhs_meta;
     }
+
+    if do_fresh_var_rewrite {
+    // Per-reg fresh-VAR rewrite (2026-05-27): mirror kernel's bcf_track
+    // fresh-replay where bcf_reg_expr(R) materializes a fresh VAR (plus
+    // bound preds) for each reg whose bcf_pre=-1. Generalizes the K==K
+    // rewrite above to non-narrowing branches. Inserts bound preds for
+    // the fresh VAR immediately BEFORE the branch they materialize for —
+    // matches kernel order, since bcf_canonical_hash is position-
+    // sensitive within CONJ. Calico from_l3_debug_co-re pc=1276:
+    // kernel 5-conj 0x5edc has interleaved order [bound_V0, V0!=6,
+    // bound_V1, V1!=6, V1==6].
+    //
+    // ADDITIVE in safety: produces additional canonical-hash bytes
+    // for non-narrowing branches; rewritten goals are equi-unsat with
+    // the originals (fresh VARs are unconstrained symbolic substitutes
+    // for the bounds-narrowed cached exprs). Solver-fallback path
+    // below catches any cases where the rewrite weakens unsat.
+    {
+        use std::collections::HashMap;
+        let mut fresh_var_for_reg: HashMap<usize, u32> = HashMap::new();
+        let mut newly_orphaned: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        // New path_conds list, built in original index order with
+        // bound preds inserted at materialization sites.
+        let mut new_conds: Vec<u32> = Vec::with_capacity(sym.path_conds.len() + 8);
+        let mut new_pcs: Vec<usize> = Vec::with_capacity(sym.path_cond_pcs.len() + 8);
+        let mut new_is_branch: Vec<bool> = Vec::with_capacity(sym.path_cond_is_branch.len() + 8);
+        let mut new_narrowed: Vec<Option<(u64, u8, bool, Option<usize>)>> = Vec::with_capacity(sym.path_cond_narrowed_const.len() + 8);
+        let mut new_lhs_meta: Vec<Option<(usize, Option<usize>, bool, RegBounds)>> = Vec::with_capacity(sym.path_cond_lhs_meta.len() + 8);
+        let path_conds_snapshot = sym.path_conds.clone();
+        let pcs_snapshot = sym.path_cond_pcs.clone();
+        let is_branch_snapshot = sym.path_cond_is_branch.clone();
+        let narrowed_snapshot = sym.path_cond_narrowed_const.clone();
+        let lhs_meta_snapshot = sym.path_cond_lhs_meta.clone();
+        for i in 0..path_conds_snapshot.len() {
+            let pred_slot = path_conds_snapshot[i];
+            let pc = pcs_snapshot[i];
+            let is_branch = is_branch_snapshot[i];
+            let narrowed = narrowed_snapshot[i];
+            let lhs_meta = lhs_meta_snapshot[i];
+            // Decide whether to rewrite this entry.
+            let do_rewrite = is_branch
+                && narrowed.map(|n| {
+                    // K==K already handled (skip if it would have fired)
+                    !match (n.3, base_pc) {
+                        (None, _) => true,
+                        (Some(_), None) => false,
+                        (Some(p), Some(bp)) => p < bp,
+                    }
+                }).unwrap_or(true)
+                && lhs_meta.is_some();
+            if do_rewrite {
+                let (lhs_reg, lhs_pc, jmp32, lhs_bounds) = lhs_meta.unwrap();
+                let lhs_uncached_in_fresh_replay = match (lhs_pc, base_pc) {
+                    (None, _) => true,
+                    (Some(_), None) => false,
+                    (Some(p), Some(bp)) => p < bp,
+                };
+                if lhs_uncached_in_fresh_replay {
+                    let (op_with_class, arg0, arg1) = {
+                        let Some(e) = sym.expr_at(pred_slot) else {
+                            new_conds.push(pred_slot);
+                            new_pcs.push(pc);
+                            new_is_branch.push(is_branch);
+                            new_narrowed.push(narrowed);
+                            new_lhs_meta.push(lhs_meta);
+                            continue;
+                        };
+                        if e.args.len() != 2 {
+                            new_conds.push(pred_slot);
+                            new_pcs.push(pc);
+                            new_is_branch.push(is_branch);
+                            new_narrowed.push(narrowed);
+                            new_lhs_meta.push(lhs_meta);
+                            continue;
+                        }
+                        (e.code, e.args[0], e.args[1])
+                    };
+                    for v in sym.collect_vars(arg0) {
+                        newly_orphaned.insert(v);
+                    }
+                    // First time seeing this reg → allocate fresh VAR
+                    // AND emit its bound preds (mirroring kernel's
+                    // bcf_reg_expr → bcf_bound_reg sequence).
+                    let (fresh, emit_bounds) = match fresh_var_for_reg.get(&lhs_reg) {
+                        Some(&v) => (v, false),
+                        None => {
+                            let v = sym.add_var_bits(jmp32);
+                            fresh_var_for_reg.insert(lhs_reg, v);
+                            (v, true)
+                        }
+                    };
+                    if emit_bounds {
+                        // Use bound_reg_kernel_shape: routes to the
+                        // 32-bit or 64-bit emitter and returns the
+                        // emitted pred slots so we can splice them
+                        // into the new path_conds list at the right
+                        // position (BEFORE the branch).
+                        let bound_pred_slots = sym.bound_reg_emit_preds(fresh, &lhs_bounds, jmp32);
+                        for bp_slot in bound_pred_slots {
+                            new_conds.push(bp_slot);
+                            new_pcs.push(pc);
+                            new_is_branch.push(false);
+                            new_narrowed.push(None);
+                            new_lhs_meta.push(None);
+                        }
+                    }
+                    let op = op_with_class & crate::refinement::bcf::BCF_OP_MASK;
+                    let new_pred = sym.add_pred(op, fresh, arg1);
+                    new_conds.push(new_pred);
+                    new_pcs.push(pc);
+                    new_is_branch.push(true);
+                    new_narrowed.push(narrowed);
+                    new_lhs_meta.push(lhs_meta);
+                    continue;
+                }
+            }
+            // Default: pass through unmodified.
+            new_conds.push(pred_slot);
+            new_pcs.push(pc);
+            new_is_branch.push(is_branch);
+            new_narrowed.push(narrowed);
+            new_lhs_meta.push(lhs_meta);
+        }
+        sym.path_conds = new_conds;
+        sym.path_cond_pcs = new_pcs;
+        sym.path_cond_is_branch = new_is_branch;
+        sym.path_cond_narrowed_const = new_narrowed;
+        sym.path_cond_lhs_meta = new_lhs_meta;
+        // Drop bound preds whose only-referenced VARs are now orphaned.
+        if !newly_orphaned.is_empty() {
+            let mut kept_conds = Vec::with_capacity(sym.path_conds.len());
+            let mut kept_pcs = Vec::with_capacity(sym.path_cond_pcs.len());
+            let mut kept_is_branch = Vec::with_capacity(sym.path_cond_is_branch.len());
+            let mut kept_narrowed = Vec::with_capacity(sym.path_cond_narrowed_const.len());
+            let mut kept_lhs_meta = Vec::with_capacity(sym.path_cond_lhs_meta.len());
+            for i in 0..sym.path_conds.len() {
+                let drop = !sym.path_cond_is_branch[i] && {
+                    let vars = sym.collect_vars(sym.path_conds[i]);
+                    !vars.is_empty() && vars.is_subset(&newly_orphaned)
+                };
+                if !drop {
+                    kept_conds.push(sym.path_conds[i]);
+                    kept_pcs.push(sym.path_cond_pcs[i]);
+                    kept_is_branch.push(sym.path_cond_is_branch[i]);
+                    kept_narrowed.push(sym.path_cond_narrowed_const[i]);
+                    kept_lhs_meta.push(sym.path_cond_lhs_meta[i]);
+                }
+            }
+            sym.path_conds = kept_conds;
+            sym.path_cond_pcs = kept_pcs;
+            sym.path_cond_is_branch = kept_is_branch;
+            sym.path_cond_narrowed_const = kept_narrowed;
+            sym.path_cond_lhs_meta = kept_lhs_meta;
+        }
+    }
+    } // end do_fresh_var_rewrite
 
     if std::env::var("ZOVIA_BCF_DUMP_PATH_COND_PCS").is_ok() {
         eprintln!(
