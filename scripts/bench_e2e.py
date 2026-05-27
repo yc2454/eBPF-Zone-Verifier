@@ -12,6 +12,16 @@ For each .o in the input list:
   Phase 2 (sequential, kernel-side via cloudlab→VM ssh chain):
     ship anchor + bundle, run test_loader, parse loaded=N/M.
 
+**Partial-bundle policy** (2026-05-27): zovia writes the bundle to disk
+at section-completion / section-failure boundaries, so a TIMEOUT-killed
+worker may still leave a usable partial bundle on disk. Phase 2 ships
+*any* bundle file that exists, regardless of the build's exit status.
+This was empirically validated on cilium bpf_host: a 360 KB partial
+covering only sections 2/1 through 2/21 still loads 32/32 because the
+kernel doesn't explore the later sections' reject sites. Bundle size
+does not have to correlate with load success; per-row `note` records
+whether the build completed or hit the timeout.
+
 Output: TSV with columns
   obj  zovia_ok  bundle_bytes  zovia_elapsed  kernel_loaded  kernel_total
 
@@ -175,6 +185,14 @@ def build_one(args):
     elapsed = time.time() - t0
     ok = os.path.exists(bundle)
     size = os.path.getsize(bundle) if ok else 0
+    # Partial-bundle policy: even on TIMEOUT, if zovia wrote a bundle
+    # at some section boundary before being killed, ship it. Empirically
+    # validated (2026-05-27) on cilium bpf_host where a 360 KB partial
+    # covering only the prefix sections still loaded 32/32 — the kernel
+    # doesn't query the later sections' hashes for those particular
+    # programs. Tag the note so the TSV makes it visible.
+    if note == "TO" and ok and size > 0:
+        note = f"TO+partial({size}B)"
     return (obj_path, ok, size, elapsed, note)
 
 
@@ -194,6 +212,12 @@ def phase1_build_bundles(objs: list[str], zovia: str, jobs: int, timeout: int,
     if cache_bundles:
         n_cached = sum(1 for r in results if r[4] == "cached")
         print(f"[bench] phase 1: {n_cached}/{len(results)} reused from cache", file=sys.stderr)
+    # Summarize partial-bundle survivors so the operator sees that
+    # phase-2 will still ship them. ("TO+partial" set by build_one.)
+    n_partial = sum(1 for r in results if r[4].startswith("TO+partial"))
+    if n_partial:
+        print(f"[bench] phase 1: {n_partial} bundles partial-on-timeout — phase 2 will still ship",
+              file=sys.stderr)
     return results
 
 
