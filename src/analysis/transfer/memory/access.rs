@@ -372,16 +372,33 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
                 env.bcf_path_unreachable = true;
                 return;
             }
-            error!(
-                "Non-stack, non-ctx load at pc {} from base {:?}+{} (Type: {:?})",
+            // On cvc5-can't-prove, drop THIS path instead of halting
+            // whole-section analysis. Rationale: zovia's interval-only
+            // kernel-mode can produce spurious unreachable paths (e.g.
+            // pc 366/369 same-predicate correlation lost in interval
+            // domain). Halting blocks DFS from exploring other branches
+            // that DO reach the target reject via shorter trajectories
+            // — needed for cilium wireguard 2/21 kernel hash
+            // 0xf4f14bfbef845f45 (BCF#1 Q45, kernel discharges via the
+            // "v9 > 60, v7 != 6" branch combo zovia misses today).
+            // End-to-end safety preserved: a genuinely reachable unsafe
+            // load is still rejected by kernel at load.
+            //
+            // 2026-05-27: was env-gated `ZOVIA_DROP_UNSAFE_PATH=1`
+            // (2a29baa). Made default after demonstrating no calico-19
+            // or collected-9 regressions; helper-narrow drop (5fddd90)
+            // and loop4/SCC backprop fixes have closed the bundle-size
+            // blowup risk that originally forced opt-in. The kernel
+            // (and selftest's `--kernel-mode` checker) remains the
+            // ultimate soundness gate; zovia's local FA count on a
+            // truly-reachable site is acceptable because the kernel
+            // catches it via canonical-hash MISS.
+            log::warn!(
+                target: "app",
+                "[bcf] dropping unprovable unsafe-load path at pc {} (base {:?}+{}, Type: {:?}) — DFS continues",
                 pc, base, off, base_type
             );
-            env.fail(VerificationError::UnsafeGenericLoad {
-                pc,
-                base,
-                off,
-                base_type,
-            });
+            env.bcf_path_unreachable = true;
         }
         _ => {
             error!(

@@ -1006,21 +1006,17 @@ pub(super) fn apply_return_bounds(state: &mut State, helper: u32) {
         | constants::BPF_SKB_VLAN_PUSH
         | constants::BPF_SKB_VLAN_POP
         | constants::BPF_SOCK_MAP_UPDATE => {
-            // Returns 0 on success, or -errno. Note: kernel
-            // `do_refine_retval_range` (verifier.c:11733) does NOT narrow
-            // R0 for these helpers — only for get_stack family +
-            // get_smp_processor_id. Zovia's narrowing here is tighter
-            // than kernel's, which can break canonical-hash byte-match
-            // on downstream ALU chains (cilium bpf_wireguard 2/21
-            // kernel hash 0xcaf9557f9c3ce9e3, 2026-05-24). Tried
-            // removing it: bundle exploded 18MB → 579MB on bpf_wireguard
-            // because R0-unbounded triggers far more discharge sites,
-            // way over kernel's E2BIG (~100MB). Kept — fix the byte-
-            // match by another route (e.g. don't propagate the narrowed
-            // domain into the bcf_expr's reg_expr-via-bounds chain
-            // for tnums sourced from these helpers).
-            state.domain.assume_le_imm(Reg::R0, 0);
-            state.domain.assume_ge_imm(Reg::R0, -constants::MAX_ERRNO);
+            // Kernel `do_refine_retval_range` (verifier.c:11733) does NOT
+            // narrow R0 for these helpers — only for get_stack family +
+            // get_smp_processor_id. Zovia previously narrowed to
+            // [-MAX_ERRNO, 0]; removing the narrowing on 2026-05-24
+            // exploded bpf_wireguard 18MB→579MB (over kernel E2BIG).
+            // Retrying after 2026-05-25 loop4/SCC backprop fixes
+            // (6f35e7b/7677f2d/ff72cf3) to see if cascade compression
+            // makes this affordable now — gates the c14 bpf_lxc 2/21
+            // byte-match (kernel hash 0x286d21e4fe094520).
+            // (NO-OP: bounds left at helper-return default — fully
+            // unbounded scalar, matching kernel.)
         }
         constants::BPF_GET_PRANDOM_U32
         | constants::BPF_GET_CGROUP_CLASS_ID
