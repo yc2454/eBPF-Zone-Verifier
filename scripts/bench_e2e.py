@@ -431,6 +431,24 @@ rm -rf "$WORK"
     return out
 
 
+# ───── TSV row formatting (shared by pipeline + non-pipeline paths) ──
+
+TSV_HEADER = ("obj\tzovia_ok\tbundle_bytes\tzovia_elapsed\tpp_loaded\t"
+              "pp_total\twhole_full\tfirst_fail\tnotes\n")
+
+
+def format_tsv_row(p1_tuple: tuple, kres_tuple: Optional[tuple]) -> str:
+    """One output row. `notes` carries the BUILD outcome (rc0 / cached /
+    TO / TO+partial(NB)) — important signal we must preserve, distinct from
+    the load result (whole_full / first_fail)."""
+    obj, ok, size, elapsed, notes = p1_tuple
+    pp_l, pp_t, whole, ff = kres_tuple if kres_tuple else (None, None, False, "")
+    pp_l_s = str(pp_l) if pp_l is not None else "-"
+    pp_t_s = str(pp_t) if pp_t is not None else "-"
+    return (f"{os.path.basename(obj)}\t{ok}\t{size}\t{elapsed:.1f}\t"
+            f"{pp_l_s}\t{pp_t_s}\t{whole}\t{ff}\t{notes}\n")
+
+
 # ───── Pipelined driver: overlap builds and VM loads ────────────────
 
 
@@ -438,6 +456,7 @@ def pipelined_build_and_load(
     objs: list[str], zovia: str, jobs: int, timeout: int, cache_bundles: bool,
     cloudlab_host: str, phase2_timeout: int, vm_jobs: int, run_per_prog: bool,
     per_call_timeout: int, types_map: dict[str, str], ctl_socket: str,
+    out_path: str,
 ) -> tuple[dict[str, tuple], dict[str, tuple]]:
     """Build bundles (ProcessPool, `jobs` wide) and kernel-load them
     concurrently.
@@ -450,15 +469,26 @@ def pipelined_build_and_load(
     `jobs`-parallel on the host; each load batch stays `vm_jobs`-parallel
     on the VM. The consumer greedily batches whatever is ready when it
     becomes free, so batch size adapts to the build/load rate.
+
+    Each program's TSV row is written *incrementally* the moment its load
+    completes (then flushed), so an interrupted/crashed/OOM-killed run
+    still leaves every finished program's full result — including the
+    build `notes` (rc0 / TO+partial) — on disk. No more reconstructing by
+    hand. Programs that never produced a bundle are flushed at the end.
     """
     print(f"[bench] pipelined: {len(objs)} objects (build jobs={jobs}, "
-          f"vm_jobs={vm_jobs}) — VM loads start as bundles complete",
-          file=sys.stderr)
+          f"vm_jobs={vm_jobs}) — VM loads start as bundles complete; "
+          f"rows streamed to {out_path}", file=sys.stderr)
     p1_by_obj: dict[str, tuple] = {}
     kresults: dict[str, tuple] = {}
+    written: set[str] = set()
     ready: list[str] = []
     ready_lock = threading.Lock()
     builds_done = threading.Event()
+
+    out_f = open(out_path, "w")
+    out_f.write(TSV_HEADER)
+    out_f.flush()
 
     def consumer() -> None:
         batch_idx = 0
@@ -484,8 +514,12 @@ def pipelined_build_and_load(
                         tag = f"FAIL  reject@{ff}"
                     else:
                         tag = "FAIL  no-load"
-                    print(f"[bench]   {tag}  {os.path.basename(o)}",
+                    note = p1_by_obj[o][4]  # build outcome: rc0 / TO+partial
+                    print(f"[bench]   {tag}  {os.path.basename(o)}  [{note}]",
                           file=sys.stderr)
+                    out_f.write(format_tsv_row(p1_by_obj[o], res.get(o)))
+                    written.add(o)
+                out_f.flush()  # persist this batch before the next build/load
                 n_loaded += len(drained)
                 print(f"[bench] loaded {n_loaded}/{len(objs)} so far",
                       file=sys.stderr)
@@ -518,6 +552,14 @@ def pipelined_build_and_load(
               file=sys.stderr)
     builds_done.set()
     consumer_thread.join()
+    # Flush programs that never produced a bundle (never loaded), preserving
+    # their build note (TO / no-build) so the TSV is complete.
+    for o in objs:
+        if o not in written:
+            p1 = p1_by_obj.get(o, (o, False, 0, 0.0, "no-build"))
+            out_f.write(format_tsv_row(p1, kresults.get(o)))
+    out_f.flush()
+    out_f.close()
     return p1_by_obj, kresults
 
 
@@ -601,6 +643,7 @@ def main() -> int:
                  if args.kernel_test else {})
 
     kresults: dict[str, tuple] = {}
+    tsv_already_written = False
     try:
         if args.skip_bundle_build:
             # No builds: treat existing on-disk bundles as ready, load in
@@ -620,12 +663,14 @@ def main() -> int:
                     ctl_socket=ssh_socket,
                 )
         elif args.kernel_test:
-            # Build + load, overlapped.
+            # Build + load, overlapped. Writes args.out incrementally.
             p1_by_obj, kresults = pipelined_build_and_load(
                 objs, args.zovia, args.jobs, args.timeout, args.cache_bundles,
                 args.cloudlab, args.phase2_timeout, args.vm_jobs,
                 args.per_prog, args.per_call_timeout, types_map, ssh_socket,
+                args.out,
             )
+            tsv_already_written = True
         else:
             # Build only, no kernel load.
             p1 = phase1_build_bundles(objs, args.zovia, args.jobs, args.timeout,
@@ -636,18 +681,12 @@ def main() -> int:
             subprocess.run(["ssh", "-O", "exit", "-o", f"ControlPath={ssh_socket}",
                             args.cloudlab], capture_output=True)
 
-    # Emit TSV
-    with open(args.out, "w") as f:
-        f.write("obj\tzovia_ok\tbundle_bytes\tzovia_elapsed\tpp_loaded\tpp_total\twhole_full\tfirst_fail\tnotes\n")
-        for o in sorted(objs):
-            obj, ok, size, elapsed, notes = p1_by_obj[o]
-            pp_l, pp_t, whole, ff = (None, None, False, "")
-            if o in kresults:
-                pp_l, pp_t, whole, ff = kresults[o]
-            pp_l_s = str(pp_l) if pp_l is not None else "-"
-            pp_t_s = str(pp_t) if pp_t is not None else "-"
-            f.write(f"{os.path.basename(obj)}\t{ok}\t{size}\t{elapsed:.1f}\t"
-                    f"{pp_l_s}\t{pp_t_s}\t{whole}\t{ff}\t{notes}\n")
+    # Emit TSV (pipeline path already streamed it incrementally)
+    if not tsv_already_written:
+        with open(args.out, "w") as f:
+            f.write(TSV_HEADER)
+            for o in sorted(objs):
+                f.write(format_tsv_row(p1_by_obj[o], kresults.get(o)))
 
     # Summary
     n_ok = sum(1 for r in p1_by_obj.values() if r[1])
