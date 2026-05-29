@@ -775,22 +775,70 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     }
 
     // Register-filtered discharge (provenance-seeded, mirrors the kernel's
-    // bcf_reg_expr data-dependency closure) is DORMANT — the supporting
-    // primitives (var_origin provenance map, filter_path_conds_by_regs,
-    // provenance_goal_set, try_prove_unreachable_reg_filtered) are landed
-    // and tested, but no live emission is wired here.
+    // bcf_reg_expr data-dependency closure). DEFAULT-ON; set
+    // ZOVIA_BCF_REGFILTER=0 as a kill-switch.
     //
-    // Why: the 2026-05-29 cascade-verify experiment showed that the
-    // combined (PC-window × register-filter) mechanism reproduces the
-    // shallow cascade hashes byte-exact (A 0xfe23, B 0x4eeecf via
-    // regs={1,7} × base_pc∈(1512,1954]), but the DEEP hashes the program
-    // actually needs to load (0x5edc, and the load-blocking 8-conj
-    // 0x673434 with its 0==2 K==K literal) are NOT subsets of zovia's
-    // merged trajectory — they carry the kernel's distinct per-path state
-    // (cache-topology divergence). So an L-seeded selector emits near-miss
-    // bloat (e.g. {6,7}→0x42a4) without loading the program. The real
-    // blocker is trajectory/cache topology, not goal-set selection.
-    // See feedback_byte_level_decode_first §2026-05-29 cont.5.
+    // After the immediate + ancestor PC-suffix discharges above, also emit
+    // provenance-seeded register-filtered discharges: seed = the suffix's
+    // most-recent branch reg, grown 1-2 def-use hops through the
+    // value-expression DAG via the var_origin map, then keep only that
+    // register set's branches + the bound preds materializing their VARs.
+    // This synthesizes the kernel's small multi-register reject
+    // conjunctions (bcf_reg_expr data-dependency closure) that the
+    // PC-suffix filter alone can't isolate. Emitted at hop depths {1,2} ×
+    // {rewrite, no-rewrite}; ADDITIVE + deduped by cond_hash, so it never
+    // perturbs already-matched hashes — only adds.
+    //
+    // VM-load ground truth (2026-05-29): this flips the to_hep_*_co-re_v6
+    // family (calico_tc_main reject) from -EACCES to full-load. NOTE: an
+    // offline (regset × PC-window) probe earlier FAILED to reproduce the
+    // needed deep hash and wrongly concluded it unreachable — the LIVE
+    // discharge (real base_pc + K==K/fresh-VAR rewrite firing in ancestor
+    // context) produces what the kernel needs. The VM load is the oracle.
+    // See feedback_byte_level_decode_first §2026-05-29 cont.5/cont.6.
+    //
+    // Soundness: only cvc5-PROVEN sub-conjunctions are emitted; the kernel
+    // re-checks every proof on load, so a full-load = all proofs valid
+    // (FA=0 floor preserved). Risk is bundle bloat, bounded by dedup +
+    // the small per-anchor goal set.
+    //
+    // THOROUGH-MODE ONLY: this is a coverage-widening enhancement that
+    // belongs to thorough multi-pass analysis (where the calico wins
+    // live). Thorough mode spawns single-pass children (each
+    // --no-bcf-thorough) that do the actual analysis + discharge, marked
+    // with ZOVIA_BCF_THOROUGH_PASS=1 by the parent (main.rs). We key on
+    // that marker — NOT config.bcf_thorough, which is false in the
+    // children where the work happens. A standalone `--no-bcf-thorough`
+    // run (the cilium 60s-budget recipe) lacks the marker, so reg-filter
+    // stays off there and its bundle is byte-identical to HEAD — the
+    // tight time budget isn't spent on extra cvc5 solves. Kill-switch:
+    // ZOVIA_BCF_REGFILTER=0.
+    if std::env::var("ZOVIA_BCF_THOROUGH_PASS").ok().as_deref() == Some("1")
+        && std::env::var("ZOVIA_BCF_REGFILTER").ok().as_deref() != Some("0")
+    {
+        use crate::refinement::refine_unreachable as ru;
+        for &hops in &[1usize, 2usize] {
+            for &use_rewrite in &[true, false] {
+                let ok_opt = if use_rewrite {
+                    ru::try_prove_unreachable_reg_filtered(state, hops)
+                } else {
+                    ru::try_prove_unreachable_reg_filtered_no_rewrite(state, hops)
+                };
+                if let Some(ok) = ok_opt {
+                    let rf_entry = RefineEntry::new(
+                        ok.goal_root, ok.sym.exprs, ok.proof_bytes,
+                        BCF_BUNDLE_KIND_UNREACHABLE,
+                    );
+                    if !env.bcf_proofs.iter().any(|e| e.cond_hash == rf_entry.cond_hash) {
+                        info!(target: "app",
+                            "[bcf] reg-filtered (expt): {} bytes (hash {:016x}, hops={}, rw={})",
+                            rf_entry.proof_bytes.len(), rf_entry.cond_hash, hops, use_rewrite);
+                        env.bcf_proofs.push(rf_entry);
+                    }
+                }
+            }
+        }
+    }
 
     // Synthetic ancestor-discharge emission. After the immediate-cache
     // discharge succeeds, walk the parent_cache_id chain backward and

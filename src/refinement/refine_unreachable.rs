@@ -56,16 +56,11 @@ pub fn try_prove_unreachable(
 /// replaces the unfiltered discharge (which keeps already-matched hashes
 /// byte-stable). See [[feedback_byte_level_decode_first]] §2026-05-29.
 /// `hops` controls the provenance def-use closure depth (1 → seed + its
-/// direct value-deps; 2 → one more layer).
-///
-/// DORMANT: this and the supporting provenance primitives are landed +
-/// tested but not wired to live emission. The 2026-05-29 cascade-verify
-/// experiment showed an L-seeded selector reproduces only the shallow
-/// hashes (A, B) byte-exact; the deep load-blocking hashes (0x5edc,
-/// 0x673434) are not subsets of zovia's merged trajectory (cache-topology
-/// divergence), so a live selector would emit near-miss bloat without
-/// loading. See feedback_byte_level_decode_first §2026-05-29 cont.5.
-#[allow(dead_code)]
+/// direct value-deps; 2 → one more layer). PC-independent: selects over
+/// the FULL trajectory, since the kernel's bcf_reg_expr materializes a
+/// register's recorded condition regardless of how far back it was
+/// emitted. Live default-on (see caller in branch/mod.rs); VM ground
+/// truth shows it flips the to_hep_*_co-re_v6 family to full-load.
 pub fn try_prove_unreachable_reg_filtered(
     state: &State,
     hops: usize,
@@ -74,9 +69,7 @@ pub fn try_prove_unreachable_reg_filtered(
 }
 
 /// Register-filtered discharge with the per-reg fresh-VAR rewrite
-/// disabled (mirror of [`try_prove_unreachable_no_rewrite`]). DORMANT —
-/// see [`try_prove_unreachable_reg_filtered`].
-#[allow(dead_code)]
+/// disabled (mirror of [`try_prove_unreachable_no_rewrite`]).
 pub fn try_prove_unreachable_reg_filtered_no_rewrite(
     state: &State,
     hops: usize,

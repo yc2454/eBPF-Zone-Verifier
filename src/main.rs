@@ -275,6 +275,15 @@ fn run_analyze_all_thorough(path: &str, _config: VerifierConfig) {
         // (`run_verify`) has already wiped once at startup; subsequent
         // children just merge into the existing file.
         cmd.env("ZOVIA_BUNDLE_KEEP", "1");
+        // Mark this child as a thorough-mode pass. The reg-filtered
+        // discharge (a coverage-widening enhancement) keys on this so it
+        // fires for thorough children (calico) but NOT for a standalone
+        // `--no-bcf-thorough` run (the cilium 60s-budget recipe), whose
+        // tight time budget must not be spent on extra cvc5 solves.
+        // Children run --no-bcf-thorough, so config.bcf_thorough is false
+        // in the process that actually does the analysis — this env var
+        // is the only reliable "am I part of a thorough run" signal.
+        cmd.env("ZOVIA_BCF_THOROUGH_PASS", "1");
         match ke {
             Some(v) => { cmd.env("ZOVIA_KERNEL_ENGINE", v); }
             None    => { cmd.env_remove("ZOVIA_KERNEL_ENGINE"); }

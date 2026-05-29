@@ -585,10 +585,6 @@ impl SymbolicState {
     /// behaviour. If the filter empties the set, falls back to keep-all
     /// (returns without mutating) so discharge still has a goal — matching
     /// [`filter_path_conds_from_pc`]'s empty-guard.
-    ///
-    /// DORMANT primitive (landed + tested, not wired live) — see
-    /// [`crate::refinement::refine_unreachable::try_prove_unreachable_reg_filtered`].
-    #[allow(dead_code)]
     pub fn filter_path_conds_by_regs(&mut self, goal_regs: &std::collections::HashSet<usize>) {
         debug_assert_eq!(self.path_conds.len(), self.path_cond_lhs_meta.len());
         // Pass 1: decide which branches to keep, and accumulate the VAR
@@ -665,10 +661,6 @@ impl SymbolicState {
     ///
     /// Returns `None` when no seed branch exists (no reg-backed branch in
     /// the current path_conds) — the caller then skips register filtering.
-    ///
-    /// DORMANT primitive (landed + tested, not wired live) — see
-    /// [`crate::refinement::refine_unreachable::try_prove_unreachable_reg_filtered`].
-    #[allow(dead_code)]
     pub fn provenance_goal_set(&self, hops: usize) -> Option<std::collections::HashSet<usize>> {
         // Seed: lhs reg of the branch with the largest source PC that has
         // reg-backed lhs_meta.
