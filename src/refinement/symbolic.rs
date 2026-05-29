@@ -173,6 +173,22 @@ pub struct SymbolicState {
     /// behaviour where `SymbolicState` is constructed without PC
     /// context.
     pub current_pc: usize,
+    /// VAR→register provenance: maps a `BCF_VAR` expr slot offset to the
+    /// register index whose `materialize_reg`/`materialize_reg64` created
+    /// it. Populated ONLY at VAR-creation time and never overwritten, so
+    /// the recorded reg is the *originating* register even when the VAR
+    /// is later shared across registers via mov / spill-fill propagation
+    /// (`bind_reg` reuses an existing expr_idx without creating a new
+    /// VAR). Const and R10 materializations produce no VAR → no entry.
+    ///
+    /// Mirrors the kernel's `bcf_reg_expr` data-dependency walk: at a
+    /// reject the kernel selects a SMALL register set by recursively
+    /// materializing the rejecting comparison's operand regs and their
+    /// value-expression dependencies. Reproducing that selection in
+    /// zovia's register-filtered discharge requires knowing which reg
+    /// each leaf VAR came from. See
+    /// [[feedback_byte_level_decode_first]] §2026-05-29 cont.4.
+    pub var_origin: std::collections::HashMap<u32, usize>,
 }
 
 impl SymbolicState {
@@ -541,6 +557,160 @@ impl SymbolicState {
         self.path_cond_lhs_meta = kept_lhs_meta;
     }
 
+    /// Register-filtered path_cond selection — mirrors the kernel's
+    /// `bcf_reg_expr` data-dependency closure (verifier.c:882). Where
+    /// [`filter_path_conds_from_pc`] selects by *source PC* (the suffix
+    /// window), this selects by *register*: keep only the branch
+    /// path_conds whose LHS register is in `goal_regs`, plus the bound
+    /// preds that materialize the VARs those kept branches reference.
+    ///
+    /// The kernel's reject hash is the canonical hash of a small,
+    /// register-filtered conjunction (e.g. `{V0=proto2, V1=tcp}`), not
+    /// the full PC-suffix conjunction. zovia's PC-suffix filter pulls in
+    /// intervening unrelated-register branches; this restores the clean
+    /// subset once a provenance-seeded goal set is known. The goal set is
+    /// computed by the caller via VAR→reg provenance (def-use closure).
+    ///
+    /// Rules:
+    /// - branch (is_branch=true) with `path_cond_lhs_meta = Some((reg, …))`:
+    ///   keep iff `reg ∈ goal_regs`.
+    /// - branch with `path_cond_lhs_meta = None` (e.g. JSET non-reg LHS):
+    ///   kept conservatively — dropping it risks losing a load-bearing
+    ///   contradiction, and the solver-fallback can't re-add it.
+    /// - bound pred (is_branch=false): keep iff its referenced VAR set is
+    ///   non-empty and ⊆ the VAR set of the kept branches (the bounds the
+    ///   kernel re-emits while materializing those branches' operands).
+    ///
+    /// Always keeps `pc == 0` (untagged) entries to preserve unit-test
+    /// behaviour. If the filter empties the set, falls back to keep-all
+    /// (returns without mutating) so discharge still has a goal — matching
+    /// [`filter_path_conds_from_pc`]'s empty-guard.
+    ///
+    /// DORMANT primitive (landed + tested, not wired live) — see
+    /// [`crate::refinement::refine_unreachable::try_prove_unreachable_reg_filtered`].
+    #[allow(dead_code)]
+    pub fn filter_path_conds_by_regs(&mut self, goal_regs: &std::collections::HashSet<usize>) {
+        debug_assert_eq!(self.path_conds.len(), self.path_cond_lhs_meta.len());
+        // Pass 1: decide which branches to keep, and accumulate the VAR
+        // set those kept branches reference.
+        let mut keep_branch = vec![false; self.path_conds.len()];
+        let mut kept_branch_vars: std::collections::HashSet<u32> =
+            std::collections::HashSet::new();
+        for i in 0..self.path_conds.len() {
+            if self.path_cond_pcs[i] == 0 {
+                continue; // handled as always-keep in pass 2
+            }
+            if self.path_cond_is_branch[i] {
+                let keep = match self.path_cond_lhs_meta[i] {
+                    Some((reg, _, _, _)) => goal_regs.contains(&reg),
+                    None => true, // non-reg-LHS branch: keep conservatively
+                };
+                if keep {
+                    keep_branch[i] = true;
+                    for v in self.collect_vars(self.path_conds[i]) {
+                        kept_branch_vars.insert(v);
+                    }
+                }
+            }
+        }
+        // Pass 2: build the kept vectors. Branches per pass-1 decision;
+        // bound preds iff their vars ⊆ kept_branch_vars.
+        let mut kept_exprs = Vec::with_capacity(self.path_conds.len());
+        let mut kept_pcs = Vec::with_capacity(self.path_conds.len());
+        let mut kept_is_branch = Vec::with_capacity(self.path_conds.len());
+        let mut kept_narrowed = Vec::with_capacity(self.path_conds.len());
+        let mut kept_lhs_meta = Vec::with_capacity(self.path_conds.len());
+        for i in 0..self.path_conds.len() {
+            let keep = self.path_cond_pcs[i] == 0
+                || if self.path_cond_is_branch[i] {
+                    keep_branch[i]
+                } else {
+                    let vars = self.collect_vars(self.path_conds[i]);
+                    !vars.is_empty() && vars.is_subset(&kept_branch_vars)
+                };
+            if keep {
+                kept_exprs.push(self.path_conds[i]);
+                kept_pcs.push(self.path_cond_pcs[i]);
+                kept_is_branch.push(self.path_cond_is_branch[i]);
+                kept_narrowed.push(self.path_cond_narrowed_const[i]);
+                kept_lhs_meta.push(self.path_cond_lhs_meta[i]);
+            }
+        }
+        // Empty-guard: a register filter that drops everything would
+        // produce a constraint-free goal that can never match the
+        // kernel's hash. Keep-all in that case (no mutation).
+        if kept_exprs.is_empty() && !self.path_conds.is_empty() {
+            return;
+        }
+        self.path_conds = kept_exprs;
+        self.path_cond_pcs = kept_pcs;
+        self.path_cond_is_branch = kept_is_branch;
+        self.path_cond_narrowed_const = kept_narrowed;
+        self.path_cond_lhs_meta = kept_lhs_meta;
+    }
+
+    /// Provenance-seeded shallow def-use goal-set selection. Mirrors the
+    /// kernel `bcf_reg_expr` recursive data-dependency walk to choose the
+    /// small register set whose conditions form the reject conjunction.
+    ///
+    /// Seed = the LHS register of the most-recent branch path_cond (the
+    /// immediate-predecessor "rejecting comparison" L, identified by the
+    /// largest source PC among branch entries carrying `lhs_meta`). From
+    /// the seed, follow `hops` (1–2) edges through the value-expression
+    /// DAG: for each reg in the working set, walk its cached `reg_expr`,
+    /// and for every leaf VAR it references add that VAR's originating
+    /// register (via [`var_origin`]). This pulls in registers that *feed*
+    /// the rejecting comparison's value (e.g. proto2 feeding the packet
+    /// pointer) without over-connecting to the whole data-flow component.
+    ///
+    /// Returns `None` when no seed branch exists (no reg-backed branch in
+    /// the current path_conds) — the caller then skips register filtering.
+    ///
+    /// DORMANT primitive (landed + tested, not wired live) — see
+    /// [`crate::refinement::refine_unreachable::try_prove_unreachable_reg_filtered`].
+    #[allow(dead_code)]
+    pub fn provenance_goal_set(&self, hops: usize) -> Option<std::collections::HashSet<usize>> {
+        // Seed: lhs reg of the branch with the largest source PC that has
+        // reg-backed lhs_meta.
+        let mut seed_reg: Option<usize> = None;
+        let mut seed_pc: Option<usize> = None;
+        for i in 0..self.path_conds.len() {
+            if !self.path_cond_is_branch[i] {
+                continue;
+            }
+            if let Some((reg, _, _, _)) = self.path_cond_lhs_meta[i] {
+                let pc = self.path_cond_pcs[i];
+                if seed_pc.map(|p| pc >= p).unwrap_or(true) {
+                    seed_pc = Some(pc);
+                    seed_reg = Some(reg);
+                }
+            }
+        }
+        let seed = seed_reg?;
+        let mut goal: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        goal.insert(seed);
+        let mut frontier: Vec<usize> = vec![seed];
+        for _ in 0..hops {
+            let mut next: Vec<usize> = Vec::new();
+            for &r in &frontier {
+                if let Some(expr) = self.reg_expr.get(r).copied().flatten() {
+                    for v in self.collect_vars(expr) {
+                        if let Some(&orig) = self.var_origin.get(&v) {
+                            if goal.insert(orig) {
+                                next.push(orig);
+                            }
+                        }
+                    }
+                }
+            }
+            if next.is_empty() {
+                break;
+            }
+            frontier = next;
+        }
+        Some(goal)
+    }
+
     /// Set the PC tag for subsequently-emitted bound preds via
     /// [`bound_pred`]. Transfer-layer code that triggers lazy register
     /// materialization calls this before the materialization happens, so
@@ -844,15 +1014,18 @@ impl SymbolicState {
         }
         if bounds.fit_u32() {
             let v32 = self.add_var_bits(true);
+            self.var_origin.insert(v32, reg);
             self.bound_reg32(v32, bounds);
             return self.add_extend(false, 32, 64, v32);
         }
         if bounds.fit_s32() {
             let v32 = self.add_var_bits(true);
+            self.var_origin.insert(v32, reg);
             self.bound_reg32(v32, bounds);
             return self.add_extend(true, 32, 64, v32);
         }
         let v64 = self.add_var_bits(false);
+        self.var_origin.insert(v64, reg);
         self.bound_reg64(v64, bounds);
         v64
     }
@@ -880,7 +1053,9 @@ impl SymbolicState {
         let idx = if reg == 10 {
             self.add_val64(0)
         } else {
-            self.add_var(64)
+            let v = self.add_var(64);
+            self.var_origin.insert(v, reg);
+            v
         };
         self.bind_reg(reg, idx);
         idx

@@ -774,6 +774,24 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
         }
     }
 
+    // Register-filtered discharge (provenance-seeded, mirrors the kernel's
+    // bcf_reg_expr data-dependency closure) is DORMANT — the supporting
+    // primitives (var_origin provenance map, filter_path_conds_by_regs,
+    // provenance_goal_set, try_prove_unreachable_reg_filtered) are landed
+    // and tested, but no live emission is wired here.
+    //
+    // Why: the 2026-05-29 cascade-verify experiment showed that the
+    // combined (PC-window × register-filter) mechanism reproduces the
+    // shallow cascade hashes byte-exact (A 0xfe23, B 0x4eeecf via
+    // regs={1,7} × base_pc∈(1512,1954]), but the DEEP hashes the program
+    // actually needs to load (0x5edc, and the load-blocking 8-conj
+    // 0x673434 with its 0==2 K==K literal) are NOT subsets of zovia's
+    // merged trajectory — they carry the kernel's distinct per-path state
+    // (cache-topology divergence). So an L-seeded selector emits near-miss
+    // bloat (e.g. {6,7}→0x42a4) without loading the program. The real
+    // blocker is trajectory/cache topology, not goal-set selection.
+    // See feedback_byte_level_decode_first §2026-05-29 cont.5.
+
     // Synthetic ancestor-discharge emission. After the immediate-cache
     // discharge succeeds, walk the parent_cache_id chain backward and
     // emit additional discharges anchored at each ancestor cache. The
@@ -812,6 +830,9 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
             else { break };
             let Some(&(ancestor_pc, _)) = env.cache_loc_by_id.get(&parent_cid) else { break };
             let ancestor_prev_pc = env.cached_prev_insn_pc(parent_cid);
+            // Per-ancestor PC-suffix discharges (rewrite + no-rewrite).
+            // Register-filtered discharges are PC-independent and emitted
+            // once at top level, NOT per ancestor. All ADDITIVE + deduped.
             for &use_rewrite in &[true, false] {
                 let ok_opt = if use_rewrite {
                     try_prove_unreachable(state, Some(ancestor_pc), ancestor_prev_pc)
