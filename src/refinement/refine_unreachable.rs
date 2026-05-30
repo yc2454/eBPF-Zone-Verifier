@@ -40,7 +40,41 @@ pub fn try_prove_unreachable(
     base_pc: Option<usize>,
     prev_insn_pc: Option<usize>,
 ) -> Option<UnreachableOk> {
-    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, true)
+    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, true, None)
+}
+
+/// Register-filtered discharge: like [`try_prove_unreachable`] but, after
+/// the base_pc suffix filter, also restricts the path_conds to a small
+/// register set computed via VAR→reg provenance def-use closure (mirrors
+/// the kernel's `bcf_reg_expr` data-dependency selection). This produces
+/// the kernel's multi-register reject conjunctions (e.g. hash B
+/// `0x4eeecf4b98c670ca`) that the PC-suffix filter alone cannot isolate.
+///
+/// Returns `None` when no provenance seed exists (no reg-backed branch in
+/// the suffix) — the caller falls back to the unfiltered discharges.
+/// Emitted ADDITIVELY by the caller and deduped by `cond_hash`; never
+/// replaces the unfiltered discharge (which keeps already-matched hashes
+/// byte-stable). See [[feedback_byte_level_decode_first]] §2026-05-29.
+/// `hops` controls the provenance def-use closure depth (1 → seed + its
+/// direct value-deps; 2 → one more layer). PC-independent: selects over
+/// the FULL trajectory, since the kernel's bcf_reg_expr materializes a
+/// register's recorded condition regardless of how far back it was
+/// emitted. Live default-on (see caller in branch/mod.rs); VM ground
+/// truth shows it flips the to_hep_*_co-re_v6 family to full-load.
+pub fn try_prove_unreachable_reg_filtered(
+    state: &State,
+    hops: usize,
+) -> Option<UnreachableOk> {
+    try_prove_unreachable_inner(state, None, None, true, Some(hops))
+}
+
+/// Register-filtered discharge with the per-reg fresh-VAR rewrite
+/// disabled (mirror of [`try_prove_unreachable_no_rewrite`]).
+pub fn try_prove_unreachable_reg_filtered_no_rewrite(
+    state: &State,
+    hops: usize,
+) -> Option<UnreachableOk> {
+    try_prove_unreachable_inner(state, None, None, false, Some(hops))
 }
 
 /// Like [`try_prove_unreachable`] but with the per-reg fresh-VAR rewrite
@@ -55,7 +89,7 @@ pub fn try_prove_unreachable_no_rewrite(
     base_pc: Option<usize>,
     prev_insn_pc: Option<usize>,
 ) -> Option<UnreachableOk> {
-    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, false)
+    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, false, None)
 }
 
 fn try_prove_unreachable_inner(
@@ -63,6 +97,7 @@ fn try_prove_unreachable_inner(
     base_pc: Option<usize>,
     prev_insn_pc: Option<usize>,
     do_fresh_var_rewrite: bool,
+    reg_filter_hops: Option<usize>,
 ) -> Option<UnreachableOk> {
     let bcf_ref = state.bcf.as_ref()?;
     let mut sym: SymbolicState = (**bcf_ref).clone();
@@ -73,8 +108,42 @@ fn try_prove_unreachable_inner(
     // cached base state's immediate predecessor (vstate->last_insn_idx)
     // was a scalar conditional branch, that branch's cond + its var's
     // bound preds get retained even when their source_pc < base_pc.
-    if let Some(bp) = base_pc {
-        sym.filter_path_conds_from_pc(bp, prev_insn_pc);
+    // Register-filtered vs PC-suffix-filtered selection are MUTUALLY
+    // EXCLUSIVE axes. PC-suffix (`base_pc`) keeps conds by source PC,
+    // mirroring the kernel's bcf_track suffix replay. Register-filtering
+    // (`reg_filter_hops`) keeps conds by register over the FULL trajectory,
+    // mirroring the kernel's bcf_reg_expr data-dependency closure — it must
+    // see conditions arbitrarily far back (e.g. proto2 ~500 PCs before the
+    // reject), so it deliberately skips the PC filter.
+    match reg_filter_hops {
+        None => {
+            if let Some(bp) = base_pc {
+                sym.filter_path_conds_from_pc(bp, prev_insn_pc);
+            }
+        }
+        Some(hops) => {
+            // Provenance-seeded goal set over the full trajectory: seed =
+            // most-recent branch's lhs reg, then `hops` def-use layers via
+            // VAR→reg provenance. None ⇒ no reg-backed branch ⇒ skip (the
+            // caller's unfiltered discharges already cover this anchor).
+            match sym.provenance_goal_set(hops) {
+                Some(goal) => {
+                    if std::env::var("ZOVIA_DUMP_DISCHARGE").ok().as_deref() == Some("1") {
+                        let pre = sym.path_conds.len();
+                        sym.filter_path_conds_by_regs(&goal);
+                        let mut g: Vec<usize> = goal.into_iter().collect();
+                        g.sort_unstable();
+                        eprintln!(
+                            "[disc-regsel] hops={} goal={:?} path_conds {}→{}",
+                            hops, g, pre, sym.path_conds.len()
+                        );
+                    } else {
+                        sym.filter_path_conds_by_regs(&goal);
+                    }
+                }
+                None => return None,
+            }
+        }
     }
 
     // Kernel-mirror K==K rewrite: for each branch path_cond that narrowed

@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
 """End-to-end BCF bundle benchmark harness.
 
-For each .o in the input list:
-  Phase 1 (parallel, zovia-side): build the bundle via a single
+Builds and kernel-loads run as an overlapped PIPELINE (default, when both
+building and kernel-testing): bundle builds are `--jobs`-parallel on the
+host, and a single consumer thread ships each bundle to the VM as soon as
+it finishes building — so a slow/timeout-bound build no longer blocks the
+VM load of bundles already on disk. Each VM load batch stays
+`--vm-jobs`-parallel. (`--skip-bundle-build` and `--no-kernel-test`
+degenerate to the single-phase paths.)
+
+  Build (parallel, zovia-side): build the bundle via a single
     `zovia --bcf --kernel-mode verify <obj>` invocation. By default
     `--bcf` enables thorough mode internally (zovia spawns its own
     multi-pass children with varied state-cache placement and merges
     their discharge entries). The legacy harness that drove three
     separate zovia invocations from this script lives at
     `bench_e2e_legacy.py`.
-  Phase 2 (sequential, kernel-side via cloudlab→VM ssh chain):
+  Load (kernel-side via cloudlab→VM ssh chain):
     ship anchor + bundle, run test_loader, parse loaded=N/M.
 
 **Partial-bundle policy** (2026-05-27): zovia writes the bundle to disk
@@ -45,6 +52,7 @@ import shlex
 import signal
 import subprocess
 import sys
+import threading
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
@@ -239,7 +247,9 @@ def map_to_vm_path(local_path: str) -> str:
 def phase2_kernel_load(objs: list[str], cloudlab_host: str, timeout: int,
                        vm_jobs: int = 4, run_per_prog: bool = False,
                        per_call_timeout: int = 300,
-                       types_map: Optional[dict[str, str]] = None) -> dict[str, tuple]:
+                       types_map: Optional[dict[str, str]] = None,
+                       ctl_socket: Optional[str] = None,
+                       label: str = "") -> dict[str, tuple]:
     """For each .o, scp the bundle to cloudlab (its virtiofs is the VM's
     /root/bcf), then ssh to VM and run test_loader.
 
@@ -259,8 +269,8 @@ def phase2_kernel_load(objs: list[str], cloudlab_host: str, timeout: int,
     Returns map: obj → (per_prog_loaded, per_prog_total, whole_obj_full,
     first_fail_name).
     """
-    print(f"[bench] phase 2: kernel-side load for {len(objs)} objects "
-          f"(sequential, host={cloudlab_host})", file=sys.stderr)
+    print(f"[bench] phase 2{label}: kernel-side load for {len(objs)} objects "
+          f"(host={cloudlab_host})", file=sys.stderr)
     out: dict[str, tuple] = {}
 
     # Step A: rsync bundles to cloudlab in one batch (fast, single ssh).
@@ -361,8 +371,14 @@ done < "$WORK/manifest"
 rm -rf "$WORK"
 """
 
-    # Outer hop: ControlMaster reuses an existing socket if caller set one up.
+    # Outer hop: reuse the caller's persistent ControlMaster socket so the
+    # many pipelined load batches share one TCP connection instead of
+    # re-handshaking the cloudlab hop every batch.
     outer_ssh_opts = ["-o", "BatchMode=yes"]
+    if ctl_socket:
+        outer_ssh_opts += ["-o", "ControlMaster=auto",
+                           "-o", f"ControlPath={ctl_socket}",
+                           "-o", "ControlPersist=120s"]
     # We pass manifest via a small wrapper: bash <<EOF that includes both the runner and the manifest.
     # Simpler: shovel runner via stdin to bash, then pipe manifest in a separate command. Use a single
     # bash -s -- args... where args is "RUNNER" then the manifest sent later won't work via stdin.
@@ -415,6 +431,138 @@ rm -rf "$WORK"
     return out
 
 
+# ───── TSV row formatting (shared by pipeline + non-pipeline paths) ──
+
+TSV_HEADER = ("obj\tzovia_ok\tbundle_bytes\tzovia_elapsed\tpp_loaded\t"
+              "pp_total\twhole_full\tfirst_fail\tnotes\n")
+
+
+def format_tsv_row(p1_tuple: tuple, kres_tuple: Optional[tuple]) -> str:
+    """One output row. `notes` carries the BUILD outcome (rc0 / cached /
+    TO / TO+partial(NB)) — important signal we must preserve, distinct from
+    the load result (whole_full / first_fail)."""
+    obj, ok, size, elapsed, notes = p1_tuple
+    pp_l, pp_t, whole, ff = kres_tuple if kres_tuple else (None, None, False, "")
+    pp_l_s = str(pp_l) if pp_l is not None else "-"
+    pp_t_s = str(pp_t) if pp_t is not None else "-"
+    return (f"{os.path.basename(obj)}\t{ok}\t{size}\t{elapsed:.1f}\t"
+            f"{pp_l_s}\t{pp_t_s}\t{whole}\t{ff}\t{notes}\n")
+
+
+# ───── Pipelined driver: overlap builds and VM loads ────────────────
+
+
+def pipelined_build_and_load(
+    objs: list[str], zovia: str, jobs: int, timeout: int, cache_bundles: bool,
+    cloudlab_host: str, phase2_timeout: int, vm_jobs: int, run_per_prog: bool,
+    per_call_timeout: int, types_map: dict[str, str], ctl_socket: str,
+    out_path: str,
+) -> tuple[dict[str, tuple], dict[str, tuple]]:
+    """Build bundles (ProcessPool, `jobs` wide) and kernel-load them
+    concurrently.
+
+    A single consumer thread drains every bundle that has finished
+    building and ships it to the VM via `phase2_kernel_load`, while the
+    remaining (often slow / timeout-bound) builds keep running. This
+    removes the old barrier where one 900s-timeout build stalled the VM
+    load of all the bundles that were already on disk. Builds stay
+    `jobs`-parallel on the host; each load batch stays `vm_jobs`-parallel
+    on the VM. The consumer greedily batches whatever is ready when it
+    becomes free, so batch size adapts to the build/load rate.
+
+    Each program's TSV row is written *incrementally* the moment its load
+    completes (then flushed), so an interrupted/crashed/OOM-killed run
+    still leaves every finished program's full result — including the
+    build `notes` (rc0 / TO+partial) — on disk. No more reconstructing by
+    hand. Programs that never produced a bundle are flushed at the end.
+    """
+    print(f"[bench] pipelined: {len(objs)} objects (build jobs={jobs}, "
+          f"vm_jobs={vm_jobs}) — VM loads start as bundles complete; "
+          f"rows streamed to {out_path}", file=sys.stderr)
+    p1_by_obj: dict[str, tuple] = {}
+    kresults: dict[str, tuple] = {}
+    written: set[str] = set()
+    ready: list[str] = []
+    ready_lock = threading.Lock()
+    builds_done = threading.Event()
+
+    out_f = open(out_path, "w")
+    out_f.write(TSV_HEADER)
+    out_f.flush()
+
+    def consumer() -> None:
+        batch_idx = 0
+        n_loaded = 0
+        while True:
+            with ready_lock:
+                drained = ready[:]
+                ready.clear()
+            if drained:
+                batch_idx += 1
+                res = phase2_kernel_load(
+                    drained, cloudlab_host, timeout=phase2_timeout,
+                    vm_jobs=vm_jobs, run_per_prog=run_per_prog,
+                    per_call_timeout=per_call_timeout, types_map=types_map,
+                    ctl_socket=ctl_socket, label=f" batch#{batch_idx}",
+                )
+                kresults.update(res)
+                for o in drained:
+                    _, _, whole, ff = res.get(o, (None, None, False, ""))
+                    if whole:
+                        tag = "PASS  FULL-LOAD"
+                    elif ff:
+                        tag = f"FAIL  reject@{ff}"
+                    else:
+                        tag = "FAIL  no-load"
+                    note = p1_by_obj[o][4]  # build outcome: rc0 / TO+partial
+                    print(f"[bench]   {tag}  {os.path.basename(o)}  [{note}]",
+                          file=sys.stderr)
+                    out_f.write(format_tsv_row(p1_by_obj[o], res.get(o)))
+                    written.add(o)
+                out_f.flush()  # persist this batch before the next build/load
+                n_loaded += len(drained)
+                print(f"[bench] loaded {n_loaded}/{len(objs)} so far",
+                      file=sys.stderr)
+            elif builds_done.is_set():
+                break
+            else:
+                time.sleep(1.0)
+
+    consumer_thread = threading.Thread(target=consumer, daemon=True)
+    consumer_thread.start()
+
+    work = [(o, zovia, timeout, cache_bundles) for o in objs]
+    n_done = 0
+    with ProcessPoolExecutor(max_workers=jobs) as ex:
+        futs = {ex.submit(build_one, w): w[0] for w in work}
+        for fut in as_completed(futs):
+            r = fut.result()
+            p1_by_obj[r[0]] = r
+            n_done += 1
+            if r[1]:  # bundle exists (incl. partial-on-timeout) → loadable
+                with ready_lock:
+                    ready.append(r[0])
+            if n_done % 5 == 0 or n_done == len(objs):
+                print(f"[bench] builds: {n_done}/{len(objs)} done",
+                      file=sys.stderr)
+    n_partial = sum(1 for r in p1_by_obj.values()
+                    if r[4].startswith("TO+partial"))
+    if n_partial:
+        print(f"[bench] {n_partial} bundles partial-on-timeout — loaded anyway",
+              file=sys.stderr)
+    builds_done.set()
+    consumer_thread.join()
+    # Flush programs that never produced a bundle (never loaded), preserving
+    # their build note (TO / no-build) so the TSV is complete.
+    for o in objs:
+        if o not in written:
+            p1 = p1_by_obj.get(o, (o, False, 0, 0.0, "no-build"))
+            out_f.write(format_tsv_row(p1, kresults.get(o)))
+    out_f.flush()
+    out_f.close()
+    return p1_by_obj, kresults
+
+
 # ───── Driver ───────────────────────────────────────────────────────
 
 
@@ -432,10 +580,20 @@ def main() -> int:
     ap.add_argument("--no-kernel-test", dest="kernel_test", action="store_false")
     ap.add_argument("--skip-bundle-build", action="store_true",
                     help="skip phase 1; reuse existing bundles on disk")
-    ap.add_argument("--cache-bundles", action="store_true",
-                    help="reuse existing .bcf-bundle iff its mtime is newer than "
-                         "(.o, zovia binary, this harness). Per-object granularity; "
-                         "stale entries are rebuilt. Default: off (deterministic per-commit).")
+    ap.add_argument("--cache-bundles", dest="cache_bundles", action="store_true",
+                    default=True,
+                    help="reuse an existing .bcf-bundle sidecar iff its mtime is "
+                         "newer than (.o, zovia binary, this harness); stale "
+                         "entries are rebuilt. DEFAULT: ON. Bundles are persisted "
+                         "next to their .o (zovia writes <obj>.bcf-bundle), so a "
+                         "machine restart mid-batch doesn't discard already-built "
+                         "work — the next run resumes from the on-disk sidecars.")
+    ap.add_argument("--no-cache-bundles", dest="cache_bundles", action="store_false",
+                    help="force a fresh rebuild of every bundle, ignoring on-disk "
+                         "sidecars. Use for a strictly deterministic per-commit "
+                         "gate run. (mtime check already invalidates bundles when "
+                         "the zovia binary or .o change, so caching is safe across "
+                         "rebuilds; this is the belt-and-suspenders option.)")
     ap.add_argument("--vm-jobs", type=int, default=4,
                     help="parallel test_loader processes on the VM (default 4)")
     ap.add_argument("--per-prog", action="store_true",
@@ -471,62 +629,64 @@ def main() -> int:
     if args.cloudlab:
         print(f"[bench] cloudlab={args.cloudlab}", file=sys.stderr)
 
-    # Phase 1
-    if not args.skip_bundle_build:
-        p1 = phase1_build_bundles(objs, args.zovia, args.jobs, args.timeout,
-                                  cache_bundles=args.cache_bundles)
-        p1_by_obj = {r[0]: r for r in p1}
-    else:
-        p1_by_obj = {o: (o, os.path.exists(f"{o}.bcf-bundle"),
-                         os.path.getsize(f"{o}.bcf-bundle") if os.path.exists(f"{o}.bcf-bundle") else 0,
-                         0.0, "reused") for o in objs}
-
-    # Phase 2
+    # SSH ControlMaster on the outer hop: rsync + every ssh-exec batch
+    # share one TCP connection. With pipelining we make many load batches,
+    # so a single persistent socket matters more than before.
+    ssh_socket = f"/tmp/bench_e2e_ssh_{os.getpid()}"
     if args.kernel_test:
-        ok_objs = [o for o in objs if p1_by_obj[o][1]]
-        # Set up SSH ControlMaster on the outer hop so rsync + ssh exec
-        # share one TCP connection (saves ~1-2s per call).
-        ssh_socket = f"/tmp/bench_e2e_ssh_{os.getpid()}"
         os.environ["RSYNC_RSH"] = (
             f"ssh -o BatchMode=yes -o ControlMaster=auto "
-            f"-o ControlPath={ssh_socket}.rsync -o ControlPersist=120s"
+            f"-o ControlPath={ssh_socket} -o ControlPersist=120s"
         )
-        # also export for plain ssh subprocess calls via SSH_OPTS env
-        # (we pass these in the ssh args directly below; keeping the rsync
-        # one separate so concurrent rsync+ssh use distinct sockets and
-        # don't race on a single ControlMaster).
-        types_map = load_obj_prog_types(args.obj_prog_type_json or None)
-        try:
-            kresults = phase2_kernel_load(
-                ok_objs, args.cloudlab,
-                timeout=args.phase2_timeout,
-                vm_jobs=args.vm_jobs,
-                run_per_prog=args.per_prog,
-                per_call_timeout=args.per_call_timeout,
-                types_map=types_map,
-            )
-        finally:
-            # tear down ControlMaster sockets if any
-            for suffix in (".rsync",):
-                p = ssh_socket + suffix
-                if os.path.exists(p):
-                    subprocess.run(["ssh", "-O", "exit", "-o", f"ControlPath={p}",
-                                    args.cloudlab], capture_output=True)
-    else:
-        kresults = {}
 
-    # Emit TSV
-    with open(args.out, "w") as f:
-        f.write("obj\tzovia_ok\tbundle_bytes\tzovia_elapsed\tpp_loaded\tpp_total\twhole_full\tfirst_fail\tnotes\n")
-        for o in sorted(objs):
-            obj, ok, size, elapsed, notes = p1_by_obj[o]
-            pp_l, pp_t, whole, ff = (None, None, False, "")
-            if o in kresults:
-                pp_l, pp_t, whole, ff = kresults[o]
-            pp_l_s = str(pp_l) if pp_l is not None else "-"
-            pp_t_s = str(pp_t) if pp_t is not None else "-"
-            f.write(f"{os.path.basename(obj)}\t{ok}\t{size}\t{elapsed:.1f}\t"
-                    f"{pp_l_s}\t{pp_t_s}\t{whole}\t{ff}\t{notes}\n")
+    types_map = (load_obj_prog_types(args.obj_prog_type_json or None)
+                 if args.kernel_test else {})
+
+    kresults: dict[str, tuple] = {}
+    tsv_already_written = False
+    try:
+        if args.skip_bundle_build:
+            # No builds: treat existing on-disk bundles as ready, load in
+            # one batch (the pipeline buys nothing without builds to overlap).
+            p1_by_obj = {
+                o: (o, os.path.exists(f"{o}.bcf-bundle"),
+                    os.path.getsize(f"{o}.bcf-bundle") if os.path.exists(f"{o}.bcf-bundle") else 0,
+                    0.0, "reused")
+                for o in objs
+            }
+            if args.kernel_test:
+                ok_objs = [o for o in objs if p1_by_obj[o][1]]
+                kresults = phase2_kernel_load(
+                    ok_objs, args.cloudlab, timeout=args.phase2_timeout,
+                    vm_jobs=args.vm_jobs, run_per_prog=args.per_prog,
+                    per_call_timeout=args.per_call_timeout, types_map=types_map,
+                    ctl_socket=ssh_socket,
+                )
+        elif args.kernel_test:
+            # Build + load, overlapped. Writes args.out incrementally.
+            p1_by_obj, kresults = pipelined_build_and_load(
+                objs, args.zovia, args.jobs, args.timeout, args.cache_bundles,
+                args.cloudlab, args.phase2_timeout, args.vm_jobs,
+                args.per_prog, args.per_call_timeout, types_map, ssh_socket,
+                args.out,
+            )
+            tsv_already_written = True
+        else:
+            # Build only, no kernel load.
+            p1 = phase1_build_bundles(objs, args.zovia, args.jobs, args.timeout,
+                                      cache_bundles=args.cache_bundles)
+            p1_by_obj = {r[0]: r for r in p1}
+    finally:
+        if args.kernel_test and os.path.exists(ssh_socket):
+            subprocess.run(["ssh", "-O", "exit", "-o", f"ControlPath={ssh_socket}",
+                            args.cloudlab], capture_output=True)
+
+    # Emit TSV (pipeline path already streamed it incrementally)
+    if not tsv_already_written:
+        with open(args.out, "w") as f:
+            f.write(TSV_HEADER)
+            for o in sorted(objs):
+                f.write(format_tsv_row(p1_by_obj[o], kresults.get(o)))
 
     # Summary
     n_ok = sum(1 for r in p1_by_obj.values() if r[1])

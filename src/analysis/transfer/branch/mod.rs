@@ -774,6 +774,72 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
         }
     }
 
+    // Register-filtered discharge (provenance-seeded, mirrors the kernel's
+    // bcf_reg_expr data-dependency closure). DEFAULT-ON; set
+    // ZOVIA_BCF_REGFILTER=0 as a kill-switch.
+    //
+    // After the immediate + ancestor PC-suffix discharges above, also emit
+    // provenance-seeded register-filtered discharges: seed = the suffix's
+    // most-recent branch reg, grown 1-2 def-use hops through the
+    // value-expression DAG via the var_origin map, then keep only that
+    // register set's branches + the bound preds materializing their VARs.
+    // This synthesizes the kernel's small multi-register reject
+    // conjunctions (bcf_reg_expr data-dependency closure) that the
+    // PC-suffix filter alone can't isolate. Emitted at hop depths {1,2} ×
+    // {rewrite, no-rewrite}; ADDITIVE + deduped by cond_hash, so it never
+    // perturbs already-matched hashes — only adds.
+    //
+    // VM-load ground truth (2026-05-29): this flips the to_hep_*_co-re_v6
+    // family (calico_tc_main reject) from -EACCES to full-load. NOTE: an
+    // offline (regset × PC-window) probe earlier FAILED to reproduce the
+    // needed deep hash and wrongly concluded it unreachable — the LIVE
+    // discharge (real base_pc + K==K/fresh-VAR rewrite firing in ancestor
+    // context) produces what the kernel needs. The VM load is the oracle.
+    // See feedback_byte_level_decode_first §2026-05-29 cont.5/cont.6.
+    //
+    // Soundness: only cvc5-PROVEN sub-conjunctions are emitted; the kernel
+    // re-checks every proof on load, so a full-load = all proofs valid
+    // (FA=0 floor preserved). Risk is bundle bloat, bounded by dedup +
+    // the small per-anchor goal set.
+    //
+    // THOROUGH-MODE ONLY: this is a coverage-widening enhancement that
+    // belongs to thorough multi-pass analysis (where the calico wins
+    // live). Thorough mode spawns single-pass children (each
+    // --no-bcf-thorough) that do the actual analysis + discharge, marked
+    // with ZOVIA_BCF_THOROUGH_PASS=1 by the parent (main.rs). We key on
+    // that marker — NOT config.bcf_thorough, which is false in the
+    // children where the work happens. A standalone `--no-bcf-thorough`
+    // run (the cilium 60s-budget recipe) lacks the marker, so reg-filter
+    // stays off there and its bundle is byte-identical to HEAD — the
+    // tight time budget isn't spent on extra cvc5 solves. Kill-switch:
+    // ZOVIA_BCF_REGFILTER=0.
+    if std::env::var("ZOVIA_BCF_THOROUGH_PASS").ok().as_deref() == Some("1")
+        && std::env::var("ZOVIA_BCF_REGFILTER").ok().as_deref() != Some("0")
+    {
+        use crate::refinement::refine_unreachable as ru;
+        for &hops in &[1usize, 2usize] {
+            for &use_rewrite in &[true, false] {
+                let ok_opt = if use_rewrite {
+                    ru::try_prove_unreachable_reg_filtered(state, hops)
+                } else {
+                    ru::try_prove_unreachable_reg_filtered_no_rewrite(state, hops)
+                };
+                if let Some(ok) = ok_opt {
+                    let rf_entry = RefineEntry::new(
+                        ok.goal_root, ok.sym.exprs, ok.proof_bytes,
+                        BCF_BUNDLE_KIND_UNREACHABLE,
+                    );
+                    if !env.bcf_proofs.iter().any(|e| e.cond_hash == rf_entry.cond_hash) {
+                        info!(target: "app",
+                            "[bcf] reg-filtered (expt): {} bytes (hash {:016x}, hops={}, rw={})",
+                            rf_entry.proof_bytes.len(), rf_entry.cond_hash, hops, use_rewrite);
+                        env.bcf_proofs.push(rf_entry);
+                    }
+                }
+            }
+        }
+    }
+
     // Synthetic ancestor-discharge emission. After the immediate-cache
     // discharge succeeds, walk the parent_cache_id chain backward and
     // emit additional discharges anchored at each ancestor cache. The
@@ -812,6 +878,9 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
             else { break };
             let Some(&(ancestor_pc, _)) = env.cache_loc_by_id.get(&parent_cid) else { break };
             let ancestor_prev_pc = env.cached_prev_insn_pc(parent_cid);
+            // Per-ancestor PC-suffix discharges (rewrite + no-rewrite).
+            // Register-filtered discharges are PC-independent and emitted
+            // once at top level, NOT per ancestor. All ADDITIVE + deduped.
             for &use_rewrite in &[true, false] {
                 let ok_opt = if use_rewrite {
                     try_prove_unreachable(state, Some(ancestor_pc), ancestor_prev_pc)
