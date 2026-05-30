@@ -163,8 +163,27 @@ fn try_prove_unreachable_inner(
     // specific entry.
     debug_assert_eq!(sym.path_conds.len(), sym.path_cond_narrowed_const.len());
     let original_path_conds = sym.path_conds.clone();
+    // Faithful bcf_reg_expr fold (no_log proto-arm arc, 2026-05-31).
+    // When set, REPLACE the legacy K==K + per-reg fresh-VAR passes with a
+    // single forward pass that mirrors the kernel's bcf_reg_expr 3-way
+    // decision exactly (cached→reuse VAR / uncached+const→bcf_val literal /
+    // uncached+non-const→fresh VAR+bounds), processing path_conds in suffix
+    // order so the per-reg cache (`fresh_var_for_reg`) reproduces the
+    // kernel's first-materialize-and-cache. Closes the two residual fold
+    // diffs that keep zovia off hash 0x78171d on the proto==6 arm:
+    //   (A) JEQ6@530 was K==K-folded to `6 JEQ 6` because the legacy gate
+    //       used base_pc; the reg is materialized by the prev-insn branch
+    //       (pc529) so the kernel keeps it CACHED → `VAR JEQ 6`;
+    //   (B) a const-0 reg was minted as a fresh VAR+JLE0 bound instead of
+    //       folded to the literal `0x0`.
+    // Default-OFF: env-gated so the 21 to_hep reg-filter wins stay
+    // byte-identical until VM-gated. See project_no_log_subsumption_arc.md.
+    let faithful_fold = std::env::var("ZOVIA_BCF_FAITHFUL_FOLD").ok().as_deref() == Some("1");
     let mut orphaned_vars: std::collections::HashSet<u32> = std::collections::HashSet::new();
     for i in 0..sym.path_conds.len() {
+        if faithful_fold {
+            break;
+        }
         if let Some((k, op_byte, jmp32, lhs_pc)) = sym.path_cond_narrowed_const[i] {
             // Rewrite gate: in a fresh kernel `bcf_track` replay starting
             // at base_pc, the LHS reg's bcf_expr is uncached iff it had
@@ -239,7 +258,7 @@ fn try_prove_unreachable_inner(
         sym.path_cond_lhs_meta = kept_lhs_meta;
     }
 
-    if do_fresh_var_rewrite {
+    if do_fresh_var_rewrite && !faithful_fold {
     // Per-reg fresh-VAR rewrite (2026-05-27): mirror kernel's bcf_track
     // fresh-replay where bcf_reg_expr(R) materializes a fresh VAR (plus
     // bound preds) for each reg whose bcf_pre=-1. Generalizes the K==K
@@ -394,6 +413,141 @@ fn try_prove_unreachable_inner(
         }
     }
     } // end do_fresh_var_rewrite
+
+    if do_fresh_var_rewrite && faithful_fold {
+        // Faithful bcf_reg_expr replay-fold. Single forward pass over
+        // path_conds (already in suffix order). For each scalar↔const
+        // branch with reg-backed LHS, apply the kernel's 3-way
+        // bcf_reg_expr decision keyed on a per-reg cache:
+        //   - reg already materialized in THIS pass → reuse its VAR
+        //     (`VAR op K`, no new bounds) — mirrors kernel's cached-expr
+        //     return at verifier.c:905;
+        //   - else if reg is a known constant → fold LHS to `bcf_val(K)`
+        //     literal (`Klhs op K`), no VAR, no bounds — mirrors the
+        //     `tnum_is_const → bcf_val` path at 910-912;
+        //   - else → fresh VAR + bound preds from the @branch range
+        //     snapshot, spliced BEFORE the branch (kernel order), cache it.
+        // Bound preds (is_branch=false) and non-reg-LHS branches pass
+        // through. Original LHS VARs of rewritten/folded branches are
+        // collected as orphaned and their now-dangling bound preds dropped.
+        use std::collections::{HashMap, HashSet};
+        let mut fresh_var_for_reg: HashMap<usize, u32> = HashMap::new();
+        let mut newly_orphaned: HashSet<u32> = HashSet::new();
+        let mut new_conds: Vec<u32> = Vec::with_capacity(sym.path_conds.len() + 8);
+        let mut new_pcs: Vec<usize> = Vec::with_capacity(sym.path_conds.len() + 8);
+        let mut new_is_branch: Vec<bool> = Vec::with_capacity(sym.path_conds.len() + 8);
+        let mut new_narrowed: Vec<Option<(u64, u8, bool, Option<usize>)>> =
+            Vec::with_capacity(sym.path_conds.len() + 8);
+        let mut new_lhs_meta: Vec<Option<(usize, Option<usize>, bool, RegBounds)>> =
+            Vec::with_capacity(sym.path_conds.len() + 8);
+        let path_conds_snapshot = sym.path_conds.clone();
+        let pcs_snapshot = sym.path_cond_pcs.clone();
+        let is_branch_snapshot = sym.path_cond_is_branch.clone();
+        let narrowed_snapshot = sym.path_cond_narrowed_const.clone();
+        let lhs_meta_snapshot = sym.path_cond_lhs_meta.clone();
+        for i in 0..path_conds_snapshot.len() {
+            let pred_slot = path_conds_snapshot[i];
+            let pc = pcs_snapshot[i];
+            let is_branch = is_branch_snapshot[i];
+            let narrowed = narrowed_snapshot[i];
+            let lhs_meta = lhs_meta_snapshot[i];
+            // Only branches with a reg-backed scalar LHS are foldable.
+            let Some((lhs_reg, _lhs_pc, jmp32, lhs_bounds)) = lhs_meta else {
+                new_conds.push(pred_slot);
+                new_pcs.push(pc);
+                new_is_branch.push(is_branch);
+                new_narrowed.push(narrowed);
+                new_lhs_meta.push(lhs_meta);
+                continue;
+            };
+            if !is_branch {
+                new_conds.push(pred_slot);
+                new_pcs.push(pc);
+                new_is_branch.push(is_branch);
+                new_narrowed.push(narrowed);
+                new_lhs_meta.push(lhs_meta);
+                continue;
+            }
+            // Extract (op, arg0=lhs, arg1=rhs) from the predicate expr.
+            let (op_with_class, arg0, arg1) = match sym.expr_at(pred_slot) {
+                Some(e) if e.args.len() == 2 => (e.code, e.args[0], e.args[1]),
+                _ => {
+                    new_conds.push(pred_slot);
+                    new_pcs.push(pc);
+                    new_is_branch.push(is_branch);
+                    new_narrowed.push(narrowed);
+                    new_lhs_meta.push(lhs_meta);
+                    continue;
+                }
+            };
+            let op = op_with_class & crate::refinement::bcf::BCF_OP_MASK;
+            // Old LHS var refs become orphaned once we swap the LHS.
+            for v in sym.collect_vars(arg0) {
+                newly_orphaned.insert(v);
+            }
+            if let Some(&fv) = fresh_var_for_reg.get(&lhs_reg) {
+                // CACHED: reuse the reg's already-materialized VAR.
+                let new_pred = sym.add_pred(op, fv, arg1);
+                new_conds.push(new_pred);
+            } else if let Some(kval) = lhs_bounds.const_val {
+                // UNCACHED + const: fold LHS to a bcf_val literal.
+                let lit = sym.add_val(kval, jmp32);
+                let new_pred = sym.add_pred(op, lit, arg1);
+                new_conds.push(new_pred);
+            } else {
+                // UNCACHED + non-const: fresh VAR + bound preds (spliced
+                // before the branch), cache for subsequent reuse.
+                let fresh = sym.add_var_bits(jmp32);
+                fresh_var_for_reg.insert(lhs_reg, fresh);
+                let bound_pred_slots = sym.bound_reg_emit_preds(fresh, &lhs_bounds, jmp32);
+                for bp in bound_pred_slots {
+                    new_conds.push(bp);
+                    new_pcs.push(pc);
+                    new_is_branch.push(false);
+                    new_narrowed.push(None);
+                    new_lhs_meta.push(None);
+                }
+                let new_pred = sym.add_pred(op, fresh, arg1);
+                new_conds.push(new_pred);
+            }
+            new_pcs.push(pc);
+            new_is_branch.push(true);
+            new_narrowed.push(narrowed);
+            new_lhs_meta.push(lhs_meta);
+        }
+        sym.path_conds = new_conds;
+        sym.path_cond_pcs = new_pcs;
+        sym.path_cond_is_branch = new_is_branch;
+        sym.path_cond_narrowed_const = new_narrowed;
+        sym.path_cond_lhs_meta = new_lhs_meta;
+        // Drop bound preds whose only-referenced VARs are now orphaned
+        // (the original live-state VARs replaced by fresh VARs / folds).
+        if !newly_orphaned.is_empty() {
+            let mut kept_conds = Vec::with_capacity(sym.path_conds.len());
+            let mut kept_pcs = Vec::with_capacity(sym.path_conds.len());
+            let mut kept_is_branch = Vec::with_capacity(sym.path_conds.len());
+            let mut kept_narrowed = Vec::with_capacity(sym.path_conds.len());
+            let mut kept_lhs_meta = Vec::with_capacity(sym.path_conds.len());
+            for i in 0..sym.path_conds.len() {
+                let drop = !sym.path_cond_is_branch[i] && {
+                    let vars = sym.collect_vars(sym.path_conds[i]);
+                    !vars.is_empty() && vars.is_subset(&newly_orphaned)
+                };
+                if !drop {
+                    kept_conds.push(sym.path_conds[i]);
+                    kept_pcs.push(sym.path_cond_pcs[i]);
+                    kept_is_branch.push(sym.path_cond_is_branch[i]);
+                    kept_narrowed.push(sym.path_cond_narrowed_const[i]);
+                    kept_lhs_meta.push(sym.path_cond_lhs_meta[i]);
+                }
+            }
+            sym.path_conds = kept_conds;
+            sym.path_cond_pcs = kept_pcs;
+            sym.path_cond_is_branch = kept_is_branch;
+            sym.path_cond_narrowed_const = kept_narrowed;
+            sym.path_cond_lhs_meta = kept_lhs_meta;
+        }
+    }
 
     if std::env::var("ZOVIA_BCF_DUMP_PATH_COND_PCS").is_ok() {
         // Build slot→record-index map (path_conds/args hold SLOTS, exprs is

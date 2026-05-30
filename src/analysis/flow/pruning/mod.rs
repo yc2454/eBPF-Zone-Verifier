@@ -314,6 +314,22 @@ pub fn should_prune(
         return false;
     }
 
+    // EXPERIMENT (no_log proto-arm investigation 2026-05-31): windowed
+    // prune-disable. `ZOVIA_NO_PRUNE_WINDOW=lo:hi` suppresses subsumption
+    // for pc in [lo,hi], keeping sibling trajectories (e.g. the proto>5
+    // and proto<=5 arms of the pc506 switch) DISTINCT through that window
+    // so the kernel's per-arm reject discharge (base 530 / hash 78171d)
+    // can be reproduced. Scoped to avoid the pc1190-1330 fan-out E2BIG.
+    if let Ok(w) = std::env::var("ZOVIA_NO_PRUNE_WINDOW") {
+        if let Some((lo, hi)) = w.split_once(':') {
+            if let (Ok(lo), Ok(hi)) = (lo.parse::<usize>(), hi.parse::<usize>()) {
+                if pc >= lo && pc <= hi {
+                    return false;
+                }
+            }
+        }
+    }
+
     env.pruning_stats.should_prune_calls += 1;
 
     if !is_prune_point(env, pc) {
