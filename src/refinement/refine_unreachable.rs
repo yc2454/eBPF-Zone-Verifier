@@ -396,13 +396,53 @@ fn try_prove_unreachable_inner(
     } // end do_fresh_var_rewrite
 
     if std::env::var("ZOVIA_BCF_DUMP_PATH_COND_PCS").is_ok() {
+        // Build slot→record-index map (path_conds/args hold SLOTS, exprs is
+        // record-indexed; slot advances by slot_len() per record).
+        let mut slot_to_idx: std::collections::HashMap<u32, usize> =
+            std::collections::HashMap::new();
+        {
+            let mut s: u32 = 0;
+            for (i, e) in sym.exprs.iter().enumerate() {
+                slot_to_idx.insert(s, i);
+                s += e.slot_len();
+            }
+        }
+        let get = |slot: u32| sym.exprs.get(*slot_to_idx.get(&slot).unwrap_or(&usize::MAX));
+        // Decode each path_cond predicate to (reg, op, const) + source_pc.
+        let resolve = |mut slot: u32| -> String {
+            for _ in 0..12 {
+                let Some(e) = get(slot) else { return format!("e{slot}") };
+                let base = e.code & 0xf8;
+                if base == 0x18 {
+                    return match sym.var_origin.get(&slot) {
+                        Some(r) => format!("r{r}"),
+                        None => format!("V{slot}"),
+                    };
+                } else if base == 0x08 {
+                    return format!("0x{:x}", e.args.first().copied().unwrap_or(0));
+                } else if !e.args.is_empty() {
+                    slot = e.args[0];
+                } else {
+                    return format!("e{slot}");
+                }
+            }
+            format!("e{slot}")
+        };
         eprintln!(
-            "[bcf] path-unreachable: {} path_conds (base_pc={:?})",
-            sym.path_conds.len(),
-            base_pc
+            "[bcf] PATHCOND-DUMP base_pc={:?} n={}",
+            base_pc,
+            sym.path_conds.len()
         );
         for (i, (&cond, &pc)) in sym.path_conds.iter().zip(sym.path_cond_pcs.iter()).enumerate() {
-            eprintln!("  [{i}] expr_slot={cond} source_pc={pc}");
+            let isb = sym.path_cond_is_branch.get(i).copied().unwrap_or(false);
+            let (lhs, op, rhs) = match get(cond) {
+                Some(e) if e.args.len() >= 2 => {
+                    (resolve(e.args[0]), e.code, resolve(e.args[1]))
+                }
+                Some(e) => ("?".into(), e.code, "?".into()),
+                None => ("?".into(), 0, "?".into()),
+            };
+            eprintln!("  [{i:>2}] pc={pc:<5} {lhs} op=0x{op:02x} {rhs}  br={isb}");
         }
     }
 
