@@ -1007,6 +1007,28 @@ fn run_worklist(
                 add_new_state = true;
             }
         }
+        // GENERAL per-arrival caching at jmp_points (no_log lean-bundle,
+        // 2026-05-30): the kernel runs is_state_visited at EVERY arrival at a
+        // prune point and caches each non-subsumed state — so a CFG merge
+        // (jmp_point: branch target / post-call fallthrough) accumulates one
+        // cached state per distinct arrival arm (proto≤5/==6/≥7/==0x11 at the
+        // pc559 merge). zovia's add_new_state delta-heuristic is more
+        // conservative and skips most of these, so the discharge base-walk
+        // can't anchor per-arrival → it needed the ZOVIA_FORCE_CKPT_PCS hack.
+        // This generalizes that: force a checkpoint at every jmp_point so the
+        // faithful-base walk lands on the right per-arrival cache. Subsumption
+        // still dedups equal arrivals, so the cache count is bounded by the
+        // kernel's per-merge state count. Gated; pairs with FAITHFUL_BASE.
+        if std::env::var("ZOVIA_BCF_CACHE_AT_JMP_POINTS").ok().as_deref() == Some("1")
+            && env
+                .insn_aux_data
+                .get(state.pc)
+                .map(|a| a.jmp_point)
+                .unwrap_or(false)
+        {
+            outer_gate = true;
+            add_new_state = true;
+        }
         if outer_gate && add_new_state {
             let cache_id =
                 merging::record_state(env, state.clone(), config.max_states_per_pc);

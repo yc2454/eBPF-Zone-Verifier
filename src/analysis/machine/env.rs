@@ -1292,6 +1292,59 @@ impl<'a> VerifierEnv<'a> {
                         return None;
                     }
                     if bt.is_empty() {
+                        // FAITHFUL BASE (mirror of bcf_suffix_base_pc): walk
+                        // the continuous history back to the nearest jmp_point
+                        // (CFG join / branch target = kernel st->parent), and
+                        // return a CACHED state AT that pc so prev_insn_pc is
+                        // consistent with the base_pc the other walker returns.
+                        if std::env::var("ZOVIA_BCF_FAITHFUL_BASE").ok().as_deref()
+                            == Some("1")
+                        {
+                            let mut wi = idx;
+                            loop {
+                                let Some(s) = self.history.get(wi) else { break };
+                                if self
+                                    .insn_aux_data
+                                    .get(s.pc)
+                                    .map(|a| a.jmp_point)
+                                    .unwrap_or(false)
+                                {
+                                    // The reject's ARRIVAL EDGE into this merge
+                                    // = the pc of the history step just before
+                                    // the jmp_point (530 for the proto≥7 arm,
+                                    // 509 for ≤5, 538 for ==6, …). The kernel
+                                    // anchors per-arrival, so pick the cache at
+                                    // this pc whose prev_insn matches THIS
+                                    // reject's arrival edge — that retains the
+                                    // arm-distinguishing branch (e.g. JNE6 @530
+                                    // for 618296). Falls back to any cache here.
+                                    let arrival_edge = s
+                                        .parent_idx
+                                        .and_then(|p| self.history.get(p))
+                                        .map(|ps| ps.pc);
+                                    let pc = s.pc;
+                                    let states = self.explored_states.get(&pc);
+                                    let pick = states.and_then(|v| {
+                                        // Prefer the cache whose prev_insn ==
+                                        // arrival_edge.
+                                        v.iter()
+                                            .filter_map(|st| st.cache_id)
+                                            .find(|&cid| {
+                                                self.cached_prev_insn_pc(cid) == arrival_edge
+                                            })
+                                            .or_else(|| v.iter().find_map(|st| st.cache_id))
+                                    });
+                                    if let Some(cid) = pick {
+                                        return Some((pc, cid));
+                                    }
+                                    break;
+                                }
+                                match s.parent_idx {
+                                    Some(p) => wi = p,
+                                    None => break,
+                                }
+                            }
+                        }
                         // Found the suffix base. Return its (pc, cache_id).
                         let (pc, _) = parent_loc?;
                         let cid = current_parent_id?;
@@ -1417,15 +1470,60 @@ impl<'a> VerifierEnv<'a> {
                         if debug {
                             eprintln!("[bcf-track] bt empty at pc={}", step_pc);
                         }
+                        // FAITHFUL BASE (no_log lean-bundle, 2026-05-30):
+                        // the kernel's `base = st->parent` is the parent
+                        // verifier STATE — created at a fork (branch target /
+                        // CFG join / prune point). zovia's `parent_loc` is the
+                        // sparse parent CACHE, which lands at the wrong PC
+                        // (mid-block 565, or a too-deep ancestor 530) because
+                        // zovia's caching ≠ the kernel's per-branch state
+                        // graph. Instead, walk the CONTINUOUS jmp_history back
+                        // from the bt-empty insn to the nearest PRUNE-POINT
+                        // (zovia's CFG marks branch targets / joins as prune
+                        // points — the kernel's fork sites). That PC IS the
+                        // kernel's st->parent->insn_idx (proto≥7 reject: 565→
+                        // 559; a115676: 552→545) — WITHOUT the force-ckpt hack,
+                        // and it removes the need for the ancestor shotgun.
+                        // Gated; falls back to parent_loc when off / no
+                        // prune-point found.
+                        if std::env::var("ZOVIA_BCF_FAITHFUL_BASE").ok().as_deref()
+                            == Some("1")
+                        {
+                            let mut wi = idx;
+                            loop {
+                                let Some(s) = self.history.get(wi) else { break };
+                                // Use jmp_point (branch TARGET / post-call
+                                // fallthrough = CFG join), NOT prune_point —
+                                // prune_point also marks conditional-jump
+                                // SELVES (e.g. the verdict branch pc562),
+                                // which are single-predecessor and NOT where
+                                // the kernel checkpoints. jmp_point isolates
+                                // the true join/fork sites (pc559 merge, pc545
+                                // ==0x11 target) = the kernel's st->parent.
+                                if self
+                                    .insn_aux_data
+                                    .get(s.pc)
+                                    .map(|a| a.jmp_point)
+                                    .unwrap_or(false)
+                                {
+                                    if debug {
+                                        eprintln!(
+                                            "[bcf-track] faithful-base: nearest prune_point pc={} (bt-empty was {})",
+                                            s.pc, step_pc
+                                        );
+                                    }
+                                    return Some(s.pc);
+                                }
+                                match s.parent_idx {
+                                    Some(p) => wi = p,
+                                    None => break,
+                                }
+                            }
+                        }
                         // Kernel `backtrack_states` L24578-L24584 on
-                        // bt_empty: `base = st->parent`. zovia's analog
-                        // is `parent_loc` (the cached state at the
-                        // current parent_cache_id, i.e. `st->parent` at
-                        // this outer-iter level). Return its PC, NOT
-                        // step_pc (which is kernel's `i`, the per-insn
-                        // walk variable). Under sparse caching
-                        // (`ZOVIA_KERNEL_ENGINE=1`), this yields a
-                        // base_pc that matches the kernel's chain.
+                        // bt_empty: `base = st->parent`. zovia's legacy analog
+                        // is `parent_loc` (the cached state at the current
+                        // parent_cache_id). Return its PC.
                         return parent_loc.map(|(pc, _)| pc);
                     }
                 } else if debug {
