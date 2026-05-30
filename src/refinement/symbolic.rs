@@ -158,7 +158,7 @@ pub struct SymbolicState {
     ///
     /// `None` for bound preds and branch path_conds whose LHS isn't a
     /// reg-backed scalar (e.g. JSET with non-reg LHS).
-    pub path_cond_lhs_meta: Vec<Option<(usize, Option<usize>, bool, RegBounds)>>,
+    pub path_cond_lhs_meta: Vec<Option<(usize, Option<usize>, bool, RegBounds, RegBounds)>>,
     /// Final refinement condition (set by a site-specific callback).
     pub refine_cond: Option<u32>,
     /// Transient: the PC currently being processed by symbolic-tracking
@@ -407,7 +407,7 @@ impl SymbolicState {
         pred_idx: u32,
         pc: usize,
         narrowed: Option<(u64, u8, bool, Option<usize>)>,
-        lhs_meta: Option<(usize, Option<usize>, bool, RegBounds)>,
+        lhs_meta: Option<(usize, Option<usize>, bool, RegBounds, RegBounds)>,
     ) {
         self.path_conds.push(pred_idx);
         self.path_cond_pcs.push(pc);
@@ -598,7 +598,7 @@ impl SymbolicState {
             }
             if self.path_cond_is_branch[i] {
                 let keep = match self.path_cond_lhs_meta[i] {
-                    Some((reg, _, _, _)) => goal_regs.contains(&reg),
+                    Some((reg, _, _, _, _)) => goal_regs.contains(&reg),
                     None => true, // non-reg-LHS branch: keep conservatively
                 };
                 if keep {
@@ -670,7 +670,7 @@ impl SymbolicState {
             if !self.path_cond_is_branch[i] {
                 continue;
             }
-            if let Some((reg, _, _, _)) = self.path_cond_lhs_meta[i] {
+            if let Some((reg, _, _, _, _)) = self.path_cond_lhs_meta[i] {
                 let pc = self.path_cond_pcs[i];
                 if seed_pc.map(|p| pc >= p).unwrap_or(true) {
                     seed_pc = Some(pc);

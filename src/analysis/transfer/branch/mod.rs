@@ -15,6 +15,7 @@ use crate::analysis::machine::state::State;
 use crate::analysis::transfer::alu::helpers::bcf_reg_bounds;
 use crate::ast::{CmpOp, Instr, Operand, Width};
 use crate::refinement::bcf::{BPF_AND, BPF_JEQ, BPF_JNE};
+use crate::refinement::symbolic::RegBounds;
 
 use self::constraints::apply_jmp_constraints;
 use self::interval_packet::refine_packet_bounds_on_branch;
@@ -73,6 +74,13 @@ fn record_path_cond_for_side(
     right: &Operand,
     src_pc: usize,
     narrow_for_side: Option<(u64, u8, bool, Option<usize>)>,
+    // Pre-narrow LHS bounds (the reg's range as of ENTERING this branch,
+    // before reg_set_min_max narrows it on the taken/not-taken side).
+    // The discharge faithful-fold uses this to mirror the kernel's
+    // bcf_reg_expr, which materializes a reg at its first reference with
+    // the range BEFORE the current insn's narrowing (so a reload narrowed
+    // to ==6 stays a VAR{JLE0xff}+JEQ6 rather than folding to `K6 JEQ K6`).
+    pre_lhs_bounds: RegBounds,
 ) {
     if state.bcf.is_none() {
         return;
@@ -134,7 +142,7 @@ fn record_path_cond_for_side(
     // freshly-captured pre-reg_expr value (per-side bcf may have a
     // different cached PC than the originator).
     let narrow_now = narrow_for_side.map(|(k, op_b, j32, _)| (k, op_b, j32, lhs_materialize_pc));
-    bcf.add_cond_at_narrowed(pred, src_pc, narrow_now, Some((l_idx, lhs_materialize_pc, jmp32, lhs_bounds.clone())));
+    bcf.add_cond_at_narrowed(pred, src_pc, narrow_now, Some((l_idx, lhs_materialize_pc, jmp32, lhs_bounds.clone(), pre_lhs_bounds.clone())));
 }
 
 /// Legacy entry point — kept for symmetric callers. Splits to
@@ -274,7 +282,7 @@ fn record_branch_path_conds(
     // consistent. Then append only the not-taken pred to state_else's
     // path_conds (state_then gets the taken pred).
     let snapshot = (**then_bcf).clone();
-    let lhs_meta = Some((l_idx, lhs_materialize_pc, jmp32, lhs_bounds.clone()));
+    let lhs_meta = Some((l_idx, lhs_materialize_pc, jmp32, lhs_bounds.clone(), lhs_bounds.clone()));
     then_bcf.add_cond_at_narrowed(pred_then, src_pc, narrow_then, lhs_meta.clone());
     if let Some(else_bcf) = state_else.bcf.as_mut() {
         **else_bcf = snapshot;
@@ -406,6 +414,13 @@ pub(crate) fn transfer_if(
     // contribute its `K0 == K0` conjunct (state_else's r0 was demoted
     // to scalar(0) by `maybe_demote_or_null_to_scalar`) while skipping
     // the taken side (state_then's r0 is non-null PtrToMapValue).
+    // Pre-narrow LHS bounds: the reg's range BEFORE this branch's
+    // reg_set_min_max narrowing (captured from the pre-split `state`,
+    // which apply_jmp_constraints did NOT mutate). Threaded to the
+    // discharge faithful-fold so reload/null regs materialize at their
+    // first-reference range (kernel bcf_reg_expr), not the post-narrow
+    // const that wrongly folds them to literals.
+    let pre_lhs_bounds = bcf_reg_bounds(&state, left);
     if let Some((op_then, op_else)) = cmp_op_to_bcf_pair(op) {
         let jmp32 = width == Width::W32;
         let imm_k: Option<u64> = match &right {
@@ -427,17 +442,21 @@ pub(crate) fn transfer_if(
         };
         record_path_cond_for_side(
             &mut state_then, width, left, op, op_then, &right, state.pc, narrow_then,
+            pre_lhs_bounds.clone(),
         );
         record_path_cond_for_side(
             &mut state_else, width, left, op, op_else, &right, state.pc, narrow_else,
+            pre_lhs_bounds.clone(),
         );
     } else if matches!(op, CmpOp::Test) {
         // JSET — per-side wrap into AND(dst,src) JNE/JEQ 0.
         record_path_cond_for_side(
             &mut state_then, width, left, op, BPF_JNE, &right, state.pc, None,
+            pre_lhs_bounds.clone(),
         );
         record_path_cond_for_side(
             &mut state_else, width, left, op, BPF_JEQ, &right, state.pc, None,
+            pre_lhs_bounds.clone(),
         );
     }
 

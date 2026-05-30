@@ -993,10 +993,20 @@ fn run_worklist(
         } else {
             env_heuristic || path_heuristic
         };
-        let outer_gate = !kernel_engine || at_prune_point;
-        let add_new_state = !kernel_engine
+        let mut outer_gate = !kernel_engine || at_prune_point;
+        let mut add_new_state = !kernel_engine
             || force_new_state
             || combined_heuristic;
+        // EXPERIMENT (no_log 618296): force a checkpoint at a specific PC so
+        // the discharge base-walk lands there (kernel has a state boundary at
+        // the pc559 merge → base=559; zovia's sparse caching lands 530).
+        // Comma-separated PC list. Default-off.
+        if let Ok(pcs) = std::env::var("ZOVIA_FORCE_CKPT_PCS") {
+            if pcs.split(',').any(|p| p.trim().parse::<usize>() == Ok(state.pc)) {
+                outer_gate = true;
+                add_new_state = true;
+            }
+        }
         if outer_gate && add_new_state {
             let cache_id =
                 merging::record_state(env, state.clone(), config.max_states_per_pc);

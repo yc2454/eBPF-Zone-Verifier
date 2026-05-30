@@ -284,7 +284,7 @@ fn try_prove_unreachable_inner(
         let mut new_pcs: Vec<usize> = Vec::with_capacity(sym.path_cond_pcs.len() + 8);
         let mut new_is_branch: Vec<bool> = Vec::with_capacity(sym.path_cond_is_branch.len() + 8);
         let mut new_narrowed: Vec<Option<(u64, u8, bool, Option<usize>)>> = Vec::with_capacity(sym.path_cond_narrowed_const.len() + 8);
-        let mut new_lhs_meta: Vec<Option<(usize, Option<usize>, bool, RegBounds)>> = Vec::with_capacity(sym.path_cond_lhs_meta.len() + 8);
+        let mut new_lhs_meta: Vec<Option<(usize, Option<usize>, bool, RegBounds, RegBounds)>> = Vec::with_capacity(sym.path_cond_lhs_meta.len() + 8);
         let path_conds_snapshot = sym.path_conds.clone();
         let pcs_snapshot = sym.path_cond_pcs.clone();
         let is_branch_snapshot = sym.path_cond_is_branch.clone();
@@ -308,7 +308,7 @@ fn try_prove_unreachable_inner(
                 }).unwrap_or(true)
                 && lhs_meta.is_some();
             if do_rewrite {
-                let (lhs_reg, lhs_pc, jmp32, lhs_bounds) = lhs_meta.unwrap();
+                let (lhs_reg, lhs_pc, jmp32, lhs_bounds, _pre_bounds) = lhs_meta.unwrap();
                 let lhs_uncached_in_fresh_replay = match (lhs_pc, base_pc) {
                     (None, _) => true,
                     (Some(_), None) => false,
@@ -431,14 +431,23 @@ fn try_prove_unreachable_inner(
         // through. Original LHS VARs of rewritten/folded branches are
         // collected as orphaned and their now-dangling bound preds dropped.
         use std::collections::{HashMap, HashSet};
-        let mut fresh_var_for_reg: HashMap<usize, u32> = HashMap::new();
+        // Re-mint fidelity (no_log 618296, 2026-05-30): key the per-reg
+        // materialization cache by (reg, materialize_pc) instead of reg
+        // alone, so a reg REDEFINED between two suffix references (e.g. R0
+        // null-checked at pc581, clobbered by the helper call at pc584, then
+        // null-checked again at pc585) gets a FRESH VAR per incarnation —
+        // mirroring the kernel resetting reg->bcf_expr=-1 on every def
+        // (verifier.c bcf_reg_expr). Without this zovia shares one VAR across
+        // both null-checks (kernel emits VAR3{JNE0}+VAR4{JEQ0}, two vars).
+        // Gated additive: only changes behaviour when materialize_pc differs.
+        let mut fresh_var_for_reg: HashMap<(usize, Option<usize>), u32> = HashMap::new();
         let mut newly_orphaned: HashSet<u32> = HashSet::new();
         let mut new_conds: Vec<u32> = Vec::with_capacity(sym.path_conds.len() + 8);
         let mut new_pcs: Vec<usize> = Vec::with_capacity(sym.path_conds.len() + 8);
         let mut new_is_branch: Vec<bool> = Vec::with_capacity(sym.path_conds.len() + 8);
         let mut new_narrowed: Vec<Option<(u64, u8, bool, Option<usize>)>> =
             Vec::with_capacity(sym.path_conds.len() + 8);
-        let mut new_lhs_meta: Vec<Option<(usize, Option<usize>, bool, RegBounds)>> =
+        let mut new_lhs_meta: Vec<Option<(usize, Option<usize>, bool, RegBounds, RegBounds)>> =
             Vec::with_capacity(sym.path_conds.len() + 8);
         let path_conds_snapshot = sym.path_conds.clone();
         let pcs_snapshot = sym.path_cond_pcs.clone();
@@ -452,7 +461,7 @@ fn try_prove_unreachable_inner(
             let narrowed = narrowed_snapshot[i];
             let lhs_meta = lhs_meta_snapshot[i];
             // Only branches with a reg-backed scalar LHS are foldable.
-            let Some((lhs_reg, _lhs_pc, jmp32, lhs_bounds)) = lhs_meta else {
+            let Some((lhs_reg, lhs_pc, jmp32, lhs_bounds, pre_bounds)) = lhs_meta else {
                 new_conds.push(pred_slot);
                 new_pcs.push(pc);
                 new_is_branch.push(is_branch);
@@ -485,12 +494,40 @@ fn try_prove_unreachable_inner(
             for v in sym.collect_vars(arg0) {
                 newly_orphaned.insert(v);
             }
-            if let Some(&fv) = fresh_var_for_reg.get(&lhs_reg) {
+            // PRE-NARROW materialization (no_log 618296): the kernel's
+            // bcf_reg_expr materializes a reg at its FIRST reference using
+            // the range as of ENTERING that insn — i.e. BEFORE the branch's
+            // own narrowing. zovia's `lhs_bounds` is post-narrow (the taken
+            // side), so a reload/null reg narrowed to a const by its own
+            // first-reference branch (R1 reload ==6 @729; R0 null @581/585)
+            // wrongly folds to a `K op K` literal. Using the pre-narrow
+            // range keeps it a VAR{bound} the kernel-faithful way (reload →
+            // VAR2{JLE0xff,JEQ6}; nulls → VAR{JNE0}/VAR{JEQ0}). Gated.
+            // Carried conds (pc < base, e.g. R2's !=6 recorded at pc530 but
+            // materialized at the base) reflect the reg's FINAL narrowed
+            // range carried into the suffix → post-narrow `lhs_bounds`
+            // ([7,255]→JGE7). In-suffix branches (pc ≥ base, e.g. reload R1
+            // ==6 @729, R0 nulls @581/585) are materialized AT their own
+            // branch → the range ENTERING it, i.e. pre-narrow `pre_bounds`
+            // ([0,255]→VAR{JLE0xff}, not folded). Mirrors kernel bcf_reg_expr
+            // first-reference-range semantics. Gated.
+            let prenarrow_on =
+                std::env::var("ZOVIA_BCF_FOLD_PRENARROW").ok().as_deref() == Some("1");
+            let use_pre = prenarrow_on && base_pc.map(|bp| pc >= bp).unwrap_or(false);
+            let mat_bounds = if use_pre { &pre_bounds } else { &lhs_bounds };
+            // Re-mint cache key: under the flag, key by (reg, materialize_pc)
+            // so a redefined reg (call/reload between references) gets a fresh
+            // VAR per incarnation (kernel resets reg->bcf_expr on def). Flag
+            // off → reg-only key (legacy behaviour, keeps the 12 working
+            // discharges byte-stable until VM-gated).
+            let key = if prenarrow_on { (lhs_reg, lhs_pc) } else { (lhs_reg, None) };
+            if let Some(&fv) = fresh_var_for_reg.get(&key) {
                 // CACHED: reuse the reg's already-materialized VAR.
                 let new_pred = sym.add_pred(op, fv, arg1);
                 new_conds.push(new_pred);
-            } else if let Some(kval) = lhs_bounds.const_val {
-                // UNCACHED + const: fold LHS to a bcf_val literal.
+            } else if let Some(kval) = mat_bounds.const_val {
+                // UNCACHED + const (at first-reference range): fold LHS to a
+                // bcf_val literal (kernel's tnum_is_const → bcf_val path).
                 let lit = sym.add_val(kval, jmp32);
                 let new_pred = sym.add_pred(op, lit, arg1);
                 new_conds.push(new_pred);
@@ -498,8 +535,8 @@ fn try_prove_unreachable_inner(
                 // UNCACHED + non-const: fresh VAR + bound preds (spliced
                 // before the branch), cache for subsequent reuse.
                 let fresh = sym.add_var_bits(jmp32);
-                fresh_var_for_reg.insert(lhs_reg, fresh);
-                let bound_pred_slots = sym.bound_reg_emit_preds(fresh, &lhs_bounds, jmp32);
+                fresh_var_for_reg.insert(key, fresh);
+                let bound_pred_slots = sym.bound_reg_emit_preds(fresh, mat_bounds, jmp32);
                 for bp in bound_pred_slots {
                     new_conds.push(bp);
                     new_pcs.push(pc);
