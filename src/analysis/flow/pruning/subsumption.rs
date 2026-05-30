@@ -179,7 +179,15 @@ pub(super) fn state_subsumed_by(
         return Err(SubsumptionMissReason::Types);
     }
     if !config.skip_dbm_check
-        && !domain_subsumed_by(&cur.domain, &old.domain, live_regs, &old.precise_regs, force_exact)
+        && !domain_subsumed_by(
+            &cur.domain,
+            &old.domain,
+            &cur.types,
+            &old.types,
+            live_regs,
+            &old.precise_regs,
+            force_exact,
+        )
     {
         return Err(SubsumptionMissReason::Domain);
     }
@@ -255,6 +263,8 @@ pub(super) fn state_subsumed_by(
             && !domain_subsumed_by(
                 &cur_frame.caller_domain,
                 &old_frame.caller_domain,
+                &cur_frame.caller_types,
+                &old_frame.caller_types,
                 &saved,
                 &HashSet::new(),
                 false,
@@ -584,6 +594,8 @@ fn type_subsumed_by(cur_ty: &RegType, old_ty: &RegType) -> bool {
 fn domain_subsumed_by(
     cur: &NumericDomain,
     old: &NumericDomain,
+    cur_types: &TypeState,
+    old_types: &TypeState,
     live_regs: &HashSet<Reg>,
     precise: &HashSet<Reg>,
     force_exact: bool,
@@ -603,6 +615,24 @@ fn domain_subsumed_by(
     //     still open.
     for &r in live_regs {
         if !precise.contains(&r) && !force_exact {
+            continue;
+        }
+        // EXPERIMENTAL (no_log arc Phase 1): skip the scalar-interval
+        // range_within for pointer-typed regs. ⚠️ This is LOOSER than the
+        // kernel — `regsafe` (verifier.c v6.15 L19769-19811) DOES apply
+        // `range_within` to PTR_TO_MAP_VALUE/PACKET/MEM/BUF and the
+        // stricter `regs_exact` to PTR_TO_CTX/sockets/stack. zovia's
+        // pointer-reg interval carries real offset-safety, so this skip
+        // must be validated by FA gates (selftest is insensitive — the
+        // ctx/packet offset tests already FALSE_ACCEPT at HEAD under
+        // kernel-mode — so the cilium-42 scorecard is the real signal),
+        // NOT by faithfulness. Rationale for trying it: at the no_log
+        // gating pc the pointer regs are identical across trajectories
+        // (Phase 0), so the R6/R7/R9 pointer domain-miss class is
+        // secondary; this isolates whether removing it is empirically
+        // gate-safe. types_subsumed_by (runs first) + tnum + DBM/
+        // interval_subsumed_by still constrain the pointer.
+        if cur_types.get(r).is_pointer() || old_types.get(r).is_pointer() {
             continue;
         }
         // Kernel `range_within` (verifier.c v6.15 L19360): all 8
