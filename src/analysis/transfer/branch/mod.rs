@@ -908,10 +908,16 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     // is the additive variant that closes the same case without that
     // regression class.
     {
-        const MAX_ANCESTOR_DEPTH: usize = 64;
+        // Lean-bundle investigation (no_log 2026-05-30): the depth-64 ancestor
+        // shotgun is the dominant over-emission source (~1183 proto shapes vs
+        // the kernel's 22). Knob to measure/cap it. Default 64 (unchanged).
+        let max_ancestor_depth: usize = std::env::var("ZOVIA_BCF_ANCESTOR_DEPTH")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(64);
         let mut cur_cid_opt = base_cid_dbg;
         let mut depth = 0;
-        while depth < MAX_ANCESTOR_DEPTH {
+        while depth < max_ancestor_depth {
             let Some(cur_cid) = cur_cid_opt else { break };
             let Some(&(cur_pc, cur_idx)) = env.cache_loc_by_id.get(&cur_cid) else { break };
             let Some(parent_cid) = env
