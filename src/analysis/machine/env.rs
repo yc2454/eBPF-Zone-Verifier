@@ -440,6 +440,20 @@ impl<'a> VerifierEnv<'a> {
         let mut frontier: HashSet<Reg> = HashSet::new();
         frontier.insert(sink_reg);
 
+        // Stack-slot precision frontier. Mirrors the kernel's bt->stack_masks
+        // (__mark_chain_precision): when the backward walk crosses a register
+        // FILL (`reg = *(R10+off)`, stack_access) whose dst is in the reg
+        // frontier, precision moves INTO the slot; when it later crosses the
+        // matching SPILL (`*(R10+off) = src`) precision moves back to the
+        // spilled source reg AND the slot is marked precise on the lineage
+        // cached states. A register-only walk severed this chain at every fill
+        // (Load/LoadMap just dropped dst), so spilled scalars the kernel keeps
+        // precise (e.g. from_nat_no_log stack[-208], marked at 5118 kernel
+        // sites) stayed imprecise → loose stacksafe → proto arms merged.
+        // Tracks byte offsets (the same key `stack_subsumed_by`/`get_slot`
+        // use). Validated calico-19 19/19 + cilium-17 17/17 (2026-05-30).
+        let mut stack_frontier: HashSet<i16> = HashSet::new();
+
         let caller_saved = [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5];
 
         let mut current_history: Option<usize> = Some(history_idx);
@@ -491,12 +505,28 @@ impl<'a> VerifierEnv<'a> {
                 let instr_copy = step.instr;
                 let step_pc = step.pc;
                 let step_linked = step.linked_regs.clone();
+                let step_stack_access = step.stack_access;
                 // Kernel `bt_sync_linked_regs` (verifier.c L4116-4147),
                 // called BEFORE the per-insn backtrack (L4187): if any reg
                 // in this conditional's recorded id-linked class is
                 // already precise, all become precise. Mirrors the
                 // forward `collect_linked_regs`/`push_insn_history`.
                 bt_sync_linked_regs(&mut frontier, &step_linked);
+                // Stack spill/fill precision transfer.
+                // MUST run BEFORE update_frontier: update_frontier
+                // unconditionally `frontier.remove(dst)` on a Load, so a
+                // fill's dst would already be gone if we ran after. Kernel
+                // order is also fill = clear_reg(dst) + set_slot(spi) in one
+                // step; running first then letting update_frontier's
+                // remove(dst) be a harmless no-op reproduces that. Store is
+                // `_ => {}` in update_frontier, so a spill adding src to the
+                // reg frontier here is not disturbed by the later call.
+                update_stack_frontier(
+                    &mut frontier,
+                    &mut stack_frontier,
+                    &instr_copy,
+                    step_stack_access,
+                );
                 update_frontier(&mut frontier, &instr_copy, &caller_saved);
                 // Kernel `bt_sync_linked_regs` is invoked AGAIN after
                 // `backtrack_insn` (L4440) — the conditional-jump BPF_X
@@ -549,6 +579,23 @@ impl<'a> VerifierEnv<'a> {
                         s.mark_reg_precise(r);
                     }
                     marked = s.precise_regs.iter().copied().collect();
+                    // Stack-slot precision (gated, cont.19i): mark the
+                    // spilled-scalar slots still in the stack frontier
+                    // precise on this lineage cached state, so a later
+                    // sibling's `stack_subsumed_by` (subsumption.rs: precise
+                    // old slot ⇒ range_within+tnum) keeps distinct values
+                    // distinct instead of wildcard-merging. Mirrors kernel
+                    // `mark_chain_precision` writing precision onto stack
+                    // slots. Marks the base byte of each frontier slot (the
+                    // SpilledReg that carries bounds/tnum) in the current
+                    // frame's stack; the per-byte spill stores the value only
+                    // at the slot's first byte (stack_ops.rs:148).
+                    let cur_frame = s.frames.current_mut();
+                    for &slot_off in &stack_frontier {
+                        if let Some(slot) = cur_frame.stack.get_slot_mut(slot_off) {
+                            slot.precise = true;
+                        }
+                    }
                 }
                 // Mirror the marks into the eviction-resistant
                 // `precise_pcs` set. Cache eviction
@@ -1688,6 +1735,68 @@ fn update_frontier(
             {
                 frontier.insert(*left);
                 frontier.insert(*s);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Stack spill/fill precision transfer for the backward precision walk
+/// (cont.19i, gated). Mirrors the kernel `backtrack_insn` STACK_SPILL
+/// handling that `backtrack_insn_step` already implements for the
+/// discharge-base walker — but applied to the precision frontier so
+/// `SpilledReg.precise` gets set on the lineage.
+///
+/// Direction is BACKWARD (un-doing `instr`). `stack_access` is zovia's
+/// `INSN_F_STACK_ACCESS` analog (a genuine slot-aligned register
+/// spill/fill); a plain stack data load/store leaves it false and is NOT
+/// followed (mirrors the kernel gate, keeps the suffix from running away).
+///
+///   FILL  `dst = *(R10+off)`  (Load, base==R10, stack_access):
+///       if dst ∈ reg frontier  ⇒  remove dst, add slot `off` to stack
+///       frontier. The value dst needs came FROM the slot, so precision
+///       moves into the slot; the matching spill (seen later going back)
+///       moves it on to the spilled source reg.
+///   SPILL `*(R10+off) = src`  (Store, base==R10, stack_access):
+///       if slot `off` ∈ stack frontier ⇒ remove it, add `src` to reg
+///       frontier. The slot's value came from `src`; the caller marks the
+///       slot precise on the cached state at this lineage point.
+///
+/// Offsets are byte offsets (the key `get_slot`/`stack_subsumed_by` use).
+/// `base != R10` accesses are heap/ctx/packet, not stack slots — ignored.
+fn update_stack_frontier(
+    reg_frontier: &mut HashSet<Reg>,
+    stack_frontier: &mut HashSet<i16>,
+    instr: &crate::ast::Instr,
+    stack_access: bool,
+) {
+    use crate::ast::{Instr, Operand};
+    if !stack_access {
+        return;
+    }
+    match instr {
+        // FILL: reg loaded from a stack slot.
+        Instr::Load { dst, base, off, .. }
+        | Instr::LoadSx { dst, base, off, .. }
+        | Instr::LoadAcq { dst, base, off, .. } => {
+            if *base == Reg::R10 && reg_frontier.contains(dst) {
+                reg_frontier.remove(dst);
+                stack_frontier.insert(*off);
+            }
+        }
+        // SPILL: reg stored to a stack slot. `Store.src` is an Operand
+        // (BPF_ST const-spill carries no source reg ⇒ nothing to add back);
+        // `StoreRel.src` is a Reg.
+        Instr::Store { src, base, off, .. } => {
+            if *base == Reg::R10 && stack_frontier.remove(off) {
+                if let Operand::Reg(s) = src {
+                    reg_frontier.insert(*s);
+                }
+            }
+        }
+        Instr::StoreRel { src, base, off, .. } => {
+            if *base == Reg::R10 && stack_frontier.remove(off) {
+                reg_frontier.insert(*src);
             }
         }
         _ => {}
