@@ -328,10 +328,10 @@ pub fn analyze_program_full(
     // timeout-prone tests — see audit notes in the precision/liveness
     // workstream.
     if std::env::var("ZOVIA_DUMP_PRUNING").ok().as_deref() == Some("1") {
-        dump_subsumption_miss_histogram(&env);
+        crate::analysis::flow::diag::dump_subsumption_miss_histogram(&env);
     }
     if std::env::var("ZOVIA_DUMP_VISITS").ok().as_deref() == Some("1") {
-        dump_pc_visit_count(&env);
+        crate::analysis::flow::diag::dump_pc_visit_count(&env);
     }
     // Cache-topology probe: when ZOVIA_DUMP_CACHE_AT_PC=N is set, dump
     // the count and per-entry reg/range/type snapshot for every cached
@@ -637,7 +637,7 @@ fn run_worklist(
 
     let mut prune_count: usize = 0;
 
-    let diag_pcs = crate::analysis::machine::env::diag_pcs();
+    let diag_pcs = crate::analysis::flow::diag::diag_pcs();
     let mut diag_arrivals: HashMap<usize, usize> = HashMap::new();
 
     // One-shot dump of AST instr at trace PCs (WT diagnostic).
@@ -1306,169 +1306,4 @@ fn run_worklist(
     }
 
     prune_count
-}
-
-/// Tiny helper for the audit dump.
-fn pct(n: u64, d: u64) -> f64 {
-    if d == 0 {
-        0.0
-    } else {
-        (n as f64 / d as f64) * 100.0
-    }
-}
-
-/// Audit dump: per-PC non-pruned state-expansion count.
-/// Triggered by `ZOVIA_DUMP_VISITS=1`. Used to localize path-explosion
-/// hotspots by diffing against the kernel verifier's per-PC visit
-/// count from the log_level-2 trace (`<pc>: (...) <insn>` lines).
-fn dump_pc_visit_count(env: &VerifierEnv) {
-    let mut pairs: Vec<(usize, u64)> =
-        env.pc_visit_count.iter().map(|(&pc, &n)| (pc, n)).collect();
-    pairs.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
-    eprintln!("\n=== ZOVIA per-PC visit count (non-pruned expansions) ===");
-    eprintln!("  total expansions: {}    distinct pcs: {}", env.insn_processed, pairs.len());
-    eprintln!("  top 100 pcs by visit count:");
-    for (pc, n) in pairs.iter().take(100) {
-        eprintln!("    pc={:<5} visits={}", pc, n);
-    }
-}
-
-/// Audit dump: per-PC subsumption-miss histogram + global totals.
-/// Triggered by `ZOVIA_DUMP_PRUNING=1`. Output goes to stderr (so it
-/// doesn't tangle with verifier stdout when piping). Format is
-/// hand-rolled tabular text — the consumer is a human reading one
-/// test's audit output, not a machine.
-fn dump_subsumption_miss_histogram(env: &VerifierEnv) {
-    use crate::analysis::machine::env::SubsumptionMissReason;
-
-    // Global totals across all PCs.
-    let mut global = [0u64; 9];
-    for buckets in env.subsumption_misses.values() {
-        for i in 0..9 {
-            global[i] = global[i].saturating_add(buckets[i]);
-        }
-    }
-    let total_misses: u64 = global.iter().sum();
-
-    // Use the lifetime counters, NOT `state_metrics.hit_cnt`. The
-    // per-state hit/miss counters disappear when the state is evicted
-    // by `record_state`'s max_states_per_pc drain (cap = 8 by
-    // default), so reading them at end-of-run undercounts wildly on
-    // workloads with > 8 distinct cached states per PC.
-    let total_hits: u64 = env.pruning_stats.lifetime_hits;
-    let total_misses_lifetime: u64 = env.pruning_stats.lifetime_misses;
-    let _ = env.state_metrics.values().flatten().count(); // keep import path used
-    let total_cached: u64 = env
-        .state_metrics
-        .values()
-        .map(|v| v.len() as u64)
-        .sum();
-    let n_pcs = env.subsumption_misses.len();
-
-    let ps = &env.pruning_stats;
-    eprintln!("\n=== ZOVIA pruning audit ===");
-    eprintln!(
-        "  insn_processed: {}    distinct PCs cached: {}    total cached states: {}",
-        env.insn_processed,
-        env.explored_states.len(),
-        total_cached
-    );
-    eprintln!(
-        "  should_prune calls: {}",
-        ps.should_prune_calls
-    );
-    eprintln!(
-        "    not a prune point:    {:>10}  ({:>5.1}%)",
-        ps.not_prune_point,
-        pct(ps.not_prune_point, ps.should_prune_calls)
-    );
-    eprintln!(
-        "    on-path re-entry:     {:>10}  ({:>5.1}%)",
-        ps.on_path_skip,
-        pct(ps.on_path_skip, ps.should_prune_calls)
-    );
-    eprintln!(
-        "    no prev states (1st): {:>10}  ({:>5.1}%)",
-        ps.no_prev_states,
-        pct(ps.no_prev_states, ps.should_prune_calls)
-    );
-    eprintln!(
-        "    standard subsumption: {:>10}  ({:>5.1}%)",
-        ps.std_pruning_calls,
-        pct(ps.std_pruning_calls, ps.should_prune_calls)
-    );
-    eprintln!(
-        "    loop subsumption:     {:>10}  ({:>5.1}%)",
-        ps.loop_pruning_calls,
-        pct(ps.loop_pruning_calls, ps.should_prune_calls)
-    );
-    eprintln!(
-        "      of which bailed (no_cond_exit):    {} ({:.1}% of loop calls)",
-        ps.loop_no_cond_exit,
-        pct(ps.loop_no_cond_exit, ps.loop_pruning_calls)
-    );
-    eprintln!(
-        "      of which actually walked prev_states: {}",
-        ps.loop_walks_attempted
-    );
-    eprintln!(
-        "        no_prev / hit / miss / convergence-pruned: {} / {} / {} / {}",
-        ps.loop_walks_no_prev,
-        ps.loop_walks_hit,
-        ps.loop_walks_miss,
-        ps.loop_walks_pruned_via_convergence,
-    );
-    eprintln!(
-        "    may_goto RANGE_WITHIN hits: {}",
-        ps.may_goto_range_within_hits
-    );
-    eprintln!(
-        "    children_unsafe skips:    {:>10}    ← BCF-discharge cache invalidations",
-        ps.children_unsafe_skips
-    );
-    eprintln!(
-        "  cache hits: {total_hits}    cache misses: {total_misses_lifetime} (per-reason histogram below sums to {total_misses})    miss-PCs: {n_pcs}"
-    );
-    eprintln!("  miss reasons (first-rejecting check, % of total misses):");
-    let mut ranked: Vec<(SubsumptionMissReason, u64)> = SubsumptionMissReason::ALL
-        .iter()
-        .map(|&r| (r, global[r.idx()]))
-        .collect();
-    ranked.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
-    let denom = total_misses.max(1) as f64;
-    for (r, c) in &ranked {
-        eprintln!(
-            "    {:>16}  {:>10}   ({:>5.1}%)",
-            r.label(),
-            c,
-            (*c as f64 / denom) * 100.0
-        );
-    }
-
-    // Top-5 PCs by miss count, with their per-PC reason breakdown.
-    let mut by_pc: Vec<(usize, u64, [u64; 9])> = env
-        .subsumption_misses
-        .iter()
-        .map(|(&pc, buckets)| (pc, buckets.iter().sum::<u64>(), *buckets))
-        .collect();
-    by_pc.sort_by_key(|(_, total, _)| std::cmp::Reverse(*total));
-    eprintln!("  top PCs by miss count:");
-    for (pc, total, buckets) in by_pc.iter().take(8) {
-        let dom = SubsumptionMissReason::ALL
-            .iter()
-            .max_by_key(|r| buckets[r.idx()])
-            .unwrap();
-        let dom_share = buckets[dom.idx()] as f64 / (*total as f64).max(1.0) * 100.0;
-        let cached_at_pc = env
-            .state_metrics
-            .get(pc)
-            .map(|v| v.len())
-            .unwrap_or(0);
-        eprintln!(
-            "    pc={pc:<5}  misses={total:<8}  cached={cached_at_pc:<3}  dominant={} ({:.0}%)",
-            dom.label(),
-            dom_share
-        );
-    }
-    eprintln!();
 }
