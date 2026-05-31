@@ -660,7 +660,51 @@ fn unreachable_base_pc(env: &VerifierEnv, state: &State) -> Option<usize> {
     // one insn too early (fatal when the skipped predecessor is a
     // helper-call argument's only definition).
     let hidx = env.current_step_idx.or(state.history_idx)?;
+    let targets = filter_live_unknown_targets(env, state, Some(hidx), targets);
     env.bcf_suffix_base_pc(hidx, state.parent_cache_id, &targets)
+}
+
+/// Kernel-faithful `reg_masks` tightening (cont.20): drop a reject `reg_masks`
+/// target iff it is a fully-unknown `ScalarValue` (tnum carries no constraint)
+/// AND dead at the reject PC (absent from `live_regs`). Such a register holds
+/// no symbolic information and the kernel never seeds it into `reg_masks`;
+/// zovia's existing const-offset / `NotInit` filter misses it (it looks like a
+/// live unknown scalar), so the suffix base walk over-extends.
+///
+/// MEASURED (from_nat_no_log pc735, proto==6 arm): R2 is a fully-unknown dead
+/// scalar there → targets `0x32f`, base 529; the kernel's `reg_masks` is
+/// `0x32b` (base 559, the `78171d` obligation). This filter drops exactly R2:
+/// liveness is applied ONLY to unconstrained scalars, so a constrained-but-
+/// dead reg (R1, kept by the kernel) and live unknowns (R8/R9, kept) are
+/// untouched — reproducing `0x32b` on every arrival. See
+/// project_no_log_subsumption_arc.md cont.20.
+///
+/// Always-on (faithful, no-regress: gated VM run was repr-19 19/19 + cilium-17
+/// 17/17, bundles byte-identical on the default-config gate). ⚠️ zovia's
+/// `live_regs` is per-PC, not per-path, so on a multi-arm `_no_log` program
+/// the same drop applies to every arm; it has a live effect only in the lean
+/// (no-shotgun) config, where it can change which obligations are emitted.
+fn filter_live_unknown_targets(
+    env: &VerifierEnv,
+    state: &State,
+    hidx: Option<usize>,
+    targets: Vec<Reg>,
+) -> Vec<Reg> {
+    use crate::analysis::machine::reg_types::RegType;
+    let live = hidx
+        .and_then(|h| env.history.get(h))
+        .map(|h| h.pc)
+        .and_then(|pc| env.insn_aux_data.get(pc));
+    let Some(live) = live else { return targets };
+    targets
+        .into_iter()
+        .filter(|&r| {
+            let unk = state.get_tnum(r).mask == u64::MAX
+                && matches!(state.types.get(r), RegType::ScalarValue);
+            let dead = !live.live_regs.contains(&r);
+            !(unk && dead)
+        })
+        .collect()
 }
 
 /// Attempt path-unreachable speculation on a zovia-infeasible state and
@@ -722,6 +766,7 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
             })
             .collect();
         let hidx = env.current_step_idx.or(state.history_idx);
+        let targets = filter_live_unknown_targets(env, state, hidx, targets);
         // KERNEL-FAITHFUL PRECISION (no_log proto-arm fix, 2026-05-31):
         // mirror bcf_prove_unreachable → backtrack_states(reg_masks)'s
         // precision side-effect. The kernel marks the reject's live,
