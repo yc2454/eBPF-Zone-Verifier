@@ -247,7 +247,7 @@ pub fn record_state(
         .and_then(|v| v.iter().find(|s| s.cache_id == Some(cache_id)))
         .cloned()
     {
-        env.maybe_enter_scc(&cached, cache_id);
+        crate::analysis::flow::scc::maybe_enter_scc(env, &cached, cache_id);
     }
 
     cache_id

@@ -894,7 +894,7 @@ fn run_worklist(
             // SCC: this DFS path is done (subsumed by a cached state).
             // Decrement parent.branches up the chain; if a parent's
             // branches hits 0 propagate its loop_entry to its parent.
-            env.complete_dfs_branch(state.parent_cache_id);
+            crate::analysis::flow::scc::complete_dfs_branch(env, state.parent_cache_id);
             continue;
         }
         if diag_hit {
@@ -1289,7 +1289,7 @@ fn run_worklist(
         if succ_count == 0 {
             // No successors (e.g. Exit): this DFS path terminated.
             // Decrement parent chain analogously to the prune-hit path.
-            env.complete_dfs_branch(cur_parent_cache_id);
+            crate::analysis::flow::scc::complete_dfs_branch(env, cur_parent_cache_id);
         }
         for succ in loop_back {
             worklist.push_back(succ);

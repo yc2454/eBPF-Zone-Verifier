@@ -134,7 +134,7 @@ fn handle_loop_pruning(
             // in regsafe and caused convergence failure (loop4 → 1M
             // insns / 0 prunes; ksnoop AND mode → 970k bundle entries
             // at one PC).
-            let force_exact = env.incomplete_read_marks(prev);
+            let force_exact = crate::analysis::flow::scc::incomplete_read_marks(env, prev);
             match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
                 Ok(()) => {
                     if crate::analysis::trace_pc_in_range(pc) {
@@ -180,10 +180,10 @@ fn handle_loop_pruning(
             if prev.branches > 0 {
                 let le = prev
                     .cache_id
-                    .and_then(|cid| env.get_loop_entry(cid))
+                    .and_then(|cid| crate::analysis::flow::scc::get_loop_entry(env, cid))
                     .or(prev.cache_id);
                 if let Some(lcid) = le {
-                    env.update_loop_entry(state, lcid);
+                    crate::analysis::flow::scc::update_loop_entry(env, state, lcid);
                 }
             }
             // Kernel-faithful add_scc_backedge gate (verifier.c v6.15
@@ -202,10 +202,10 @@ fn handle_loop_pruning(
             // converge naturally; iter loops handle their own
             // convergence via widen_imprecise_scalars at iter_next
             // (kfunc.rs::iter_next_fork — independent of backedges).
-            if env.incomplete_read_marks(&prev)
+            if crate::analysis::flow::scc::incomplete_read_marks(env, &prev)
                 && let Some(prev_cid) = prev.cache_id
             {
-                env.add_scc_backedge(state, prev_cid, pc);
+                crate::analysis::flow::scc::add_scc_backedge(env, state, prev_cid, pc);
             }
         }
         env.pruning_stats.loop_walks_pruned_via_convergence += 1;
@@ -243,7 +243,7 @@ fn handle_standard_pruning(
             }
             // Kernel-faithful force_exact (see matching block above for
             // full rationale and history).
-            let force_exact = env.incomplete_read_marks(prev);
+            let force_exact = crate::analysis::flow::scc::incomplete_read_marks(env, prev);
             match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
                 Ok(()) => {
                     hit_idx = Some(i);
