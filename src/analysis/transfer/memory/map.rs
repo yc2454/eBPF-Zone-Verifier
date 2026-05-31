@@ -519,7 +519,7 @@ fn try_bcf_refine_map(
     // gets subsumed there — the kernel sets `children_unsafe=1` and
     // exempts it from subsumption, so path A continues to PC 142 and
     // emits its own discharge with hash 0x6eb7).
-    env.mark_path_children_unsafe(state, base_pc);
+    crate::analysis::flow::pruning::cache::mark_path_children_unsafe(env, state, base_pc);
     true
 }
 

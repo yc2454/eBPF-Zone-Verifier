@@ -1,3 +1,4 @@
+pub mod cache;
 // src/analysis/flow/pruning/mod.rs
 //
 // Pruning orchestration: should_prune, handle_loop_pruning,

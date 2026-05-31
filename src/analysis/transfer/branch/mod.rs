@@ -1023,6 +1023,6 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     // its own path-unreachable bundle entry (cilium bpf_wireguard
     // pc246 route-B). Scoped to the same suffix base as the
     // path_conds (kernel parents[0..vstate_cnt-1]).
-    env.mark_path_children_unsafe(state, base_pc);
+    crate::analysis::flow::pruning::cache::mark_path_children_unsafe(env, state, base_pc);
     true
 }

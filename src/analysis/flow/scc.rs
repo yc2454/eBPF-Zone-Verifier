@@ -581,7 +581,7 @@ pub fn complete_dfs_branch(env: &mut VerifierEnv, start_cache_id: Option<u32>) {
             // (verifier.c v6.15 L19528 / L19482): mutate the cached
             // state to drop dead regs / dead stack slots, making
             // future subsumption against it looser.
-            env.clean_verifier_state(cid);
+            crate::analysis::flow::pruning::cache::clean_verifier_state(env, cid);
             // Kernel `maybe_exit_scc` (verifier.c L2253, called
             // from update_branch_counts when branches→0): if this
             // cached state is the entry of an SCC visit, the
