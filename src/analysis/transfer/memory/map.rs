@@ -632,15 +632,29 @@ pub(crate) fn transfer_map_load(
                     || n.starts_with(".rodata.")
             })
             .unwrap_or(false);
+        let reloc_offset = reloc.offset;
         crate::analysis::transfer::types::update_map_load_types(
             &mut state.types,
             kind,
             reloc.map_idx,
             dst,
-            reloc.offset,
+            reloc_offset,
             is_static_data,
         );
-        state.domain.forget(dst);
+        // Seed the interval map-value PtrOffset at the relocation offset
+        // instead of forgetting the numeric domain. Without this, a direct
+        // map-value load (PSEUDO_MAP_VALUE / .bss/.data/.rodata global) had
+        // NO PtrOffset, so a bounded-variable index — e.g. `hits[cpu & 255]`
+        // — lost its range and `interval_check_map_access` bailed to the
+        // zone fallback, FALSE-REJECTing "Unsafe map load". Seeding keeps the
+        // downstream `min_off >= 0 && max_off <= value_size` check intact
+        // (it can only reject MORE, never accept OOB — FA-safe). Non-MapValue
+        // kinds (PtrToMapObject) keep the plain forget.
+        if matches!(state.types.get(dst), RegType::PtrToMapValue { .. }) {
+            state.domain.init_map_value_ptr_at(dst, reloc_offset);
+        } else {
+            state.domain.forget(dst);
+        }
         state.pc += 2;
         vec![state]
     } else {

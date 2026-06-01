@@ -273,6 +273,20 @@ impl NumericDomain {
         // Zone domain doesn't need special setup - it tracks via DBM constraints
     }
 
+    /// Like `init_map_value_ptr` but seeds the map-value pointer at a fixed
+    /// non-zero `offset` from the value start (a direct LD_IMM64
+    /// BPF_PSEUDO_MAP_VALUE / .bss/.data/.rodata global lives at its
+    /// section offset). Interval mode seeds the PtrOffset so a later
+    /// bounded-variable index folds into a checkable offset range; Zone mode
+    /// preserves the prior `forget` behavior (it tracks offsets via DBM
+    /// constraints anchored elsewhere).
+    pub fn init_map_value_ptr_at(&mut self, reg: Reg, offset: i64) {
+        match self {
+            NumericDomain::Interval(ivl) => interval_ops::init_map_value_ptr_at(ivl, reg, offset),
+            _ => self.forget(reg),
+        }
+    }
+
     // ══════════════════════════════════════════════════════════════════════════
     //  Arithmetic Transformations
     // ══════════════════════════════════════════════════════════════════════════

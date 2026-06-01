@@ -209,6 +209,34 @@ pub fn init_map_value_ptr(state: &mut IntervalState, reg: Reg) {
     );
 }
 
+/// Like `init_map_value_ptr` but the pointer starts at a fixed `offset`
+/// from the map value's start (a direct LD_IMM64 BPF_PSEUDO_MAP_VALUE /
+/// .bss/.data/.rodata global is at its section offset, not 0). The bounds
+/// (which the kernel/refine_map model as the pointer's offset) and the
+/// PtrOffset.off both carry `offset`, so a subsequent `ptr += bounded_idx`
+/// produces a checkable [offset+idx_min, offset+idx_max] range in
+/// `interval_check_map_access`. Seeding 0 here would be UNSOUND — it would
+/// under-count the offset of a nonzero-offset global and accept an access
+/// past value_size.
+pub fn init_map_value_ptr_at(state: &mut IntervalState, reg: Reg, offset: i64) {
+    if reg == Reg::Zero || reg.is_anchor() {
+        return;
+    }
+    state.set(
+        reg,
+        RegInterval {
+            bounds: ScalarBounds::constant(offset),
+            ptr_offset: Some(PtrOffset {
+                anchor: Reg::Zero,
+                off: offset,
+                var_off: 0,
+                range: None,
+                id: None,
+            }),
+        },
+    );
+}
+
 /// Assigns a concrete interval to a register
 pub fn assign_interval(state: &mut IntervalState, r: Reg, min: i64, max: i64) {
     if r != Reg::Zero && !r.is_anchor() {
