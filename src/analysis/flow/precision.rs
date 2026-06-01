@@ -163,7 +163,18 @@ pub fn mark_chain_precision_backward(
             }
             current_history = parent_idx;
 
-            if frontier.is_empty() {
+            // Terminate only when BOTH the register frontier and the
+            // stack-slot frontier are empty — the kernel's backtrack loop
+            // continues while `bt_reg_mask || bt_stack_mask` (verifier.c
+            // `__mark_chain_precision`). A FILL moves the last frontier reg
+            // into `stack_frontier` (reg frontier now empty); stopping here
+            // would abandon the spilled-slot lineage before reaching the
+            // matching SPILL that converts the slot back to its source reg,
+            // so the spilled scalar (and its source) never get marked
+            // precise. That left two paths spilling distinct constants to
+            // the same slot wrongly subsuming (search_pruning
+            // should_be_verified_nop_operation / tracking_for_u32_spill_fill).
+            if frontier.is_empty() && stack_frontier.is_empty() {
                 break 'outer;
             }
         }
