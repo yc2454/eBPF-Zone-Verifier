@@ -28,6 +28,7 @@ const DEFAULT_CVC5_LINUX: &str = "/users/yc1795/BCF/output/cvc5-libs/bin/cvc5";
 
 // Linux-only: bcf-checker is the kernel-equivalent userspace proof validator
 // (built from the synced kernel `bcf_checker.c`). Used as a soundness oracle.
+#[allow(dead_code)]
 const DEFAULT_BCF_CHECKER_LINUX: &str = "/users/yc1795/BCF/bcf-checker/bcf-checker";
 
 #[derive(Debug)]
@@ -73,6 +74,7 @@ pub type Result<T> = std::result::Result<T, SolverError>;
 /// when it's not present — this is the expected case on macOS dev hosts.
 ///
 /// Precedence: `$ZOVIA_BCF_CHECKER`, then the Linux default.
+#[allow(dead_code)]
 pub fn bcf_checker_path() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("ZOVIA_BCF_CHECKER") {
         let pb = PathBuf::from(p);
@@ -90,6 +92,7 @@ pub fn bcf_checker_path() -> Option<PathBuf> {
 /// This is the soundness backstop: even if cvc5 emits a proof that's
 /// syntactically well-formed BCF, the checker is what confirms it actually
 /// establishes the refinement condition under the kernel's rule semantics.
+#[allow(dead_code)]
 pub fn validate_proof_bytes(bytes: &[u8]) -> Result<bool> {
     let Some(checker) = bcf_checker_path() else {
         return Ok(false); // no oracle available

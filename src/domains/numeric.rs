@@ -645,6 +645,7 @@ impl NumericDomain {
     }
 
     /// Widen for loop convergence (Zone-specific, interval doesn't need it)
+    #[allow(dead_code)]
     pub fn widen(&self, newer: &NumericDomain) -> NumericDomain {
         match (self, newer) {
             (NumericDomain::Zone(old), NumericDomain::Zone(new)) => {

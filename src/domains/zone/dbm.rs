@@ -439,6 +439,7 @@ impl Dbm {
 
     /// Standard DBM widening: entries that loosen become INF.
     /// Guarantees convergence since each step can only introduce INF entries.
+    #[allow(dead_code)]
     pub fn widen(&self, newer: &Dbm) -> Dbm {
         let n = self.num_vars();
         let mut result = self.clone();

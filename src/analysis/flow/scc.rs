@@ -243,6 +243,7 @@ pub struct SccCallchain {
 pub struct SccBackedge {
     pub state: State,
     pub equal_state_cache_id: u32,
+    #[allow(dead_code)]
     pub insn_idx: usize,
 }
 

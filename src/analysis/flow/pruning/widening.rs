@@ -27,27 +27,6 @@ use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::state::State;
 use crate::ast::{Instr, Program};
 
-/// Does this loop have at least one `Instr::If` exit? Used to distinguish
-/// "natural" loops with comparison-based exits (where domain refinement on
-/// the exit branch handles termination) from may_goto-only loops where the
-/// runtime budget is the only termination guarantee.
-pub(super) fn loop_has_if_exit(env: &VerifierEnv, state: &State, pc: usize, prog: &Program) -> bool {
-    if let Some(idx) = state.history_idx {
-        let body_pcs = env.history.loop_body_pcs(idx, pc, Some(state.num_frames()));
-        for body_pc in body_pcs {
-            if body_pc < prog.instrs.len()
-                && matches!(prog.instrs[body_pc], Instr::If { .. })
-            {
-                return true;
-            }
-        }
-    }
-    if pc < prog.instrs.len() && matches!(prog.instrs[pc], Instr::If { .. }) {
-        return true;
-    }
-    false
-}
-
 pub(super) fn loop_has_conditional_exit(env: &VerifierEnv, state: &State, pc: usize, prog: &Program) -> bool {
     if let Some(idx) = state.history_idx {
         // Only check PCs at the same frame depth (excludes callee instructions)
