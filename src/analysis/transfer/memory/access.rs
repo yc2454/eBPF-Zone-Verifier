@@ -354,6 +354,34 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
             }
         }
         ScalarValue | NotInit => {
+            // Base-verifier mode (no BCF round-trip): `state.bcf` is None,
+            // so there is no bundle and no kernel oracle to re-check a
+            // dropped path. zovia IS the verifier here, so a load via a
+            // scalar / uninitialized base is a hard reject — exactly as the
+            // kernel's `check_mem_access` rejects "R%d invalid mem access".
+            // Without this, the unprovable-path DROP below (which exists
+            // only to keep DFS alive under BCF, where the kernel catches a
+            // truly-reachable site via canonical-hash MISS) silently turns
+            // every use-after-release / use-after-free / invalidated-pointer
+            // deref into a soundness FALSE_ACCEPT
+            // (verifier_ref_tracking::*_after_release, dynptr slice
+            // use-after-release, test_sk_lookup_kern::err_use_after_free, …).
+            // Mirrors the already-correct gating in `check_reg_readable`
+            // (common.rs) and `try_discharge_helper_arg_reject`, which both
+            // fall through to `fail` when the BCF emit is inert.
+            if state.bcf.is_none() {
+                error!(
+                    "[Verifier] pc {}: invalid mem access via scalar/uninit base {:?}+{} size {}",
+                    pc, base, off, size
+                );
+                env.fail(VerificationError::UnsafeGenericLoad {
+                    pc,
+                    base,
+                    off,
+                    base_type,
+                });
+                return;
+            }
             // The single-pass userspace-BCF kernel is a bundle proof
             // CHECKER only: no in-kernel prover, no solver, and — unlike
             // two-pass BCF's set6 `detect_conflict_eq`, which is NOT
