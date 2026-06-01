@@ -19,7 +19,6 @@ use crate::parsing::elf::{
 };
 use crate::parsing::elf::{
     program_kind_for_object, try_load_combined_program_from_elf, try_load_function_from_elf,
-    try_load_function_with_subprogs_from_elf,
     try_load_program_from_elf,
 };
 use std::path::Path;

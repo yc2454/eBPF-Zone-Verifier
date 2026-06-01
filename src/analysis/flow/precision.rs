@@ -12,7 +12,7 @@
 // Free functions over `&VerifierEnv`, matching the flow/ convention; the
 // BacktrackState struct's own methods keep `self` (it is the receiver).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::reg::Reg;

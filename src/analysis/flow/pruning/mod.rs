@@ -19,7 +19,7 @@ use crate::common::config::VerifierConfig;
 use subsumption::{iter_active_depths_differ, state_exact_equal, state_subsumed_by};
 use widening::{
     arrived_via_back_edge, is_at_loop_point, is_prune_point, loop_body_has_force_checkpoint,
-    loop_has_conditional_exit, loop_has_if_exit, this_loop_iter_pre_widening,
+    loop_has_conditional_exit, this_loop_iter_pre_widening,
 };
 
 /// Mirrors the kernel's "skip_inf_loop_check" paths in `is_state_visited`

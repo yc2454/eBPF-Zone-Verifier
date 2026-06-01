@@ -487,8 +487,6 @@ pub(crate) fn transfer_if(
         // Pre-compute backward_jump check (uses env immutably via closure)
         // before the speculation call (uses env mutably).
         let then_backward_forbidden = outcome && backward_jump_forbidden(&state_then);
-        // Drop the closure before mutably borrowing env.
-        drop(backward_jump_forbidden);
         let dead_state = if outcome { &state_else } else { &state_then };
         // Eager path-unreachable speculation is NOT a BCF mechanism:
         // every `bcf_prove_unreachable` call site in BCF (set1/0014) is
