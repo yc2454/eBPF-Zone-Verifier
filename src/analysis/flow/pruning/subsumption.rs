@@ -228,6 +228,24 @@ pub(super) fn state_subsumed_by(
         return Err(SubsumptionMissReason::ActiveLock);
     }
 
+    // Active synchronization depth (RCU read-side / preempt-disable / IRQ).
+    // These are part of the kernel verifier state and `states_equal`
+    // compares them exactly. They are NOT range-narrowable: a `cur` that
+    // holds an open RCU read section (or preempt/IRQ) which `old` does not
+    // carries an unreleased-section exit obligation (kernel rejects an exit
+    // with a non-baseline rcu_read_depth) AND a different set of
+    // allowed helpers along its continuation, neither of which `old`'s
+    // continuation checked. Pruning it drops the held-section exit path and
+    // FALSE-ACCEPTs (rcu_read_lock::non_sleepable_rcu_mismatch — same shape
+    // as the spin-lock case). Require exact equality.
+    if old.rcu_read_depth != cur.rcu_read_depth
+        || old.implicit_rcu_at_entry != cur.implicit_rcu_at_entry
+        || old.active_preempt_locks != cur.active_preempt_locks
+        || old.acquired_irq_ids != cur.acquired_irq_ids
+    {
+        return Err(SubsumptionMissReason::ActiveLock);
+    }
+
     // `old` must have at least as much may_goto budget remaining as
     // `cur`, otherwise pruning would let `cur` continue under behaviours
     // `old` never explored (old already exhausted the budget on a path cur
@@ -342,7 +360,14 @@ fn linkage_key(state: &State, r: Reg) -> Option<(LinkageKind, u32)> {
 /// the wrong identity. See `verifier_spin_lock::reg_id_for_map_value`.
 fn active_lock_subsumed_by(cur: &State, old: &State, live_regs: &HashSet<Reg>) -> bool {
     let Some(old_lock) = old.get_active_lock() else {
-        return true;
+        // `old` holds no lock. It can only subsume `cur` if `cur` also
+        // holds no lock: a lock-held `cur` carries an unreleased-lock exit
+        // obligation (kernel "BPF_EXIT ... inside bpf_spin_lock-ed region")
+        // that the no-lock `old`'s continuation never checked. Pruning it
+        // here drops the lock-held exit path and FALSE-ACCEPTs
+        // (verifier_spin_lock::spin_lock_test6_missing_unlock). Mirrors the
+        // kernel `states_equal` lock-state comparison.
+        return cur.get_active_lock().is_none();
     };
     let cur_lock_ptr = cur.get_active_lock().map(|l| l.ptr_id);
     for &r in live_regs {
