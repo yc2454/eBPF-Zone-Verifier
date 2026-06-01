@@ -282,13 +282,17 @@ pub(crate) fn refine_branch(state: &mut State, instr: &Instr, branch_taken: bool
 fn maybe_demote_or_null_to_scalar(state: &mut State, reg: Reg) {
     let target_id = match state.types.get(reg) {
         RegType::PtrToMapValueOrNull { id, .. } => id,
-        RegType::PtrToBtfIdOrNull { id, .. } => id,
+        // Acquired-ref BTF OrNull (ref_id Some) is owned by
+        // `maybe_refine_acquired_ref`, which both demotes AND releases the
+        // ref on the null branch. Demoting it to ScalarValue here would
+        // erase the ref_id before that runs, leaking the reference.
+        RegType::PtrToBtfIdOrNull { id, ref_id: None, .. } => id,
         _ => return,
     };
     for r in Reg::ALL {
         let same_id = match state.types.get(r) {
             RegType::PtrToMapValueOrNull { id, .. } if id == target_id => true,
-            RegType::PtrToBtfIdOrNull { id, .. } if id == target_id => true,
+            RegType::PtrToBtfIdOrNull { id, ref_id: None, .. } if id == target_id => true,
             _ => false,
         };
         if same_id {
