@@ -172,7 +172,7 @@ fn handle_loop_pruning(
         // pull cached's precise-mark set into cur's parent-cache lineage
         // so the path's continuation tracks the same precision contract.
         if let Some(prev) = env.explored_states.get(&pc).and_then(|v| v.get(idx)).cloned() {
-            env.propagate_precision(state, &prev);
+            crate::analysis::flow::precision::propagate_precision(env, state, &prev);
             // SCC: at a force_exact hit, propagate prev's loop_entry to
             // cur (verifier.c L19178). cur is about to be pruned and
             // complete_dfs_branch will walk up; carrying the loop_entry
@@ -269,7 +269,7 @@ fn handle_standard_pruning(
         record_pruning_hit(env, pc, idx);
         // Kernel-aligned propagate_precision (per-path lineage walk).
         if let Some(prev) = env.explored_states.get(&pc).and_then(|v| v.get(idx)).cloned() {
-            env.propagate_precision(state, &prev);
+            crate::analysis::flow::precision::propagate_precision(env, state, &prev);
         }
         true
     } else {

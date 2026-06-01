@@ -386,9 +386,9 @@ pub(crate) fn transfer_if(
         && condition_outcome(&state, width, left, op, &right).is_some()
     {
         let pcid = state.parent_cache_id;
-        env.mark_chain_precision_backward(hidx, pcid, left);
+        crate::analysis::flow::precision::mark_chain_precision_backward(env, hidx, pcid, left);
         if let Operand::Reg(r) = right {
-            env.mark_chain_precision_backward(hidx, pcid, r);
+            crate::analysis::flow::precision::mark_chain_precision_backward(env, hidx, pcid, r);
         }
     }
 
@@ -661,7 +661,7 @@ fn unreachable_base_pc(env: &VerifierEnv, state: &State) -> Option<usize> {
     // helper-call argument's only definition).
     let hidx = env.current_step_idx.or(state.history_idx)?;
     let targets = filter_live_unknown_targets(env, state, Some(hidx), targets);
-    env.bcf_suffix_base_pc(hidx, state.parent_cache_id, &targets)
+    crate::analysis::flow::precision::bcf_suffix_base_pc(env, hidx, state.parent_cache_id, &targets)
 }
 
 /// Kernel-faithful `reg_masks` tightening (cont.20): drop a reject `reg_masks`
@@ -788,12 +788,12 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
         if std::env::var("ZOVIA_BCF_REJECT_PRECISE").ok().as_deref() == Some("1") {
             if let Some(h) = hidx {
                 for &r in &targets {
-                    env.mark_chain_precision_backward(h, state.parent_cache_id, r);
+                    crate::analysis::flow::precision::mark_chain_precision_backward(env, h, state.parent_cache_id, r);
                 }
             }
         }
         let landed = hidx.and_then(|hidx| {
-            env.bcf_suffix_base_pc_and_cache_id(hidx, state.parent_cache_id, &targets)
+            crate::analysis::flow::precision::bcf_suffix_base_pc_and_cache_id(env, hidx, state.parent_cache_id, &targets)
         });
         // Use only the immediate cache the suffix walker landed on (no
         // chain-skip). A previous attempt walked back through

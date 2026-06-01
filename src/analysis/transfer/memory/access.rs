@@ -74,7 +74,7 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
         && base != Reg::R10
         && let Some(&sink) = state.var_off_contributor.get(&base)
     {
-        env.mark_chain_precision_backward(hidx, state.parent_cache_id, sink);
+        crate::analysis::flow::precision::mark_chain_precision_backward(env, hidx, state.parent_cache_id, sink);
     }
     let _ = base_has_variable_offset;
 
@@ -459,7 +459,7 @@ pub fn check_store(
     if let Some(hidx) = state.history_idx
         && let Some(&offset_reg) = state.var_off_contributor.get(&base)
     {
-        env.mark_chain_precision_backward(hidx, state.parent_cache_id, offset_reg);
+        crate::analysis::flow::precision::mark_chain_precision_backward(env, hidx, state.parent_cache_id, offset_reg);
     }
     let _ = base_has_variable_offset;
 

@@ -37,7 +37,7 @@ fn try_bcf_refine_stack(
     // (mirrors try_emit_path_unreachable_entry's wiring).
     let landed = state
         .history_idx
-        .and_then(|hidx| env.bcf_suffix_base_pc_and_cache_id(hidx, state.parent_cache_id, &[base]));
+        .and_then(|hidx| crate::analysis::flow::precision::bcf_suffix_base_pc_and_cache_id(env, hidx, state.parent_cache_id, &[base]));
     let base_pc = landed.map(|(pc, _)| pc);
     let prev_insn_pc = landed.and_then(|(_, cid)| env.cached_prev_insn_pc(cid));
     let Some(ok) = try_refine_stack_oob(state, base, instruction_offset, size, base_pc, prev_insn_pc) else {

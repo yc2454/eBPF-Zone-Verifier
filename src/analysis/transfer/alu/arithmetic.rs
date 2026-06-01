@@ -87,7 +87,7 @@ pub(crate) fn handle_add(
                 // kernel's sink location and closes that ordering gap.
                 if let Some(hidx) = state.history_idx {
                     let pcid = state.parent_cache_id;
-                    env.mark_chain_precision_backward(hidx, pcid, *r);
+                    crate::analysis::flow::precision::mark_chain_precision_backward(env, hidx, pcid, *r);
                 }
 
                 let (lo, hi) = state.domain.get_interval(*r);

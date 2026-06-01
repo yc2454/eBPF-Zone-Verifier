@@ -443,7 +443,7 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         && exit_enforces_retval
         && let Some(hidx) = state.history_idx
     {
-        env.mark_chain_precision_backward(hidx, state.parent_cache_id, Reg::R0);
+        crate::analysis::flow::precision::mark_chain_precision_backward(env, hidx, state.parent_cache_id, Reg::R0);
     }
 
     // per-attach-type retval range. When a finer rule applies
@@ -669,7 +669,7 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         // (verifier.c v6.15 prepare_func_exit L10862). Per-path
         // lineage walk via parent_cache_id.
         if let Some(hidx) = state.history_idx {
-            env.mark_chain_precision_backward(hidx, state.parent_cache_id, Reg::R0);
+            crate::analysis::flow::precision::mark_chain_precision_backward(env, hidx, state.parent_cache_id, Reg::R0);
         }
         // bpf_loop / bpf_for_each_map_elem / bpf_user_ringbuf_drain
         // callbacks must return 0 (continue) or 1 (break). Timer callbacks

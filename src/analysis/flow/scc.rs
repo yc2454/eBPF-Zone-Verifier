@@ -412,7 +412,7 @@ pub fn maybe_exit_scc(env: &mut VerifierEnv, cid: u32) {
             if let Some(hidx) = be.state.history_idx {
                 let before = env.precise_pcs.len();
                 for r in precise {
-                    env.mark_chain_precision_backward(hidx, be.state.parent_cache_id, r);
+                    crate::analysis::flow::precision::mark_chain_precision_backward(env, hidx, be.state.parent_cache_id, r);
                 }
                 if env.precise_pcs.len() != before {
                     changed = true;
