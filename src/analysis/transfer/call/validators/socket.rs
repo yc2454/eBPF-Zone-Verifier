@@ -13,6 +13,23 @@ use super::super::signatures::ArgKind;
 /// Validates socket-related argument types.
 /// Handles PtrToSocket, PtrToSockCommon, and PtrToBTFIdSockCommon.
 pub fn validate_socket_arg(ctx: &mut ValidationContext, expected: ArgKind) -> bool {
+    // bpf_sk_assign in an SK_LOOKUP program accepts a NULL sock (clears the
+    // current selection) — the kernel proto for bpf_sk_lookup_assign is
+    // ARG_PTR_TO_SOCKET | PTR_MAYBE_NULL. zovia maps it to BPF_SK_ASSIGN
+    // with a non-null sock arg, so the standard `bpf_sk_assign(ctx, NULL, ...)`
+    // pattern FALSE-REJECTed. Accept a proven-NULL scalar here, but ONLY for
+    // SK_LOOKUP: the TC/sched-act bpf_sk_assign requires a non-NULL
+    // ARG_PTR_TO_SOCK_COMMON, so accepting NULL unconditionally would be an
+    // FA on a TC program (the kernel rejects TC bpf_sk_assign(skb, NULL)).
+    if ctx.helper == crate::common::constants::BPF_SK_ASSIGN
+        && ctx.arg_index == 1
+        && matches!(ctx.env.ctx.prog_kind, crate::ast::ProgramKind::SkLookup)
+        && ctx.actual.is_scalar()
+        && ctx.state.domain.proven_zero(ctx.reg)
+    {
+        return true;
+    }
+
     let actual = &ctx.actual;
 
     let (compat_table, type_name) = match expected {
