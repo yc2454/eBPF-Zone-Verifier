@@ -72,6 +72,23 @@ impl NumericDomain {
                 let st = ivl.get_bounds(x);
                 if st.smin >= i32::MIN as i64 && st.smax <= i32::MAX as i64 {
                     (st.smin as i32, st.smax as i32)
+                } else if st.smin >= 0 && st.smax <= u32::MAX as i64 {
+                    // A zero-extended 32-bit value (e.g. `w0 = -EPERM` lowers
+                    // to a W32 mov of 0xFFFFFFFF → u64 4294967295). The kernel
+                    // `retval_range_s32` (and 32-bit ALU bounds) interpret the
+                    // low 32 bits as SIGNED, so 0xFFFFFFFF reads as -1, not a
+                    // huge positive. Reinterpret — but only when the u32 range
+                    // does not straddle the sign boundary 0x80000000, where the
+                    // s32 view wraps and is not a contiguous interval. Without
+                    // this, LSM int-hooks returning `-EPERM` FALSE-REJECT
+                    // ("Invalid return code", expected range [-4095, 0]).
+                    let lo = st.smin as u32 as i32;
+                    let hi = st.smax as u32 as i32;
+                    if lo <= hi {
+                        (lo, hi)
+                    } else {
+                        (i32::MIN, i32::MAX)
+                    }
                 } else {
                     (i32::MIN, i32::MAX)
                 }
