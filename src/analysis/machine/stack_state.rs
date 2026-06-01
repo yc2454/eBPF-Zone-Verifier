@@ -294,11 +294,6 @@ impl StackState {
         std::sync::Arc::make_mut(&mut self.slots)
     }
 
-    /// Read-only iteration over `(offset, slot)`. Free — no CoW.
-    pub fn iter(&self) -> std::collections::btree_map::Iter<'_, i16, SpilledReg> {
-        self.slots.iter()
-    }
-
     /// Mutable iteration. Triggers CoW on first call after a fork.
     pub fn iter_mut(&mut self) -> std::collections::btree_map::IterMut<'_, i16, SpilledReg> {
         self.slots_mut().iter_mut()

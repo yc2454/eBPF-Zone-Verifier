@@ -1,4 +1,7 @@
+pub mod callback_analysis;
 pub mod cfg;
+pub mod precision;
+pub mod diag;
 pub mod liveness;
 pub mod merging;
 pub mod pruning;

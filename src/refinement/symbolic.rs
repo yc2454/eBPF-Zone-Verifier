@@ -158,7 +158,7 @@ pub struct SymbolicState {
     ///
     /// `None` for bound preds and branch path_conds whose LHS isn't a
     /// reg-backed scalar (e.g. JSET with non-reg LHS).
-    pub path_cond_lhs_meta: Vec<Option<(usize, Option<usize>, bool, RegBounds)>>,
+    pub path_cond_lhs_meta: Vec<Option<(usize, Option<usize>, bool, RegBounds, RegBounds)>>,
     /// Final refinement condition (set by a site-specific callback).
     pub refine_cond: Option<u32>,
     /// Transient: the PC currently being processed by symbolic-tracking
@@ -298,17 +298,20 @@ impl SymbolicState {
     /// Zero-extend a 32-bit value to 64 bits. Compatibility shim for the
     /// existing `bcf_alu` mirror code; prefer `add_extend(false, 32, 64, _)`
     /// in new code.
+    #[allow(dead_code)]
     pub fn zext_32_to_64(&mut self, arg: u32) -> u32 {
         self.add_extend(false, 32, 64, arg)
     }
 
     /// Sign-extend a 32-bit value to 64 bits. Compatibility shim.
+    #[allow(dead_code)]
     pub fn sext_32_to_64(&mut self, arg: u32) -> u32 {
         self.add_extend(true, 32, 64, arg)
     }
 
     /// Extract the low `size` bits of `arg`. Compatibility shim that wraps
     /// [`add_extract`]; existing callers may pass `u8` — keep them working.
+    #[allow(dead_code)]
     pub fn extract_lo(&mut self, size: u8, arg: u32) -> u32 {
         self.add_extract(size as u16, arg)
     }
@@ -359,6 +362,7 @@ impl SymbolicState {
     /// Append a path condition (an expression that must hold on the current path).
     /// PC defaults to `self.current_pc` — callers that have explicit source-PC
     /// context should call [`add_cond_at`] instead.
+    #[allow(dead_code)]
     pub fn add_cond(&mut self, pred_idx: u32) {
         let pc = self.current_pc;
         self.add_cond_at(pred_idx, pc);
@@ -368,6 +372,7 @@ impl SymbolicState {
     /// passes the JMP insn's PC; the [`filter_path_conds_from_pc`] cutoff
     /// drops entries strictly below `base_pc` to mirror the kernel's
     /// `bcf_track` suffix-only br_cond emission.
+    #[allow(dead_code)]
     pub fn add_cond_at(&mut self, pred_idx: u32, pc: usize) {
         if std::env::var("ZOVIA_TRACE_PATH_COND").ok().as_deref() == Some("1") {
             let (lo, hi) = std::env::var("ZOVIA_TRACE_PATH_COND_RANGE")
@@ -407,7 +412,7 @@ impl SymbolicState {
         pred_idx: u32,
         pc: usize,
         narrowed: Option<(u64, u8, bool, Option<usize>)>,
-        lhs_meta: Option<(usize, Option<usize>, bool, RegBounds)>,
+        lhs_meta: Option<(usize, Option<usize>, bool, RegBounds, RegBounds)>,
     ) {
         self.path_conds.push(pred_idx);
         self.path_cond_pcs.push(pc);
@@ -598,7 +603,7 @@ impl SymbolicState {
             }
             if self.path_cond_is_branch[i] {
                 let keep = match self.path_cond_lhs_meta[i] {
-                    Some((reg, _, _, _)) => goal_regs.contains(&reg),
+                    Some((reg, _, _, _, _)) => goal_regs.contains(&reg),
                     None => true, // non-reg-LHS branch: keep conservatively
                 };
                 if keep {
@@ -670,7 +675,7 @@ impl SymbolicState {
             if !self.path_cond_is_branch[i] {
                 continue;
             }
-            if let Some((reg, _, _, _)) = self.path_cond_lhs_meta[i] {
+            if let Some((reg, _, _, _, _)) = self.path_cond_lhs_meta[i] {
                 let pc = self.path_cond_pcs[i];
                 if seed_pc.map(|p| pc >= p).unwrap_or(true) {
                     seed_pc = Some(pc);
@@ -1038,6 +1043,7 @@ impl SymbolicState {
     /// Phase 1 simplification: always 64-bit (BCF picks 32 or 64 based on
     /// `fit_u32/fit_s32`; we'll add the 32-bit fast path in Phase 2 if the
     /// formula size matters).
+    #[allow(dead_code)]
     pub fn materialize_reg64(&mut self, reg: usize) -> u32 {
         if let Some(idx) = self.reg_expr[reg] {
             return idx;
@@ -1056,6 +1062,7 @@ impl SymbolicState {
     // ---------- queries ----------
 
     /// Total expression-table size in u32 slots (matches the on-disk `expr_cnt`).
+    #[allow(dead_code)]
     pub fn expr_slot_count(&self) -> u32 {
         self.next_slot
     }
@@ -1075,6 +1082,7 @@ impl SymbolicState {
     /// Build a [`BcfProof`] artifact whose `exprs` is the current DAG and whose
     /// `steps` is empty. Useful for serializing the formula (without a proof
     /// yet) — e.g., to hash it canonically or feed it to an SMT-LIB encoder.
+    #[allow(dead_code)]
     pub fn to_proof_no_steps(&self) -> BcfProof {
         BcfProof {
             exprs: self.exprs.clone(),

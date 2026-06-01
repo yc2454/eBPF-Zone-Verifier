@@ -1,3 +1,4 @@
+pub mod cache;
 // src/analysis/flow/pruning/mod.rs
 //
 // Pruning orchestration: should_prune, handle_loop_pruning,
@@ -18,7 +19,7 @@ use crate::common::config::VerifierConfig;
 use subsumption::{iter_active_depths_differ, state_exact_equal, state_subsumed_by};
 use widening::{
     arrived_via_back_edge, is_at_loop_point, is_prune_point, loop_body_has_force_checkpoint,
-    loop_has_conditional_exit, loop_has_if_exit, this_loop_iter_pre_widening,
+    loop_has_conditional_exit, this_loop_iter_pre_widening,
 };
 
 /// Mirrors the kernel's "skip_inf_loop_check" paths in `is_state_visited`
@@ -134,7 +135,7 @@ fn handle_loop_pruning(
             // in regsafe and caused convergence failure (loop4 → 1M
             // insns / 0 prunes; ksnoop AND mode → 970k bundle entries
             // at one PC).
-            let force_exact = env.incomplete_read_marks(prev);
+            let force_exact = crate::analysis::flow::scc::incomplete_read_marks(env, prev);
             match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
                 Ok(()) => {
                     if crate::analysis::trace_pc_in_range(pc) {
@@ -171,7 +172,7 @@ fn handle_loop_pruning(
         // pull cached's precise-mark set into cur's parent-cache lineage
         // so the path's continuation tracks the same precision contract.
         if let Some(prev) = env.explored_states.get(&pc).and_then(|v| v.get(idx)).cloned() {
-            env.propagate_precision(state, &prev);
+            crate::analysis::flow::precision::propagate_precision(env, state, &prev);
             // SCC: at a force_exact hit, propagate prev's loop_entry to
             // cur (verifier.c L19178). cur is about to be pruned and
             // complete_dfs_branch will walk up; carrying the loop_entry
@@ -180,10 +181,10 @@ fn handle_loop_pruning(
             if prev.branches > 0 {
                 let le = prev
                     .cache_id
-                    .and_then(|cid| env.get_loop_entry(cid))
+                    .and_then(|cid| crate::analysis::flow::scc::get_loop_entry(env, cid))
                     .or(prev.cache_id);
                 if let Some(lcid) = le {
-                    env.update_loop_entry(state, lcid);
+                    crate::analysis::flow::scc::update_loop_entry(env, state, lcid);
                 }
             }
             // Kernel-faithful add_scc_backedge gate (verifier.c v6.15
@@ -202,10 +203,10 @@ fn handle_loop_pruning(
             // converge naturally; iter loops handle their own
             // convergence via widen_imprecise_scalars at iter_next
             // (kfunc.rs::iter_next_fork — independent of backedges).
-            if env.incomplete_read_marks(&prev)
+            if crate::analysis::flow::scc::incomplete_read_marks(env, &prev)
                 && let Some(prev_cid) = prev.cache_id
             {
-                env.add_scc_backedge(state, prev_cid, pc);
+                crate::analysis::flow::scc::add_scc_backedge(env, state, prev_cid, pc);
             }
         }
         env.pruning_stats.loop_walks_pruned_via_convergence += 1;
@@ -243,7 +244,7 @@ fn handle_standard_pruning(
             }
             // Kernel-faithful force_exact (see matching block above for
             // full rationale and history).
-            let force_exact = env.incomplete_read_marks(prev);
+            let force_exact = crate::analysis::flow::scc::incomplete_read_marks(env, prev);
             match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
                 Ok(()) => {
                     hit_idx = Some(i);
@@ -268,7 +269,7 @@ fn handle_standard_pruning(
         record_pruning_hit(env, pc, idx);
         // Kernel-aligned propagate_precision (per-path lineage walk).
         if let Some(prev) = env.explored_states.get(&pc).and_then(|v| v.get(idx)).cloned() {
-            env.propagate_precision(state, &prev);
+            crate::analysis::flow::precision::propagate_precision(env, state, &prev);
         }
         true
     } else {
@@ -312,6 +313,22 @@ pub fn should_prune(
 
     if std::env::var("ZOVIA_NO_PRUNE").is_ok() {
         return false;
+    }
+
+    // EXPERIMENT (no_log proto-arm investigation 2026-05-31): windowed
+    // prune-disable. `ZOVIA_NO_PRUNE_WINDOW=lo:hi` suppresses subsumption
+    // for pc in [lo,hi], keeping sibling trajectories (e.g. the proto>5
+    // and proto<=5 arms of the pc506 switch) DISTINCT through that window
+    // so the kernel's per-arm reject discharge (base 530 / hash 78171d)
+    // can be reproduced. Scoped to avoid the pc1190-1330 fan-out E2BIG.
+    if let Ok(w) = std::env::var("ZOVIA_NO_PRUNE_WINDOW") {
+        if let Some((lo, hi)) = w.split_once(':') {
+            if let (Ok(lo), Ok(hi)) = (lo.parse::<usize>(), hi.parse::<usize>()) {
+                if pc >= lo && pc <= hi {
+                    return false;
+                }
+            }
+        }
     }
 
     env.pruning_stats.should_prune_calls += 1;

@@ -57,15 +57,24 @@ pub fn check_load(env: &mut VerifierEnv, state: &State, base: Reg, size: i64, of
     // Skip R10 — the frame pointer is never re-assigned, so walking
     // from it is a no-op that just marks R10 precise on history's worth
     // of cached states (wasted work, no behavior change).
+    // Mark precise ONLY the scalar that supplied the access's variable
+    // offset (`ptr += Reg(scalar)`), never the bare pointer base. The
+    // kernel's `mark_chain_precision` is scalar-only: a pointer
+    // dereference marks the scalar offset contributor precise (for the
+    // bounds check), not the pointer register itself. The previous
+    // `unwrap_or(base)` fallback marked the pointer base precise on every
+    // fixed-offset load, which then propagated (via `propagate_precision`)
+    // to scalar incarnations of that register downstream — the no_log
+    // R5-accumulator over-precision: `Load base=R5` at the calico_tc_main
+    // reject (R5 = MapValue ptr) seeded R5∈precise, which spread to the
+    // scalar-accumulator R5 at the fan-out pc and blocked subsumption.
+    // `check_store` (below) already marks contributor-only; this makes the
+    // load path consistent and kernel-faithful.
     if let Some(hidx) = state.history_idx
         && base != Reg::R10
+        && let Some(&sink) = state.var_off_contributor.get(&base)
     {
-        let sink = state
-            .var_off_contributor
-            .get(&base)
-            .copied()
-            .unwrap_or(base);
-        env.mark_chain_precision_backward(hidx, state.parent_cache_id, sink);
+        crate::analysis::flow::precision::mark_chain_precision_backward(env, hidx, state.parent_cache_id, sink);
     }
     let _ = base_has_variable_offset;
 
@@ -450,7 +459,7 @@ pub fn check_store(
     if let Some(hidx) = state.history_idx
         && let Some(&offset_reg) = state.var_off_contributor.get(&base)
     {
-        env.mark_chain_precision_backward(hidx, state.parent_cache_id, offset_reg);
+        crate::analysis::flow::precision::mark_chain_precision_backward(env, hidx, state.parent_cache_id, offset_reg);
     }
     let _ = base_has_variable_offset;
 

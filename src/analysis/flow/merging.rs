@@ -156,7 +156,7 @@ pub fn record_state(
         }
     }
 
-    if crate::analysis::machine::env::dump_cache_growth_enabled() {
+    if crate::analysis::flow::diag::dump_cache_growth_enabled() {
         let states_now = env.explored_states.get(&pc).map(|v| v.as_slice()).unwrap_or(&[]);
         let mut sigs: std::collections::HashSet<String> = std::collections::HashSet::new();
         for s in states_now {
@@ -177,7 +177,7 @@ pub fn record_state(
         );
     }
 
-    if let Some(target_pc) = crate::analysis::machine::env::dump_cache_growth_pc() {
+    if let Some(target_pc) = crate::analysis::flow::diag::dump_cache_growth_pc() {
         if pc == target_pc {
             let states_now =
                 env.explored_states.get(&pc).map(|v| v.as_slice()).unwrap_or(&[]);
@@ -203,7 +203,7 @@ pub fn record_state(
         }
     }
 
-    if let Some(target_pc) = crate::analysis::machine::env::dump_precise_pcs_pc()
+    if let Some(target_pc) = crate::analysis::flow::diag::dump_precise_pcs_pc()
         && pc == target_pc
     {
         let mut entries: Vec<(usize, crate::analysis::machine::reg::Reg)> =
@@ -247,7 +247,7 @@ pub fn record_state(
         .and_then(|v| v.iter().find(|s| s.cache_id == Some(cache_id)))
         .cloned()
     {
-        env.maybe_enter_scc(&cached, cache_id);
+        crate::analysis::flow::scc::maybe_enter_scc(env, &cached, cache_id);
     }
 
     cache_id

@@ -214,6 +214,7 @@ fn _operand_anchor(_: &Operand) {}
 // ════════════════════════════════════════════════════════════════════
 
 use crate::analysis::machine::frame_stack::FrameLevel;
+use crate::analysis::machine::reg::Reg;
 use crate::analysis::machine::state::State;
 use std::collections::HashMap;
 
@@ -242,6 +243,7 @@ pub struct SccCallchain {
 pub struct SccBackedge {
     pub state: State,
     pub equal_state_cache_id: u32,
+    #[allow(dead_code)]
     pub insn_idx: usize,
 }
 
@@ -307,3 +309,315 @@ pub fn compute_scc_callchain(
 /// `VerifierEnv.scc_visits`. Allocated lazily on first
 /// `maybe_enter_scc` for a callchain.
 pub type SccVisitMap = HashMap<SccCallchain, SccVisit>;
+
+// ───────────────────────────────────────────────────────────────────
+// SCC-visit / loop-entry runtime bookkeeping (moved from machine/env.rs).
+// Free functions over `&mut VerifierEnv`, matching this module's
+// compute_scc / compute_scc_callchain convention.
+// ───────────────────────────────────────────────────────────────────
+/// Mirror of kernel `maybe_enter_scc` (verifier.c v6.15 L2228).
+/// Called on every cache event (right after `record_state` mints
+/// a new cache_id). If the new state's frame chain leads into an
+/// SCC, ensure a `SccVisit` entry exists for its callchain; if
+/// the visit is fresh (no entry_state recorded yet), assign
+/// `entry_state_cache_id = cid` so we know which cached state to
+/// pair with `maybe_exit_scc` when its DFS subtree drains.
+pub fn maybe_enter_scc(env: &mut VerifierEnv, state: &State, cid: u32) {
+    let Some(callchain) =
+        crate::analysis::flow::scc::compute_scc_callchain(state, &env.insn_aux_data)
+    else {
+        return;
+    };
+    let visit = env.scc_visits.entry(callchain).or_default();
+    if visit.entry_state_cache_id.is_none() {
+        visit.entry_state_cache_id = Some(cid);
+    }
+}
+
+/// Mirror of kernel `maybe_exit_scc` (verifier.c v6.15 L2253).
+/// Called from `complete_dfs_branch` when a cached state's
+/// `branches` first hits 0. If that state was the SCC visit's
+/// `entry_state`, the visit is now done — flush backedges via
+/// `propagate_backedges` (landed in step 3) and clear
+/// `entry_state_cache_id` so a later re-entry creates a fresh
+/// visit.
+///
+pub fn maybe_exit_scc(env: &mut VerifierEnv, cid: u32) {
+    // Identify the callchain belonging to `cid`'s cached state.
+    let Some(&(pc, idx)) = env.cache_loc_by_id.get(&cid) else {
+        return;
+    };
+    // Snapshot the State so we can compute the callchain without
+    // holding a long mutable borrow.
+    let state_snapshot = match env
+        .explored_states
+        .get(&pc)
+        .and_then(|v| v.get(idx))
+    {
+        Some(s) => s.clone(),
+        None => return,
+    };
+    let Some(callchain) =
+        crate::analysis::flow::scc::compute_scc_callchain(&state_snapshot, &env.insn_aux_data)
+    else {
+        return;
+    };
+    // Check entry + take backedges out without holding a long borrow.
+    let backedges = {
+        let Some(visit) = env.scc_visits.get_mut(&callchain) else {
+            return;
+        };
+        if visit.entry_state_cache_id != Some(cid) {
+            return;
+        }
+        visit.entry_state_cache_id = None;
+        std::mem::take(&mut visit.backedges)
+    };
+    // Kernel `propagate_backedges` (verifier.c v6.15 L20079):
+    // iterate the backedges list, calling propagate_precision on
+    // each until fixpoint or MAX_BACKEDGE_ITERS. Each iteration
+    // propagates precision marks from equal_state into the
+    // backedge state's lineage. Kernel caps at 64; beyond that
+    // it falls back to mark_all_scalars_precise on every
+    // backedge (conservative).
+    const MAX_BACKEDGE_ITERS: usize = 64;
+    if backedges.is_empty() {
+        return;
+    }
+    for _ in 0..MAX_BACKEDGE_ITERS {
+        let mut changed = false;
+        for be in &backedges {
+            // Look up equal_state by cache_id; if evicted, skip
+            // this backedge.
+            let Some(&(epc, eidx)) = env.cache_loc_by_id.get(&be.equal_state_cache_id) else {
+                continue;
+            };
+            let Some(equal_state) = env
+                .explored_states
+                .get(&epc)
+                .and_then(|v| v.get(eidx))
+                .cloned()
+            else {
+                continue;
+            };
+            // propagate_precision(cur=be.state, old=equal_state)
+            // — pull equal_state's precise_regs into be.state's
+            // ancestor lineage (parent_cache_id chain). The
+            // method already exists for the same purpose in
+            // standard subsumption hits; here we run it
+            // post-hoc per backedge.
+            let precise: Vec<Reg> = equal_state.precise_regs.iter().copied().collect();
+            if precise.is_empty() {
+                continue;
+            }
+            if let Some(hidx) = be.state.history_idx {
+                let before = env.precise_pcs.len();
+                for r in precise {
+                    crate::analysis::flow::precision::mark_chain_precision_backward(env, hidx, be.state.parent_cache_id, r);
+                }
+                if env.precise_pcs.len() != before {
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+}
+
+/// Mirror of kernel `incomplete_read_marks` (verifier.c v6.15
+/// L2327). Returns true iff the cached state's SCC visit has any
+/// pending backedges (i.e., the SCC hasn't yet been processed by
+/// `propagate_backedges`). Used in step 4 to gate
+/// RANGE_WITHIN vs NOT_EXACT subsumption strictness — replaces
+/// zovia's current `prev.branches > 0` approximation.
+pub fn incomplete_read_marks(env: &VerifierEnv, state: &State) -> bool {
+    let Some(callchain) =
+        crate::analysis::flow::scc::compute_scc_callchain(state, &env.insn_aux_data)
+    else {
+        return false;
+    };
+    env.scc_visits
+        .get(&callchain)
+        .map(|v| !v.backedges.is_empty())
+        .unwrap_or(false)
+}
+
+/// Add a backedge to the SCC visit owning `equal_state_cache_id`'s
+/// callchain. Called from handle_loop_pruning at the hit point
+/// when the cached state belongs to an open SCC visit. Mirror of
+/// kernel `add_scc_backedge` (verifier.c v6.15 L2295).
+pub fn add_scc_backedge(
+    env: &mut VerifierEnv,
+    cur: &State,
+    equal_state_cache_id: u32,
+    insn_idx: usize,
+) {
+    // The kernel keys add_scc_backedge on `sl->state` (the cached
+    // state we hit against) — same callchain as cur because both
+    // are in the same SCC visit instance.
+    let Some(&(epc, eidx)) = env.cache_loc_by_id.get(&equal_state_cache_id) else {
+        return;
+    };
+    let Some(equal_state) = env.explored_states.get(&epc).and_then(|v| v.get(eidx)) else {
+        return;
+    };
+    let Some(callchain) =
+        crate::analysis::flow::scc::compute_scc_callchain(equal_state, &env.insn_aux_data)
+    else {
+        return;
+    };
+    let Some(visit) = env.scc_visits.get_mut(&callchain) else {
+        return;
+    };
+    // Don't accumulate if the visit is closed (no entry_state).
+    if visit.entry_state_cache_id.is_none() {
+        return;
+    }
+    visit.backedges.push(crate::analysis::flow::scc::SccBackedge {
+        state: cur.clone(),
+        equal_state_cache_id,
+        insn_idx,
+    });
+}
+
+/// Read a cached state's (branches, dfs_depth, loop_entry_cache_id)
+/// without holding a borrow on env.explored_states. Returns None if
+/// the cache_id has been evicted.
+fn cached_scc_info(env: &VerifierEnv, cid: u32) -> Option<(u32, u32, Option<u32>)> {
+    let &(pc, idx) = env.cache_loc_by_id.get(&cid)?;
+    let st = env.explored_states.get(&pc)?.get(idx)?;
+    Some((st.branches, st.dfs_depth, st.loop_entry_cache_id))
+}
+
+/// Mirror of kernel `get_loop_entry` (verifier.c v6.15 L1919). Walks
+/// the loop_entry chain to the OUTERMOST loop entry. Returns the
+/// final cache_id (or `None` if `start` has no loop_entry).
+pub fn get_loop_entry(env: &VerifierEnv, start_cache_id: u32) -> Option<u32> {
+    let (_, _, mut le) = cached_scc_info(env, start_cache_id)?;
+    let mut steps: u32 = 0;
+    while let Some(cid) = le {
+        // Defensive bound: walks deeper than max plausible DFS depth
+        // indicate a cycle in the loop_entry chain (a bug).
+        steps += 1;
+        if steps > 4096 {
+            break;
+        }
+        match cached_scc_info(env, cid) {
+            Some((_, _, Some(next))) => le = Some(next),
+            _ => return Some(cid),
+        }
+    }
+    // Edge: start had loop_entry=Some(cid) but that cid had no entry
+    // → outermost was `cid`.
+    cached_scc_info(env, start_cache_id)
+        .and_then(|(_, _, le)| le)
+}
+
+/// Mirror of kernel `update_loop_entry` (verifier.c v6.15 L1934).
+/// If `hdr_cache_id`'s branches > 0 (hdr's DFS is still open / hdr is
+/// on the current DFS path) AND hdr's dfs_depth is less than
+/// `cur`'s effective loop_entry depth, set cur.loop_entry = hdr.
+/// `cur` here is a worklist state (not yet cached), so we mutate it
+/// directly.
+pub fn update_loop_entry(env: &VerifierEnv, cur: &mut State, hdr_cache_id: u32) {
+    let Some((hdr_br, hdr_depth, _)) = cached_scc_info(env, hdr_cache_id) else {
+        return;
+    };
+    if hdr_br == 0 {
+        return;
+    }
+    // Effective depth: cur.loop_entry's depth if set, else cur's own.
+    let cur_eff_depth = match cur.loop_entry_cache_id {
+        Some(le_cid) => cached_scc_info(env, le_cid)
+            .map(|(_, d, _)| d)
+            .unwrap_or(cur.dfs_depth),
+        None => cur.dfs_depth,
+    };
+    if hdr_depth < cur_eff_depth {
+        cur.loop_entry_cache_id = Some(hdr_cache_id);
+    }
+}
+
+/// Decrement-and-walk on `parent_cache_id` lineage: mirrors kernel
+/// `update_branch_counts` (verifier.c L1955). Called when a worklist
+/// state's DFS exploration terminates (pruned/exit/reject/forked).
+/// `start_cache_id` is the parent_cache_id of the completing state.
+/// At each cached parent:
+/// - branches -= 1
+/// - if branches becomes 0 AND this state has a loop_entry, propagate
+///   it to the grandparent via update_loop_entry
+/// - if branches > 0, stop (other DFS paths through parent still open)
+/// - else continue walking up
+pub fn complete_dfs_branch(env: &mut VerifierEnv, start_cache_id: Option<u32>) {
+    let mut next = start_cache_id;
+    let mut budget: u32 = 16_384;
+    while let Some(cid) = next {
+        if budget == 0 {
+            break;
+        }
+        budget -= 1;
+        let Some(&(pc, idx)) = env.cache_loc_by_id.get(&cid) else {
+            break;
+        };
+        let Some(st) = env.explored_states.get_mut(&pc).and_then(|v| v.get_mut(idx)) else {
+            break;
+        };
+        if st.branches > 0 {
+            st.branches -= 1;
+        }
+        // Kernel-faithful dfs_paths decrement (parallel counter, see
+        // State::dfs_paths). Walks the SAME chain as branches but
+        // its 0-floor is what the inf-loop trap gate consults.
+        if st.dfs_paths > 0 {
+            st.dfs_paths -= 1;
+        }
+        let still_open = st.branches > 0;
+        let st_parent = st.parent_cache_id;
+        let st_loop_entry = st.loop_entry_cache_id;
+        if !still_open {
+            // This cached state's DFS subtree just completed. Mirror
+            // kernel `clean_live_states` -> `clean_verifier_state`
+            // (verifier.c v6.15 L19528 / L19482): mutate the cached
+            // state to drop dead regs / dead stack slots, making
+            // future subsumption against it looser.
+            crate::analysis::flow::pruning::cache::clean_verifier_state(env, cid);
+            // Kernel `maybe_exit_scc` (verifier.c L2253, called
+            // from update_branch_counts when branches→0): if this
+            // cached state is the entry of an SCC visit, the
+            // visit is now done — propagate_backedges fires and
+            // the visit is reset. Step 2 (current): backedges
+            // list is empty; this is a no-op. Step 3 wires
+            // propagate_backedges into maybe_exit_scc proper.
+            maybe_exit_scc(env, cid);
+        }
+        if still_open {
+            // Other DFS paths through this parent still open ⇒ stop.
+            // Still propagate the loop_entry hint if applicable.
+            if let (Some(le), Some(parent_cid)) = (st_loop_entry, st_parent) {
+                // Read le's info first (immutable borrow), then mutate
+                // parent record. Cloning the &(ppc,pidx) tuple makes
+                // the lookup borrow short.
+                let hdr_info = cached_scc_info(env, le);
+                let parent_loc = env.cache_loc_by_id.get(&parent_cid).copied();
+                if let (Some((hbr, hd, _)), Some((ppc, pidx))) = (hdr_info, parent_loc)
+                    && let Some(p) = env
+                        .explored_states
+                        .get_mut(&ppc)
+                        .and_then(|v| v.get_mut(pidx))
+                {
+                    let p_eff_depth = match p.loop_entry_cache_id {
+                        Some(_) => p.dfs_depth, // approximation; chain-walk skipped to avoid re-borrow
+                        None => p.dfs_depth,
+                    };
+                    if hbr > 0 && hd < p_eff_depth {
+                        p.loop_entry_cache_id = Some(le);
+                    }
+                }
+            }
+            break;
+        }
+        next = st_parent;
+    }
+}

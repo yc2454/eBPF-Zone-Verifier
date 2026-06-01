@@ -37,7 +37,7 @@ fn try_bcf_refine_stack(
     // (mirrors try_emit_path_unreachable_entry's wiring).
     let landed = state
         .history_idx
-        .and_then(|hidx| env.bcf_suffix_base_pc_and_cache_id(hidx, state.parent_cache_id, &[base]));
+        .and_then(|hidx| crate::analysis::flow::precision::bcf_suffix_base_pc_and_cache_id(env, hidx, state.parent_cache_id, &[base]));
     let base_pc = landed.map(|(pc, _)| pc);
     let prev_insn_pc = landed.and_then(|(_, cid)| env.cached_prev_insn_pc(cid));
     let Some(ok) = try_refine_stack_oob(state, base, instruction_offset, size, base_pc, prev_insn_pc) else {
@@ -64,7 +64,7 @@ fn try_bcf_refine_stack(
     env.bcf_proofs.push(entry);
     // Mirror kernel `bcf_refine` parent-marking (verifier.c:24904-24921);
     // see the matching block in `memory/map.rs::try_bcf_refine_map`.
-    env.mark_path_children_unsafe(state, base_pc);
+    crate::analysis::flow::pruning::cache::mark_path_children_unsafe(env, state, base_pc);
     true
 }
 

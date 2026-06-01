@@ -15,6 +15,7 @@ use crate::analysis::machine::state::State;
 use crate::analysis::transfer::alu::helpers::bcf_reg_bounds;
 use crate::ast::{CmpOp, Instr, Operand, Width};
 use crate::refinement::bcf::{BPF_AND, BPF_JEQ, BPF_JNE};
+use crate::refinement::symbolic::RegBounds;
 
 use self::constraints::apply_jmp_constraints;
 use self::interval_packet::refine_packet_bounds_on_branch;
@@ -73,6 +74,13 @@ fn record_path_cond_for_side(
     right: &Operand,
     src_pc: usize,
     narrow_for_side: Option<(u64, u8, bool, Option<usize>)>,
+    // Pre-narrow LHS bounds (the reg's range as of ENTERING this branch,
+    // before reg_set_min_max narrows it on the taken/not-taken side).
+    // The discharge faithful-fold uses this to mirror the kernel's
+    // bcf_reg_expr, which materializes a reg at its first reference with
+    // the range BEFORE the current insn's narrowing (so a reload narrowed
+    // to ==6 stays a VAR{JLE0xff}+JEQ6 rather than folding to `K6 JEQ K6`).
+    pre_lhs_bounds: RegBounds,
 ) {
     if state.bcf.is_none() {
         return;
@@ -134,152 +142,7 @@ fn record_path_cond_for_side(
     // freshly-captured pre-reg_expr value (per-side bcf may have a
     // different cached PC than the originator).
     let narrow_now = narrow_for_side.map(|(k, op_b, j32, _)| (k, op_b, j32, lhs_materialize_pc));
-    bcf.add_cond_at_narrowed(pred, src_pc, narrow_now, Some((l_idx, lhs_materialize_pc, jmp32, lhs_bounds.clone())));
-}
-
-/// Legacy entry point — kept for symmetric callers. Splits to
-/// per-side calls; see `record_path_cond_for_side` for semantics.
-fn record_branch_path_conds(
-    state_then: &mut State,
-    state_else: &mut State,
-    width: Width,
-    left: Reg,
-    op: CmpOp,
-    right: &Operand,
-    src_pc: usize,
-) {
-    if state_then.bcf.is_none() {
-        return;
-    }
-    // For standard ops look up the taken/not-taken pair early so we can
-    // bail before doing any work.  JSET (CmpOp::Test) is handled specially
-    // below: it decomposes to AND(dst,src) JNE/JEQ 0, mirroring the kernel's
-    // record_path_cond JSET path (verifier.c:20917-20927).
-    let std_ops: Option<(u8, u8)> = if op != CmpOp::Test {
-        let Some(pair) = cmp_op_to_bcf_pair(op) else {
-            return;
-        };
-        Some(pair)
-    } else {
-        None
-    };
-    let Some(l_idx) = left.bcf_idx() else {
-        return;
-    };
-    // Mirror kernel `record_path_cond` (verifier.c:20893): skip
-    // emission when either operand isn't a SCALAR_VALUE. Pointer
-    // comparisons (`if r1 == NULL` after a map_lookup, etc.) don't
-    // produce a br_cond on the kernel side, so zovia must skip them
-    // too — otherwise the bundle's canonical_hash carries spurious
-    // path_conds the kernel never emits, missing the bundle lookup.
-    if !state_then.types.get(left).is_scalar() {
-        return;
-    }
-    if let Operand::Reg(r) = right
-        && !state_then.types.get(*r).is_scalar()
-    {
-        return;
-    }
-    // Kernel-shape: when the JMP class is JMP32, both operands are read in
-    // 32-bit form via bcf_reg_expr(reg, true) — which peels a cached
-    // ZEXT_32_to_64 if present. When JMP class is 64-bit, both stay at
-    // 64-bit width (no extra EXTRACT wrapping). Mirrors
-    // do_check_cond_jmp_op at verifier.c:20880-20922.
-    let jmp32 = width == Width::W32;
-    let lhs_bounds = bcf_reg_bounds(state_then, left);
-    let rhs_bounds = match right {
-        Operand::Reg(r) => Some(bcf_reg_bounds(state_then, *r)),
-        _ => None,
-    };
-    let then_bcf = state_then.bcf.as_mut().expect("checked above");
-    // Set current_pc *before* reg_expr to tag any bound preds emitted
-    // during lazy materialization with this JMP's source PC.
-    then_bcf.set_current_pc(src_pc);
-    // Snapshot the PC at which LHS's bcf_expr was most recently
-    // materialized (`None` iff uncached) BEFORE the reg_expr call (which
-    // may lazy-materialize and set the PC to `src_pc`). At refinement
-    // time, the rewrite to `K op K` is gated on `would the LHS be
-    // uncached in a fresh kernel bcf_track replay starting at base_pc?`
-    // — true iff this captured PC is None or < base_pc. Kernel's
-    // `bcf_reg_expr` returns a `bcf_val(K)` literal only when the
-    // reg's bcf_expr is `-1` on entry (verifier.c:902 `tnum_is_const`
-    // path); when cached (spill/fill propagation, prior materialize),
-    // the cached var is returned and the predicate stays `VAR op K`.
-    // Ground-truth probe 2026-05-23.
-    let lhs_materialize_pc: Option<usize> = then_bcf.get_reg_pc(l_idx);
-    let cmp_l = then_bcf.reg_expr(l_idx, &lhs_bounds, jmp32);
-    let cmp_r = match right {
-        Operand::Imm(c) => {
-            let v = if jmp32 { (*c as u32) as u64 } else { *c as u64 };
-            then_bcf.add_val(v, jmp32)
-        }
-        Operand::Reg(r) => match r.bcf_idx() {
-            Some(ri) => then_bcf.reg_expr(ri, &rhs_bounds.unwrap(), jmp32),
-            None => then_bcf.add_val(0, jmp32),
-        },
-    };
-    let (pred_then, pred_else) = if let Some((op_then, op_else)) = std_ops {
-        (
-            then_bcf.add_pred(op_then, cmp_l, cmp_r),
-            then_bcf.add_pred(op_else, cmp_l, cmp_r),
-        )
-    } else {
-        // JSET: mirror kernel record_path_cond (verifier.c:20917-20927).
-        // Taken  side: (dst & src) != 0
-        // Not-taken side: (dst & src) == 0
-        let bits: u16 = if jmp32 { 32 } else { 64 };
-        let and_expr = then_bcf.add_alu(BPF_AND, cmp_l, cmp_r, bits);
-        let zero_expr = then_bcf.add_val(0, jmp32);
-        (
-            then_bcf.add_pred(BPF_JNE, and_expr, zero_expr),
-            then_bcf.add_pred(BPF_JEQ, and_expr, zero_expr),
-        )
-    };
-
-    // Kernel-mirror narrowed-LHS-to-const detection. For the side that
-    // takes a JEQ-K (taken side) or skips a JNE-K (not-taken side), LHS
-    // narrows to const K. We pre-compute K (the imm) and the op-byte +
-    // jmp32 width so canonical-hash time can rewrite `VAR op K` to
-    // `K op K`, matching kernel's fresh-replay `bcf_reg_expr` const-path
-    // (verifier.c:902 `tnum_is_const(reg->var_off)` → `bcf_val`). Only
-    // populated when `right` is BPF_K (`Operand::Imm`); reg-reg branches
-    // never produce K==K in kernel. Ground-truth probe 2026-05-23 — see
-    // feedback_kernel_probe_record_path_cond_2026-05-23.md.
-    let imm_k: Option<u64> = match right {
-        Operand::Imm(c) => Some(if jmp32 { (*c as u32) as u64 } else { *c as u64 }),
-        _ => None,
-    };
-    // Emit K==K-rewrite metadata for the side whose narrowing collapses
-    // LHS to a const K. The rewrite-gate decision is deferred to
-    // refinement time (where base_pc is known): we record the LHS's
-    // materialization PC here, and `try_prove_unreachable` rewrites iff
-    // that PC is None or < base_pc (i.e. uncached in a fresh replay
-    // starting at base_pc).
-    let (narrow_then, narrow_else): (
-        Option<(u64, u8, bool, Option<usize>)>,
-        Option<(u64, u8, bool, Option<usize>)>,
-    ) = match (op, imm_k, std_ops) {
-        (CmpOp::Eq, Some(k), Some((op_then, _))) => {
-            (Some((k, op_then, jmp32, lhs_materialize_pc)), None)
-        }
-        (CmpOp::Ne, Some(k), Some((_, op_else))) => {
-            (None, Some((k, op_else, jmp32, lhs_materialize_pc)))
-        }
-        _ => (None, None),
-    };
-
-    // Now mirror the **whole post-hook DAG** into state_else's bcf. The
-    // pre-hook DAGs were identical (state_else.bcf was cloned from state
-    // before the hook), so a wholesale replace keeps both sides
-    // consistent. Then append only the not-taken pred to state_else's
-    // path_conds (state_then gets the taken pred).
-    let snapshot = (**then_bcf).clone();
-    let lhs_meta = Some((l_idx, lhs_materialize_pc, jmp32, lhs_bounds.clone()));
-    then_bcf.add_cond_at_narrowed(pred_then, src_pc, narrow_then, lhs_meta.clone());
-    if let Some(else_bcf) = state_else.bcf.as_mut() {
-        **else_bcf = snapshot;
-        else_bcf.add_cond_at_narrowed(pred_else, src_pc, narrow_else, lhs_meta);
-    }
+    bcf.add_cond_at_narrowed(pred, src_pc, narrow_now, Some((l_idx, lhs_materialize_pc, jmp32, lhs_bounds.clone(), pre_lhs_bounds.clone())));
 }
 
 /// Transfer function for conditional branch instructions.
@@ -378,9 +241,9 @@ pub(crate) fn transfer_if(
         && condition_outcome(&state, width, left, op, &right).is_some()
     {
         let pcid = state.parent_cache_id;
-        env.mark_chain_precision_backward(hidx, pcid, left);
+        crate::analysis::flow::precision::mark_chain_precision_backward(env, hidx, pcid, left);
         if let Operand::Reg(r) = right {
-            env.mark_chain_precision_backward(hidx, pcid, r);
+            crate::analysis::flow::precision::mark_chain_precision_backward(env, hidx, pcid, r);
         }
     }
 
@@ -406,6 +269,13 @@ pub(crate) fn transfer_if(
     // contribute its `K0 == K0` conjunct (state_else's r0 was demoted
     // to scalar(0) by `maybe_demote_or_null_to_scalar`) while skipping
     // the taken side (state_then's r0 is non-null PtrToMapValue).
+    // Pre-narrow LHS bounds: the reg's range BEFORE this branch's
+    // reg_set_min_max narrowing (captured from the pre-split `state`,
+    // which apply_jmp_constraints did NOT mutate). Threaded to the
+    // discharge faithful-fold so reload/null regs materialize at their
+    // first-reference range (kernel bcf_reg_expr), not the post-narrow
+    // const that wrongly folds them to literals.
+    let pre_lhs_bounds = bcf_reg_bounds(&state, left);
     if let Some((op_then, op_else)) = cmp_op_to_bcf_pair(op) {
         let jmp32 = width == Width::W32;
         let imm_k: Option<u64> = match &right {
@@ -427,17 +297,21 @@ pub(crate) fn transfer_if(
         };
         record_path_cond_for_side(
             &mut state_then, width, left, op, op_then, &right, state.pc, narrow_then,
+            pre_lhs_bounds.clone(),
         );
         record_path_cond_for_side(
             &mut state_else, width, left, op, op_else, &right, state.pc, narrow_else,
+            pre_lhs_bounds.clone(),
         );
     } else if matches!(op, CmpOp::Test) {
         // JSET — per-side wrap into AND(dst,src) JNE/JEQ 0.
         record_path_cond_for_side(
             &mut state_then, width, left, op, BPF_JNE, &right, state.pc, None,
+            pre_lhs_bounds.clone(),
         );
         record_path_cond_for_side(
             &mut state_else, width, left, op, BPF_JEQ, &right, state.pc, None,
+            pre_lhs_bounds.clone(),
         );
     }
 
@@ -468,8 +342,6 @@ pub(crate) fn transfer_if(
         // Pre-compute backward_jump check (uses env immutably via closure)
         // before the speculation call (uses env mutably).
         let then_backward_forbidden = outcome && backward_jump_forbidden(&state_then);
-        // Drop the closure before mutably borrowing env.
-        drop(backward_jump_forbidden);
         let dead_state = if outcome { &state_else } else { &state_then };
         // Eager path-unreachable speculation is NOT a BCF mechanism:
         // every `bcf_prove_unreachable` call site in BCF (set1/0014) is
@@ -641,7 +513,51 @@ fn unreachable_base_pc(env: &VerifierEnv, state: &State) -> Option<usize> {
     // one insn too early (fatal when the skipped predecessor is a
     // helper-call argument's only definition).
     let hidx = env.current_step_idx.or(state.history_idx)?;
-    env.bcf_suffix_base_pc(hidx, state.parent_cache_id, &targets)
+    let targets = filter_live_unknown_targets(env, state, Some(hidx), targets);
+    crate::analysis::flow::precision::bcf_suffix_base_pc(env, hidx, state.parent_cache_id, &targets)
+}
+
+/// Kernel-faithful `reg_masks` tightening (cont.20): drop a reject `reg_masks`
+/// target iff it is a fully-unknown `ScalarValue` (tnum carries no constraint)
+/// AND dead at the reject PC (absent from `live_regs`). Such a register holds
+/// no symbolic information and the kernel never seeds it into `reg_masks`;
+/// zovia's existing const-offset / `NotInit` filter misses it (it looks like a
+/// live unknown scalar), so the suffix base walk over-extends.
+///
+/// MEASURED (from_nat_no_log pc735, proto==6 arm): R2 is a fully-unknown dead
+/// scalar there → targets `0x32f`, base 529; the kernel's `reg_masks` is
+/// `0x32b` (base 559, the `78171d` obligation). This filter drops exactly R2:
+/// liveness is applied ONLY to unconstrained scalars, so a constrained-but-
+/// dead reg (R1, kept by the kernel) and live unknowns (R8/R9, kept) are
+/// untouched — reproducing `0x32b` on every arrival. See
+/// project_no_log_subsumption_arc.md cont.20.
+///
+/// Always-on (faithful, no-regress: gated VM run was repr-19 19/19 + cilium-17
+/// 17/17, bundles byte-identical on the default-config gate). ⚠️ zovia's
+/// `live_regs` is per-PC, not per-path, so on a multi-arm `_no_log` program
+/// the same drop applies to every arm; it has a live effect only in the lean
+/// (no-shotgun) config, where it can change which obligations are emitted.
+fn filter_live_unknown_targets(
+    env: &VerifierEnv,
+    state: &State,
+    hidx: Option<usize>,
+    targets: Vec<Reg>,
+) -> Vec<Reg> {
+    use crate::analysis::machine::reg_types::RegType;
+    let live = hidx
+        .and_then(|h| env.history.get(h))
+        .map(|h| h.pc)
+        .and_then(|pc| env.insn_aux_data.get(pc));
+    let Some(live) = live else { return targets };
+    targets
+        .into_iter()
+        .filter(|&r| {
+            let unk = state.get_tnum(r).mask == u64::MAX
+                && matches!(state.types.get(r), RegType::ScalarValue);
+            let dead = !live.live_regs.contains(&r);
+            !(unk && dead)
+        })
+        .collect()
 }
 
 /// Attempt path-unreachable speculation on a zovia-infeasible state and
@@ -703,8 +619,34 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
             })
             .collect();
         let hidx = env.current_step_idx.or(state.history_idx);
+        let targets = filter_live_unknown_targets(env, state, hidx, targets);
+        // KERNEL-FAITHFUL PRECISION (no_log proto-arm fix, 2026-05-31):
+        // mirror bcf_prove_unreachable → backtrack_states(reg_masks)'s
+        // precision side-effect. The kernel marks the reject's live,
+        // non-const "reg_masks" registers precise along the suffix; that
+        // precision keeps sibling paths (the proto≤5 / ==6 / ≥7 arms of an
+        // IP-proto switch) DISTINCT in is_state_visited, so each reaches the
+        // reject and gets its own discharge. zovia computes the same
+        // `targets` for the base walk but never marked them precise, so its
+        // imprecise-scalar wildcard rule (regsafe NOT_EXACT: a non-precise
+        // scalar is skipped) MERGED the arms — only a subset of the reject's
+        // discharges were produced, leaving kernel MISSes on the unmerged
+        // siblings' hashes (from_nat_no_log pc735: 618296 etc.). Marking here
+        // makes the cached ancestor states carry the precision, so a later
+        // sibling's is_state_visited sees range_within over disjoint proto
+        // ranges ([0,5] vs [7,255]) and stays distinct. Replaces the blunt
+        // ZOVIA_NO_PRUNE_WINDOW experiment knob with a targeted, kernel-shaped
+        // change. Default-OFF until VM-gated (repr-19 + cilium-17 loads, watch
+        // state-count). See project_no_log_subsumption_arc.md.
+        if std::env::var("ZOVIA_BCF_REJECT_PRECISE").ok().as_deref() == Some("1") {
+            if let Some(h) = hidx {
+                for &r in &targets {
+                    crate::analysis::flow::precision::mark_chain_precision_backward(env, h, state.parent_cache_id, r);
+                }
+            }
+        }
         let landed = hidx.and_then(|hidx| {
-            env.bcf_suffix_base_pc_and_cache_id(hidx, state.parent_cache_id, &targets)
+            crate::analysis::flow::precision::bcf_suffix_base_pc_and_cache_id(env, hidx, state.parent_cache_id, &targets)
         });
         // Use only the immediate cache the suffix walker landed on (no
         // chain-skip). A previous attempt walked back through
@@ -864,10 +806,16 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     // is the additive variant that closes the same case without that
     // regression class.
     {
-        const MAX_ANCESTOR_DEPTH: usize = 64;
+        // Lean-bundle investigation (no_log 2026-05-30): the depth-64 ancestor
+        // shotgun is the dominant over-emission source (~1183 proto shapes vs
+        // the kernel's 22). Knob to measure/cap it. Default 64 (unchanged).
+        let max_ancestor_depth: usize = std::env::var("ZOVIA_BCF_ANCESTOR_DEPTH")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(64);
         let mut cur_cid_opt = base_cid_dbg;
         let mut depth = 0;
-        while depth < MAX_ANCESTOR_DEPTH {
+        while depth < max_ancestor_depth {
             let Some(cur_cid) = cur_cid_opt else { break };
             let Some(&(cur_pc, cur_idx)) = env.cache_loc_by_id.get(&cur_cid) else { break };
             let Some(parent_cid) = env
@@ -928,6 +876,6 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     // its own path-unreachable bundle entry (cilium bpf_wireguard
     // pc246 route-B). Scoped to the same suffix base as the
     // path_conds (kernel parents[0..vstate_cnt-1]).
-    env.mark_path_children_unsafe(state, base_pc);
+    crate::analysis::flow::pruning::cache::mark_path_children_unsafe(env, state, base_pc);
     true
 }

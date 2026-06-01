@@ -142,24 +142,6 @@ pub fn try_load_combined_program_from_elf(
     Ok((prog, combined.pc_to_reloc))
 }
 
-/// load a single SEC()'d entry function plus all
-/// subprograms it transitively calls.
-///
-/// Returns `(Program, relocations, func_offsets)` where `func_offsets`
-/// maps each loaded function name to its PC in the combined program.
-/// The entry function lives at PC 0; appended subprogs follow.
-pub fn try_load_function_with_subprogs_from_elf(
-    path: &str,
-    section: &str,
-    func_name: &str,
-    maps: &[BpfMapDef],
-    extra_roots: &[(String, String)],
-) -> Result<(Program, HashMap<usize, RelocInfo>, HashMap<String, usize>), String> {
-    try_load_function_with_subprogs_from_elf_with_relo(
-        path, section, func_name, maps, extra_roots, None,
-    )
-}
-
 /// CO-RE-aware variant: when `core_relo_ctx` is `Some((program_btf,
 /// target_btf))`, applies CO-RE relocations from `program_btf.btf_ext`
 /// to the entry section's raw instructions BEFORE lowering to AST.
