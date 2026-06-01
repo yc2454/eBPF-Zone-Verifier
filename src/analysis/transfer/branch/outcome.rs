@@ -150,13 +150,17 @@ pub(crate) fn condition_outcome(
                             _ => unreachable!(),
                         }
                     } else {
-                        // W64 signed comparison: use i64 bounds directly.
-                        // `min` and `max` are u64; for W64 signed we need them as i64.
-                        // Only safe if both fit in i64 (top bit = 0, i.e., no wrap).
-                        if max > i64::MAX as u64 {
-                            return None; // range spans sign boundary — conservative
-                        }
-                        let (s64_lo, s64_hi) = (min as i64, max as i64);
+                        // W64 signed comparison: use the register's SIGNED
+                        // bounds directly. The unsigned `(min,max)` from
+                        // get_combined_bounds can't serve here — a one-sided
+                        // range like r0 ∈ [4, +inf] has unsigned max u64::MAX
+                        // (spans the sign boundary) yet a perfectly good
+                        // signed range [4, i64::MAX]. get_combined_signed_bounds
+                        // returns that and stays full when truly unknown, so a
+                        // const-on-left signed compare (`<const> s> <non_const>`,
+                        // deducing_bounds_from_non_const_15/16) can prove the
+                        // dead branch.
+                        let (s64_lo, s64_hi) = get_combined_signed_bounds(state, left);
                         match op {
                             CmpOp::SGe => {
                                 if s64_lo >= imm_s { Some(true) }
