@@ -796,6 +796,30 @@ fn interval_subsumed_by(
     if old_meta > cur_meta {
         return false;
     }
+
+    // Per-register packet-pointer `range` subsumption — the register-level
+    // analog of the stack-slot check in `stack_subsumed_by` (PtrToPacket /
+    // PtrToPacketMeta `range`). The kernel's `regsafe` compares `reg->range`
+    // for packet pointers: a cached state proving a register can access
+    // `range` bytes does NOT subsume a current state with a smaller/absent
+    // range, because the current path may reach a packet access that the
+    // cached path would have rejected. Without this, the FALSE branch of a
+    // bounds check (range=Some(N)) gets recorded first, then the TRUE branch
+    // (range=None) is wrongly pruned against it and its unsafe access is
+    // never verified — a soundness FALSE_ACCEPT
+    // (verifier_xdp_direct_packet_access::pkt_*_bad_access_2_*).
+    for r in Reg::ALL {
+        let old_range = old_ivl.get_ptr_offset(r).and_then(|po| po.range);
+        let cur_range = cur_ivl.get_ptr_offset(r).and_then(|po| po.range);
+        match (old_range, cur_range) {
+            // old proves a range, cur proves none: old does NOT subsume cur.
+            (Some(_), None) => return false,
+            // old proves a larger range than cur: old does NOT subsume cur.
+            (Some(old_r), Some(cur_r)) if old_r > cur_r => return false,
+            // cur's range >= old's, or both absent: OK.
+            _ => {}
+        }
+    }
     true
 }
 
