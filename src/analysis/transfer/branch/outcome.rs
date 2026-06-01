@@ -283,36 +283,52 @@ pub(crate) fn get_combined_bounds(state: &State, reg: Reg, width: Width) -> Opti
     let tnum_min = tnum.min_value();
     let tnum_max = tnum.max_value();
 
-    // DBM bounds
-    let (dbm_lo, dbm_hi) = state.domain.get_interval(reg);
+    // Interval-domain bounds (kernel-mode: the Interval domain; legacy
+    // names `dbm_*`). `get_interval` returns signed i64 bounds with
+    // i64::MIN / i64::MAX standing for "unbounded". A one-SIDED bound is
+    // still useful: e.g. after `if r0 < 3` the fall-through has the
+    // interval [3, i64::MAX] — the finite lower bound 3 proves `r0 == 2`
+    // is unsatisfiable even though the upper bound is unknown. The earlier
+    // all-or-nothing gate (`dbm_lo != MIN && dbm_hi != MAX`) discarded the
+    // whole interval whenever EITHER side was open, dropping that lower
+    // bound and falling back to the unconstrained tnum (0..U64_MAX), so
+    // `condition_outcome` couldn't prove the dead branch
+    // (verifier_bounds_deduction_non_const::* + the USDT progs).
+    //
+    // Intersect each side independently. An interval bound is only a valid
+    // UNSIGNED bound when it is non-negative; a negative signed bound says
+    // nothing about the unsigned magnitude (the value could be a large
+    // u64), so leave that side to the tnum.
+    // For a W32 comparison the relevant interval is the register's u32
+    // sub-bounds (the low 32 bits the branch narrows), NOT the 64-bit
+    // interval — after `if w0 < 4` the u32 bounds are [4, U32_MAX] while
+    // the 64-bit interval stays unbounded (upper 32 bits unknown).
+    let (dbm_lo, dbm_hi): (i64, i64) = if width == Width::W32 {
+        let (u_lo, u_hi) = state.domain.get_u32_bounds(reg);
+        (u_lo as i64, u_hi as i64)
+    } else {
+        state.domain.get_interval(reg)
+    };
 
-    // Combine bounds
-    if dbm_lo != i64::MIN && dbm_hi != i64::MAX {
-        let lo = dbm_lo;
-        let hi = dbm_hi;
-        // For unsigned comparison, DBM bounds only useful if non-negative
-        if lo >= 0 {
-            let dbm_min = lo as u64;
-            let dbm_max = hi as u64;
+    let mut lo = tnum_min;
+    let mut hi = tnum_max;
 
-            // For W32, also check DBM is in u32 range
-            if width == Width::W32 && dbm_max > 0xFFFFFFFF {
-                return Some((tnum_min, tnum_max));
-            }
-
-            // Intersect the ranges
-            let combined_min = tnum_min.max(dbm_min);
-            let combined_max = tnum_max.min(dbm_max);
-
-            // Sanity check - ranges should overlap
-            if combined_min <= combined_max {
-                Some((combined_min, combined_max))
-            } else {
-                Some((tnum_min, tnum_max))
-            }
-        } else {
-            Some((tnum_min, tnum_max))
+    if dbm_lo != i64::MIN && dbm_lo >= 0 {
+        lo = lo.max(dbm_lo as u64);
+    }
+    if dbm_hi != i64::MAX && dbm_hi >= 0 {
+        let dbm_max = dbm_hi as u64;
+        // For W32, an interval upper bound outside u32 range is not a
+        // tighter u32 bound — ignore it (keep the tnum's u32-truncated max).
+        if !(width == Width::W32 && dbm_max > 0xFFFF_FFFF) {
+            hi = hi.min(dbm_max);
         }
+    }
+
+    // Sanity: if the per-side intersection inverted the range (shouldn't
+    // happen for consistent bounds), fall back to the tnum range.
+    if lo <= hi {
+        Some((lo, hi))
     } else {
         Some((tnum_min, tnum_max))
     }
