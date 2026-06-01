@@ -244,9 +244,33 @@ pub(crate) fn transfer_alu(
                 // 64-bit reg→reg copy: dst shares src's scalar id.
                 state.link_scalar_id(dst, *r);
             }
+            (AluOp::Mov, Operand::Reg(r))
+                if width == crate::ast::Width::W32 && {
+                    // A 32-bit MOV zero-extends, so dst == src ONLY when the
+                    // source's upper 32 bits are already known zero — then it
+                    // is a full-value copy and dst shares src's scalar id
+                    // (kernel `assign_scalar_id_before_mov` + the subreg
+                    // linkage in check_alu_op). Lets `if w2 < 9` fan its
+                    // range out to a `w3 = w2`-linked r3
+                    // (verifier_reg_equal::subreg_equality_1). Gating on
+                    // upper-32-known-zero keeps it sound (otherwise dst is a
+                    // truncation of src, NOT equal, so the ids must differ).
+                    // Upper-32-zero is provable from the tnum OR from unsigned
+                    // bounds that fit in u32 (a u32 fill leaves the tnum
+                    // unknown but bounds [0, U32_MAX]).
+                    let t = state.get_tnum(*r);
+                    let tnum_zero = (t.value >> 32) == 0 && (t.mask >> 32) == 0;
+                    let (lo, hi) = state.domain.get_interval(*r);
+                    let bounds_zero = lo >= 0 && hi >= 0 && (hi as u64) <= u32::MAX as u64;
+                    tnum_zero || bounds_zero
+                } =>
+            {
+                state.link_scalar_id(dst, *r);
+            }
             _ => {
-                // 32-bit MOV (zero-extends), MOV-imm, or arith/bitwise/
-                // shift: value changed — drop any copy chain.
+                // 32-bit MOV (zero-extends) of a value whose upper bits aren't
+                // known zero, MOV-imm, or arith/bitwise/shift: value changed
+                // (or truncated) — drop any copy chain.
                 state.clear_scalar_id(dst);
             }
         }
