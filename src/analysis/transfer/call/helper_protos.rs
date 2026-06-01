@@ -308,6 +308,173 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             DontCare, DontCare,
         ]),
 
+        // ==== EXCEEDSMAXIMUMKNOWN backlog: previously-unmodeled helpers ====
+        // These had no proto → get_helper_proto None → InvalidHelperId
+        // ("exceeds maximum known helper ID") → load failure for the many
+        // kernel-ACCEPTED selftests that call them. Faithful protos added
+        // from the kernel uapi prototypes; mem+size args paired so the
+        // helper-mem-access bounds check runs.
+
+        // bpf_msg_redirect_hash(msg, map, key, flags) -> long.
+        constants::BPF_MSG_REDIRECT_HASH => CallProto::with_args([
+            PtrToCtx,    // R1: sk_msg
+            ConstMapPtr, // R2: map
+            PtrToMapKey, // R3: key
+            Anything,    // R4: flags
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // bpf_sk_redirect_hash(skb, map, key, flags) -> long.
+        constants::BPF_SK_REDIRECT_HASH => CallProto::with_args([
+            PtrToCtx,    // R1: skb
+            ConstMapPtr, // R2: map
+            PtrToMapKey, // R3: key
+            Anything,    // R4: flags
+            DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // bpf_lwt_seg6_store_bytes(skb, offset, from, len) -> long.
+        constants::BPF_LWT_SEG6_STORE_BYTES => CallProto::with_args([
+            PtrToCtx,  // R1: skb
+            Anything,  // R2: offset
+            PtrToMem,  // R3: from
+            ConstSize, // R4: len
+            DontCare,
+        ])
+        .mem_size_pairs(&pairs::LWT_SEG6_STORE_BYTES),
+
+        // bpf_rc_pointer_rel(ctx, rel_x, rel_y) -> long. lirc_mode2 helper.
+        constants::BPF_RC_POINTER_REL => CallProto::with_args([
+            PtrToCtx, // R1: ctx (sample)
+            Anything, // R2: rel_x (s32)
+            Anything, // R3: rel_y (s32)
+            DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // bpf_tcp_check_syncookie(sk, iph, iph_len, th, th_len) -> long.
+        constants::BPF_TCP_CHECK_SYNCOOKIE => CallProto::with_args([
+            PtrToBTFIdSockCommon, // R1: sk
+            PtrToMem,             // R2: iph
+            ConstSize,            // R3: iph_len
+            PtrToMem,             // R4: th
+            ConstSize,            // R5: th_len
+        ])
+        .ret(RetKind::Scalar)
+        .mem_size_pairs(&pairs::TCP_SYNCOOKIE),
+
+        // bpf_tcp_gen_syncookie(sk, iph, iph_len, th, th_len) -> s64.
+        constants::BPF_TCP_GEN_SYNCOOKIE => CallProto::with_args([
+            PtrToBTFIdSockCommon, // R1: sk
+            PtrToMem,             // R2: iph
+            ConstSize,            // R3: iph_len
+            PtrToMem,             // R4: th
+            ConstSize,            // R5: th_len
+        ])
+        .ret(RetKind::Scalar)
+        .mem_size_pairs(&pairs::TCP_SYNCOOKIE),
+
+        // bpf_sysctl_get_current_value(ctx, buf, buf_len) -> long.
+        constants::BPF_SYSCTL_GET_CURRENT_VALUE => CallProto::with_args([
+            PtrToCtx,        // R1: bpf_sysctl ctx
+            PtrToUninitMem,  // R2: buf (written)
+            ConstSizeOrZero, // R3: buf_len
+            DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .mem_size_pairs(&pairs::SYSCTL_GET_CURRENT_VALUE),
+
+        // bpf_send_signal(sig) -> long.
+        constants::BPF_SEND_SIGNAL => CallProto::with_args([
+            Anything, // R1: sig
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // bpf_sk_cgroup_id(sk) -> u64.
+        constants::BPF_SK_CGROUP_ID => CallProto::with_args([
+            PtrToBTFIdSockCommon, // R1: sk
+            DontCare, DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // bpf_ringbuf_query(ringbuf, flags) -> u64.
+        constants::BPF_RINGBUF_QUERY => CallProto::with_args([
+            ConstMapPtr, // R1: ringbuf map
+            Anything,    // R2: flags
+            DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // bpf_store_hdr_opt(skops, from, len, flags) -> long.
+        constants::BPF_STORE_HDR_OPT => CallProto::with_args([
+            PtrToCtx,  // R1: bpf_sock_ops
+            PtrToMem,  // R2: from
+            ConstSize, // R3: len
+            Anything,  // R4: flags
+            DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .mem_size_pairs(&pairs::STORE_HDR_OPT),
+
+        // bpf_get_func_arg(ctx, n, value) -> long. value is a u64* output.
+        constants::BPF_GET_FUNC_ARG => CallProto::with_args([
+            PtrToCtx,  // R1: tracing ctx
+            Anything,  // R2: n
+            PtrToLong, // R3: value (u64 out)
+            DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // bpf_xdp_store_bytes(xdp, offset, buf, len) -> long.
+        constants::BPF_XDP_STORE_BYTES => CallProto::with_args([
+            PtrToCtx,  // R1: xdp_md
+            Anything,  // R2: offset
+            PtrToMem,  // R3: buf
+            ConstSize, // R4: len
+            DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .mem_size_pairs(&pairs::XDP_STORE_BYTES),
+
+        // bpf_ima_file_hash(file, dst, size) -> long. file is a BTF ptr,
+        // dst is a written buffer sized by `size`.
+        constants::BPF_IMA_FILE_HASH => CallProto::with_args([
+            PtrToBtfId,      // R1: struct file *
+            PtrToUninitMem,  // R2: dst (written)
+            ConstSizeOrZero, // R3: size
+            DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar)
+        .mem_size_pairs(&pairs::IMA_FILE_HASH),
+
+        // bpf_sk_ancestor_cgroup_id(sk, ancestor_level) -> u64.
+        constants::BPF_SK_ANCESTOR_CGROUP_ID => CallProto::with_args([
+            PtrToBTFIdSockCommon, // R1: sk
+            Anything,             // R2: ancestor_level
+            DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // bpf_reserve_hdr_opt(skops, len, flags) -> long.
+        constants::BPF_RESERVE_HDR_OPT => CallProto::with_args([
+            PtrToCtx, // R1: bpf_sock_ops
+            Anything, // R2: len
+            Anything, // R3: flags
+            DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
+        // bpf_get_func_ret(ctx, value) -> long. value is a u64* output.
+        constants::BPF_GET_FUNC_RET => CallProto::with_args([
+            PtrToCtx,  // R1: tracing ctx
+            PtrToLong, // R2: value (u64 out)
+            DontCare, DontCare, DontCare,
+        ])
+        .ret(RetKind::Scalar),
+
         // ---- Socket lookup ----
         constants::BPF_SKC_LOOKUP_TCP => CallProto::with_args([
             PtrToCtx, // R1: ctx
