@@ -70,7 +70,11 @@ impl NumericDomain {
             }
             NumericDomain::Interval(ivl) => {
                 let st = ivl.get_bounds(x);
-                if st.smin >= i32::MIN as i64 && st.smax <= i32::MAX as i64 {
+                // 64-bit-derived s32 bound (original behavior), then intersect
+                // with the dedicated s32 fields so W32 signed branch narrowing
+                // (kept by `sync_bounds`) is honored. Intersection ⇒ never
+                // looser than the derived bound.
+                let derived = if st.smin >= i32::MIN as i64 && st.smax <= i32::MAX as i64 {
                     (st.smin as i32, st.smax as i32)
                 } else if st.smin >= 0 && st.smax <= u32::MAX as i64 {
                     // A zero-extended 32-bit value (e.g. `w0 = -EPERM` lowers
@@ -91,7 +95,10 @@ impl NumericDomain {
                     }
                 } else {
                     (i32::MIN, i32::MAX)
-                }
+                };
+                let lo = derived.0.max(st.s32_min);
+                let hi = derived.1.min(st.s32_max);
+                if lo <= hi { (lo, hi) } else { derived }
             }
         }
     }
@@ -232,7 +239,15 @@ impl NumericDomain {
                 dbm.bounds[x.idx()].s32_max = max;
                 zone_ops::sync_bounds(dbm, x);
             }
-            NumericDomain::Interval(_) => {} // Not needed for this domain here
+            NumericDomain::Interval(ivl) => {
+                if x == Reg::Zero || x.is_anchor() {
+                    return;
+                }
+                let b = ivl.get_bounds_mut(x);
+                b.s32_min = b.s32_min.max(min);
+                b.s32_max = b.s32_max.min(max);
+                b.sync_bounds();
+            }
         }
     }
 
@@ -245,23 +260,48 @@ impl NumericDomain {
             }
             NumericDomain::Interval(ivl) => {
                 let st = ivl.get_bounds(x);
-                if st.umax <= u32::MAX as u64 {
+                // 64-bit-derived u32 bound (the original behavior — sound
+                // whenever the upper 32 bits are constant).
+                let (d_lo, d_hi) = if st.umax <= u32::MAX as u64 {
                     (st.umin as u32, st.umax as u32)
                 } else {
                     (0, u32::MAX)
-                }
+                };
+                // Intersect with the dedicated 32-bit fields (kernel
+                // `u32_{min,max}_value`, kept consistent by `sync_bounds`).
+                // These carry W32 branch narrowing the 64-bit range can't
+                // represent (the low 32 bits the branch constrains while the
+                // upper bits stay unknown). Intersection ⇒ never looser than
+                // the old derived bound, so no precision regression; the
+                // dedicated tightening closes the W32 deduction FRs.
+                let lo = d_lo.max(st.u32_min);
+                let hi = d_hi.min(st.u32_max);
+                if lo <= hi { (lo, hi) } else { (d_lo, d_hi) }
             }
         }
     }
 
-    /// Explicitly sets the 32-bit unsigned bounds for a register.
-    /// Zone-only narrowing path used by `apply_w32_unsigned_fallback`;
-    /// interval domain has its own width-tracking and is left untouched.
+    /// Explicitly sets the 32-bit unsigned bounds for a register, used by
+    /// `apply_w32_unsigned_fallback` to record W32 branch narrowing.
     pub fn set_u32_bounds(&mut self, x: Reg, min: u32, max: u32) {
-        if let NumericDomain::Zone(dbm) = self {
-            dbm.bounds[x.idx()].u32_min = min;
-            dbm.bounds[x.idx()].u32_max = max;
-            zone_ops::sync_bounds(dbm, x);
+        match self {
+            NumericDomain::Zone(dbm) => {
+                dbm.bounds[x.idx()].u32_min = min;
+                dbm.bounds[x.idx()].u32_max = max;
+                zone_ops::sync_bounds(dbm, x);
+            }
+            NumericDomain::Interval(ivl) => {
+                if x == Reg::Zero || x.is_anchor() {
+                    return;
+                }
+                let b = ivl.get_bounds_mut(x);
+                // Intersect (narrowing only) then re-sync so the W32 range
+                // propagates into s32 / back to the 64-bit halves where the
+                // upper bits are known.
+                b.u32_min = b.u32_min.max(min);
+                b.u32_max = b.u32_max.min(max);
+                b.sync_bounds();
+            }
         }
     }
 
