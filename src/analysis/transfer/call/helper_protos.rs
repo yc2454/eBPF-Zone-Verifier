@@ -299,6 +299,15 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             DontCare, DontCare,
         ]),
 
+        // bpf_skb_set_tstamp(skb, tstamp, tstamp_type) -> long. TC helper
+        // (test_tc_dtime). R1 is the skb ctx; the two value args are scalars.
+        constants::BPF_SKB_SET_TSTAMP => CallProto::with_args([
+            PtrToCtx, // R1: skb
+            Anything, // R2: tstamp (u64)
+            Anything, // R3: tstamp_type (u32)
+            DontCare, DontCare,
+        ]),
+
         // ---- Socket lookup ----
         constants::BPF_SKC_LOOKUP_TCP => CallProto::with_args([
             PtrToCtx, // R1: ctx

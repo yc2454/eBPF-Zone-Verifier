@@ -171,6 +171,7 @@ pub const BPF_TASK_PT_REGS: u32 = 175;
 pub const BPF_GET_BRANCH_SNAPSHOT: u32 = 176;
 pub const BPF_TRACE_VPRINTK: u32 = 177;
 pub const BPF_COPY_FROM_USER_TASK: u32 = 191;
+pub const BPF_SKB_SET_TSTAMP: u32 = 192;
 pub const BPF_CHECK_MTU: u32 = 163;
 pub const BPF_COPY_FROM_USER: u32 = 148;
 pub const BPF_FOR_EACH_MAP_ELEM: u32 = 164;
