@@ -174,7 +174,23 @@ pub fn mark_chain_precision_backward(
             // precise. That left two paths spilling distinct constants to
             // the same slot wrongly subsuming (search_pruning
             // should_be_verified_nop_operation / tracking_for_u32_spill_fill).
-            if frontier.is_empty() && stack_frontier.is_empty() {
+            //
+            // BCF GATE: this stack-frontier continuation is base-verifier
+            // soundness (FA=0 floor for the selftest, `bcf_enabled=false`).
+            // In userspace-BCF mode the KERNEL re-checks the emitted bundle,
+            // so the extra precision is not needed for soundness — and the
+            // additional trajectory distinctness it produces explodes the
+            // no_log bundle past the kernel size limit (calico
+            // to_l3_no_log_co-re_v6: 19.4MB→40MB → E2BIG → load regression,
+            // caught by the calico-19 VM-load gate). So in BCF mode keep the
+            // pre-fix reg-frontier-only termination (the gate-clean baseline
+            // behavior). Base mode keeps the both-empty fix.
+            let terminate = if env.bcf_enabled {
+                frontier.is_empty()
+            } else {
+                frontier.is_empty() && stack_frontier.is_empty()
+            };
+            if terminate {
                 break 'outer;
             }
         }

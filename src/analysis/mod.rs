@@ -61,6 +61,7 @@ pub fn analyze_program_full(
         prog,
         config.certificate.clone(),
         matches!(config.domain_mode, crate::common::config::DomainMode::Interval),
+        config.bcf_enabled,
     );
     if let Some(ref cert) = env.certificate {
         let computed_hash = program_hash(prog);
@@ -469,6 +470,7 @@ pub fn analyze_exception_cb(
         prog,
         None,
         matches!(config.domain_mode, crate::common::config::DomainMode::Interval),
+        config.bcf_enabled,
     );
     env.analyzing_exception_cb = true;
 

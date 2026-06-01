@@ -194,6 +194,14 @@ pub struct VerifierEnv<'a> {
     /// the same kernel-side "unbounded min" rejections at later
     /// pointer-arith sites so BCF can emit a bound-refine discharge.
     pub kernel_faithful_alu: bool,
+    /// Whether userspace-BCF mode is active (`--bcf`). The precision
+    /// backward walk uses this to stay at the kernel-faithful (base-mode)
+    /// stack-frontier continuation only when BCF is OFF: in BCF mode the
+    /// kernel re-checks the emitted bundle, so the extra precision isn't
+    /// needed for soundness, and the additional trajectory distinctness it
+    /// creates bloats the no_log bundle past the kernel's size limit
+    /// (E2BIG → load failure). See the precision.rs termination gate.
+    pub bcf_enabled: bool,
     /// Per-PC histogram of subsumption-miss reasons (one bucket per
     /// `SubsumptionMissReason` variant). `subsumption_misses[pc][r.idx()]`
     /// is incremented every time the per-cached-state subsumption check
@@ -356,6 +364,7 @@ impl<'a> VerifierEnv<'a> {
         prog: &'a Program,
         certificate: Option<ProgramCertificate>,
         kernel_faithful_alu: bool,
+        bcf_enabled: bool,
     ) -> Self {
         VerifierEnv {
             ctx,
@@ -363,6 +372,7 @@ impl<'a> VerifierEnv<'a> {
             iter_pc_slot: HashMap::new(),
             state_metrics: HashMap::new(),
             kernel_faithful_alu,
+            bcf_enabled,
             subsumption_misses: HashMap::new(),
             pruning_stats: PruningStats::default(),
             insn_aux_data: vec![InsnAuxData::default(); prog.instrs.len()],
