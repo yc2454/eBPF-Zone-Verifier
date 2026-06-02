@@ -221,10 +221,20 @@ pub fn transfer(env: &mut VerifierEnv, mut state: State, instr: &Instr) -> Vec<S
                 return vec![state_fall];
             }
 
+            // Kernel-faithful (check_cond_jmp_op BPF_JCOND arm, verifier.c
+            // v6.15 ~L16400): ONLY the FALLTHROUGH (queued "continue loop"
+            // successor) gets `may_goto_depth++` and is widened against the
+            // prev entry; the TARGET edge (`*insn_idx += insn->off`) keeps
+            // the SAME depth and is NOT widened. The depth counts loop
+            // iterations along the continue path, so a may_goto whose target
+            // is itself a back-edge (`l0: may_goto l0`, off<0) revisits the
+            // may_goto pc with UNCHANGED depth → may_goto_range_within_prune's
+            // depth-differ gate does NOT fire and the EXACT inf-loop trap
+            // (same may_goto_depth) correctly rejects. Bumping both edges
+            // made the back-edge look like progress → false-accept.
             let mut state_taken = state.clone();
             state_taken.consume_goto_budget();
             state_taken.pc = *target;
-            state_taken.may_goto_depth = state_taken.may_goto_depth.saturating_add(1);
 
             let mut state_fall = state;
             state_fall.consume_goto_budget();
@@ -232,7 +242,6 @@ pub fn transfer(env: &mut VerifierEnv, mut state: State, instr: &Instr) -> Vec<S
             state_fall.may_goto_depth = state_fall.may_goto_depth.saturating_add(1);
 
             if let Some(prev) = prev_snapshot.as_ref() {
-                call::kfunc::widen_imprecise_scalars_at_iter_next(env, prev, &mut state_taken);
                 call::kfunc::widen_imprecise_scalars_at_iter_next(env, prev, &mut state_fall);
             }
 

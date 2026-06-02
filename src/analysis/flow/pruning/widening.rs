@@ -71,6 +71,13 @@ fn is_backward_branch(pc: usize, prog: &Program) -> bool {
     }
     match &prog.instrs[pc] {
         Instr::If { target, .. } | Instr::Jmp { target } => *target < pc,
+        // A `may_goto` whose target is at or behind itself is a back-edge
+        // (`l0: may_goto l0` off=-1 → target==pc; off<0 → target<pc). `<= pc`
+        // so the self-target counts; a forward may_goto (the common
+        // cond_break exit, target>pc) is NOT a back-edge. Without this the
+        // self/back may_goto isn't a loop point → EXACT inf-loop trap skipped
+        // → standard subsumption prunes the infinite self-loop away → FA.
+        Instr::MayGoto { target } => *target <= pc,
         _ => false,
     }
 }
@@ -91,6 +98,10 @@ pub(super) fn arrived_via_back_edge(env: &VerifierEnv, state: &State, pc: usize,
                 {
                     Some(true)
                 }
+                // may_goto back-edge / self-loop: prev insn was a `may_goto`
+                // jumping to `pc` from at or behind `pc` (`prev_pc >= pc`
+                // covers the `l0: may_goto l0` self case). See is_backward_branch.
+                Instr::MayGoto { target } if *target == pc && prev_pc >= pc => Some(true),
                 _ => Some(false),
             }
         })

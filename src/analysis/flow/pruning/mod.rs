@@ -136,6 +136,38 @@ fn handle_loop_pruning(
             // insns / 0 prunes; ksnoop AND mode → 970k bundle entries
             // at one PC).
             let force_exact = crate::analysis::flow::scc::incomplete_read_marks(env, prev);
+            // Kernel `is_state_visited` (verifier.c v6.15 L19024) wraps the
+            // whole ACTIVE-ancestor (`sl->state.branches>0`) case in
+            // special-case-hits-then-`goto miss`: it NEVER takes a
+            // NOT_EXACT/RANGE_WITHIN subsumption prune against an active
+            // ancestor at a plain back-edge. Those active hits live only at
+            // iter_next/may_goto/callback force-checkpoint sites (handled
+            // before this function / by may_goto_range_within_prune). zovia's
+            // generic loop walk historically took them — a non-kernel hack
+            // that over-converged the conditional_loop/movsx/short_loop1
+            // infinite loops before they stabilize into the EXACT inf-loop
+            // trap (FA). Skipping active ancestors is kernel-faithful;
+            // bounded loops converge against EXPLORED ancestors (dfs_paths==0)
+            // and at force-checkpoints, infinite loops hit the EXACT trap.
+            //
+            // Gated to base mode (`!env.bcf_enabled`): skipping active hits
+            // REDUCES pruning ⇒ more distinct trajectories ⇒ larger no_log
+            // BCF bundles (the documented E2BIG cascade — same trajectory-
+            // sensitivity that forced `b5886c9`/`587ed7d` to base-mode). In
+            // BCF mode the kernel re-checks the bundle via canonical hash, so
+            // keeping the (over-pruning) hack there is fail-closed sound and
+            // leaves BCF bundles byte-identical to HEAD. The selftest FA
+            // floor runs base mode, where this fires.
+            if !env.bcf_enabled && prev.dfs_paths > 0 {
+                // Record as a miss so the kernel-faithful eviction
+                // (record_pruning_misses, n=3 at plain back-edges) keeps the
+                // per-pc cache small. Without this the FIFO cap (64) fills
+                // with distinct-precise-counter states that all miss, making
+                // every back-edge arrival walk 64 entries (O(N·64)) — the
+                // dominant cost on big bounded loops like nested_loops.
+                m.push(i);
+                continue;
+            }
             match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
                 Ok(()) => {
                     if crate::analysis::trace_pc_in_range(pc) {
@@ -356,16 +388,27 @@ pub fn should_prune(
     // iter loop's back-edge target (a body pc) isn't cached, the
     // iter_next call site IS cached but pruning short-circuits via
     // on_path → bpf_iter_num loops never converge → timeout.
-    let pc_is_iter_next_call = matches!(prog.instrs.get(pc), Some(Instr::Call { .. }))
-        && env
-            .insn_aux_data
-            .get(pc)
-            .map(|a| a.force_checkpoint)
-            .unwrap_or(false);
+    // Generalized to ALL force-checkpoint pcs (iter_next/sync-cb Call sites
+    // AND may_goto insns): the kernel's is_state_visited runs at EVERY
+    // checkpoint and converges may_goto loops AT the may_goto pc itself
+    // (verifier.c L19102, RANGE_WITHIN + depth-differ) — not at the loop's
+    // back-edge target. A may_goto pc is a force-checkpoint but NOT a
+    // back-edge target, so `in_loop` is false there; without exempting it
+    // from the on-path skip, may_goto_range_within_prune never runs and the
+    // loop only converges via the (non-kernel) active-ancestor hit.
+    let pc_is_force_checkpoint = env
+        .insn_aux_data
+        .get(pc)
+        .map(|a| a.force_checkpoint)
+        .unwrap_or(false)
+        && matches!(
+            prog.instrs.get(pc),
+            Some(Instr::Call { .. }) | Some(Instr::MayGoto { .. })
+        );
 
     // Re-entry to a PC from a different depth (e.g. repeated call in a loop).
     // Must continue to reach the actual loop back-edge.
-    if is_on_path && !in_loop && !pc_is_iter_next_call {
+    if is_on_path && !in_loop && !pc_is_force_checkpoint {
         env.pruning_stats.on_path_skip += 1;
         return false;
     }
