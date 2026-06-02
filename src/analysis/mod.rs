@@ -1083,13 +1083,22 @@ fn run_worklist(
         if std::env::var("ZOVIA_DUMP_VISITS").ok().as_deref() == Some("1") {
             *env.pc_visit_count.entry(state.pc).or_insert(0) += 1;
         }
-        if env.insn_processed > config.max_insn {
+        // BCF mode is an offline bundle generator that explores past
+        // rejects (discharge, not fail-fast), so it uses a higher budget
+        // than the kernel's 1M runtime cap. Base mode keeps 1M — hitting it
+        // there is a faithful kernel reject. See VerifierConfig::max_insn.
+        let insn_limit = if env.bcf_enabled {
+            config.bcf_max_insn
+        } else {
+            config.max_insn
+        };
+        if env.insn_processed > insn_limit {
             // We use error! with target="analysis" to auto-trigger the crash dump
-            error!(target: "analysis", "[Verifier] Hit complexity limit ({} instructions). Aborting.", config.max_insn);
+            error!(target: "analysis", "[Verifier] Hit complexity limit ({} instructions). Aborting.", insn_limit);
             info!(target: "app", "[Verifier] (Pruned {} states before limit)", prune_count);
             info!(target: "app", "[Verifier] Tip: Try --skip-dbm or --max-insn N to increase limit");
             env.fail(VerificationError::ComplexityLimitExceeded {
-                limit: config.max_insn,
+                limit: insn_limit,
             });
             break;
         }
