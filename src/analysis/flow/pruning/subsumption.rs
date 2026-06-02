@@ -461,6 +461,22 @@ fn scalar_ids_subsumed_by(cur: &State, old: &State, live_regs: &HashSet<Reg>) ->
         if !old.is_reg_precise(r) {
             continue; // imprecise old scalar = wildcard (kernel)
         }
+        // Kernel regsafe `BPF_ADD_CONST` (verifier.c v6.15 L19732): the
+        // add-const FLAG must match between old and cur, and when set, the
+        // delta OFF must match too. This is what keeps a loop's first
+        // iteration (base reg, no add-const) distinct from later iterations
+        // (the `rX = rY; rX += K` link, off=K) so the access bounds are
+        // re-verified — `verifier_iterating_callbacks::check_add_const`.
+        // Subsumption-STRICTENING ⇒ more exploration ⇒ FA-safe; inert in
+        // BCF mode (scalar_id_off is empty there, so both sides are None).
+        let o_off = old.scalar_id_off(r);
+        let c_off = cur.scalar_id_off(r);
+        if o_off.is_some() != c_off.is_some() {
+            return false; // add-const flag mismatch
+        }
+        if o_off.is_some() && o_off != c_off {
+            return false; // off mismatch while flag set
+        }
         let oid = old.scalar_id(r).unwrap_or(0);
         let cid = cur.scalar_id(r).unwrap_or(0);
         if !check_scalar_ids(oid, cid, &mut map, &mut tmp) {

@@ -46,6 +46,12 @@ fn fanout_scalar_bounds(state: &mut State, left: Reg) {
 
     let (lo, hi) = state.domain.get_interval(left);
     let tnum = state.get_tnum(left);
+    // Kernel `BPF_ADD_CONST` delta of the narrowed base (verifier.c
+    // `sync_linked_regs`): a linked reg `R == base + (R.off - left.off)`,
+    // so propagate `left`'s range SHIFTED by that per-reg delta. `left.off`
+    // is 0 unless `left` itself is an add-const link. Always 0 in BCF mode
+    // (scalar_id_off stays empty there) ⇒ delta 0 ⇒ unchanged behavior.
+    let left_off = state.scalar_id_off(left).unwrap_or(0);
 
     // ── Registers ───────────────────────────────────────────────────────────
     for r in &linked {
@@ -56,6 +62,12 @@ fn fanout_scalar_bounds(state: &mut State, left: Reg) {
         if state.types.get(r) != RegType::ScalarValue {
             continue;
         }
+        let delta = state.scalar_id_off(r).unwrap_or(0).saturating_sub(left_off);
+        let (lo, hi, tnum) = if delta == 0 {
+            (lo, hi, tnum)
+        } else {
+            (lo.saturating_add(delta), hi.saturating_add(delta), tnum.add_imm(delta))
+        };
         let (r_lo, r_hi) = state.domain.get_interval(r);
         // Guard: skip if the new bound would make this register's
         // interval empty.  That can happen when the zone domain has

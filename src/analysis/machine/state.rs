@@ -207,6 +207,19 @@ pub struct State {
     /// Sparse: absent entry = unlinked.
     pub scalar_ids: HashMap<Reg, u32>,
 
+    /// Kernel `BPF_ADD_CONST` linked-register delta (verifier.c v6.15
+    /// L16367). When a register went through `rX = rY; rX += K` (64-bit,
+    /// K ≤ S32_MAX), `rX` keeps `rY`'s scalar id and carries the constant
+    /// delta `K` here: `rX == (scalar-id base) + off`. PRESENCE of an entry
+    /// is the kernel's `BPF_ADD_CONST` flag. A branch narrowing the base
+    /// (`if rY < K`) re-derives `rX`'s range via the delta
+    /// (`sync_linked_regs`). Cleared when the register is overwritten,
+    /// when a second `+= K` would accumulate (kernel drops the link), or
+    /// when the register is the SOURCE of a `rX = rY` copy. Sparse: absent
+    /// = no add-const delta (plain scalar id or unlinked).
+    /// See `verifier_iterating_callbacks::check_add_const`.
+    pub scalar_id_off: HashMap<Reg, i64>,
+
     /// Registers whose exact scalar bounds are "precision-critical" — i.e. a
     /// safety check downstream depends on the tight value rather than a
     /// coarser widened bound. Populated by
@@ -394,6 +407,7 @@ impl State {
             cleaned: false,
             tnums: tnums.clone(),
             scalar_ids: HashMap::new(),
+            scalar_id_off: HashMap::new(),
             precise_regs: HashSet::new(),
             frames: FrameStack::new(),
             frame_depth: 0,
@@ -535,14 +549,29 @@ impl State {
     pub fn alloc_scalar_id(&mut self, r: Reg) -> u32 {
         let id = crate::analysis::machine::reg_types::new_scalar_id();
         self.scalar_ids.insert(r, id);
+        // A fresh base id has no add-const delta.
+        self.scalar_id_off.remove(&r);
         id
     }
 
-    /// Make `dst` share `src`'s scalar id (copy edge). If `src` has no id,
-    /// one is allocated first so both registers end up linked.
+    /// Make `dst` share `src`'s scalar id (copy edge for `dst = src`). If
+    /// `src` has no id, one is allocated first so both registers end up
+    /// linked. Mirrors the kernel `assign_scalar_id_before_mov` +
+    /// `copy_register_state` (verifier.c v6.15 L5490): if `src` carries a
+    /// `BPF_ADD_CONST` delta it is dropped and `src` is re-based to a fresh
+    /// id (the kernel forbids `dst = src` when `src` is an add-const link —
+    /// "multiple rX += const are not supported"), then copied to `dst`. The
+    /// resulting `dst` is a plain copy with no add-const delta.
     pub fn link_scalar_id(&mut self, dst: Reg, src: Reg) {
         if dst == Reg::Zero || src == Reg::Zero {
             return;
+        }
+        // `src` carries an add-const delta: kernel clears it (src->id = 0,
+        // off = 0) and the `!src->id` re-assign then mints a fresh id,
+        // unlinking `src` from its old delta class.
+        if self.scalar_id_off.remove(&src).is_some() {
+            self.scalar_ids
+                .insert(src, crate::analysis::machine::reg_types::new_scalar_id());
         }
         let id = match self.scalar_ids.get(&src).copied() {
             Some(id) => id,
@@ -553,11 +582,41 @@ impl State {
             }
         };
         self.scalar_ids.insert(dst, id);
+        // `dst` is a plain copy of `src` (which now has no add-const delta).
+        self.scalar_id_off.remove(&dst);
     }
 
     /// Drop any scalar id on `r` (e.g. constant assignment or value-mutating ALU).
     pub fn clear_scalar_id(&mut self, r: Reg) {
         self.scalar_ids.remove(&r);
+        self.scalar_id_off.remove(&r);
+    }
+
+    /// Kernel `BPF_ADD_CONST` delta of `r` (None = no add-const link). The
+    /// delta is only meaningful alongside a base scalar id, so a stale
+    /// entry without one is treated as absent (defensive — every id-clearing
+    /// path also clears the off, but a non-ALU overwrite could leave it).
+    pub fn scalar_id_off(&self, r: Reg) -> Option<i64> {
+        if r == Reg::Zero || !self.scalar_ids.contains_key(&r) {
+            return None;
+        }
+        self.scalar_id_off.get(&r).copied()
+    }
+
+    /// Set the `BPF_ADD_CONST` delta on `r` (`r == base_id + off`). `r` must
+    /// already carry a scalar id (the kernel only sets the flag when
+    /// `dst_reg->id` is non-zero).
+    pub fn set_scalar_id_off(&mut self, r: Reg, off: i64) {
+        if r == Reg::Zero || !self.scalar_ids.contains_key(&r) {
+            return;
+        }
+        self.scalar_id_off.insert(r, off);
+    }
+
+    /// Clear only the `BPF_ADD_CONST` delta on `r`, leaving its base scalar
+    /// id intact (the kernel `dst->id &= ~BPF_ADD_CONST; dst->off = 0`).
+    pub fn clear_scalar_id_off(&mut self, r: Reg) {
+        self.scalar_id_off.remove(&r);
     }
 
     // ── Precision marking ───────────────────────────────
