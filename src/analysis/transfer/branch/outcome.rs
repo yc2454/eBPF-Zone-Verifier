@@ -24,6 +24,18 @@ pub(crate) fn condition_outcome(
         }
     }
 
+    // Packet-pointer vs pkt_end: resolve a *duplicated* bounds check using
+    // the kernel `mark_pkt_end` relationship (BEYOND_PKT_END / AT_PKT_END).
+    // Mirrors `is_pkt_ptr_branch_taken` (verifier.c). 64-bit comparisons
+    // only (packet pointers are always 64-bit). This must run BEFORE the
+    // generic pointer bail below, which conservatively returns None for all
+    // pointer comparisons. See `test_tc_change_tail::change_tail`.
+    if width == Width::W64 {
+        if let Some(outcome) = pkt_ptr_branch_taken(state, left, op, right) {
+            return Some(outcome);
+        }
+    }
+
     // Don't eliminate paths based on pointer comparisons
     if state.types.get(left).is_pointer() {
         return None;
@@ -256,6 +268,87 @@ pub(crate) fn condition_outcome(
             }
             None
         }
+    }
+}
+
+/// Resolve a `pkt OP pkt_end` (or `pkt_end OP pkt`) comparison using the
+/// kernel `mark_pkt_end` relationship recorded on the packet pointer.
+/// Mirrors `is_pkt_ptr_branch_taken` (verifier.c v6.15):
+///
+/// - `BEYOND_PKT_END`: pkt has ≥1 byte beyond pkt_end ⇒ `pkt > end` true,
+///   `pkt <= end` false, `pkt >= end` true, `pkt < end` false.
+/// - `AT_PKT_END`: pkt == pkt_end ⇒ only `pkt >= end` / `pkt < end`
+///   resolve (`>=` true, `<` false); `>` / `<=` stay unknown.
+///
+/// Returns `Some(true)` if the branch is always taken, `Some(false)` if
+/// never taken, `None` if undetermined.
+fn pkt_ptr_branch_taken(
+    state: &State,
+    left: Reg,
+    op: CmpOp,
+    right: &Operand,
+) -> Option<bool> {
+    use crate::analysis::machine::reg_types::RegType;
+    use crate::domains::interval::PktEndRel;
+    use crate::domains::numeric::NumericDomain;
+
+    let Operand::Reg(right_reg) = right else {
+        return None;
+    };
+    let right_reg = *right_reg;
+
+    let left_ty = state.types.get(left);
+    let right_ty = state.types.get(right_reg);
+
+    // Normalize so `pkt_reg` is the packet pointer and `op` is written as
+    // `pkt OP pkt_end`. If pkt_end is on the left, flip the comparison.
+    let (pkt_reg, op) = if matches!(right_ty, RegType::PtrToPacketEnd)
+        && matches!(left_ty, RegType::PtrToPacket)
+    {
+        (left, op)
+    } else if matches!(left_ty, RegType::PtrToPacketEnd)
+        && matches!(right_ty, RegType::PtrToPacket)
+    {
+        (right_reg, flip_cmp_op(op))
+    } else {
+        return None;
+    };
+
+    let rel = match state.domain {
+        NumericDomain::Interval(ref ivl) => ivl.get_ptr_offset(pkt_reg).and_then(|po| po.pkt_end_rel),
+        _ => None,
+    }?;
+
+    // Kernel `is_pkt_ptr_branch_taken`: only the unsigned pkt comparisons
+    // are modeled. `pkt->range < 0` is implied by `rel` being set.
+    match op {
+        // `pkt > end` / `pkt <= end`: resolvable only when BEYOND.
+        CmpOp::UGt | CmpOp::ULe => match rel {
+            PktEndRel::Beyond => Some(op == CmpOp::UGt),
+            PktEndRel::At => None,
+        },
+        // `pkt >= end` / `pkt < end`: resolvable for BEYOND and AT.
+        CmpOp::UGe | CmpOp::ULt => match rel {
+            PktEndRel::Beyond | PktEndRel::At => Some(op == CmpOp::UGe),
+        },
+        _ => None,
+    }
+}
+
+/// Flip a comparison operator's operands (kernel `flip_opcode`): rewrite
+/// `a OP b` as `b FLIP(OP) a`. Only the orderings used by packet-pointer
+/// comparisons matter here; equality/JSET are unaffected by swapping.
+fn flip_cmp_op(op: CmpOp) -> CmpOp {
+    match op {
+        CmpOp::UGt => CmpOp::ULt,
+        CmpOp::ULt => CmpOp::UGt,
+        CmpOp::UGe => CmpOp::ULe,
+        CmpOp::ULe => CmpOp::UGe,
+        CmpOp::SGt => CmpOp::SLt,
+        CmpOp::SLt => CmpOp::SGt,
+        CmpOp::SGe => CmpOp::SLe,
+        CmpOp::SLe => CmpOp::SGe,
+        CmpOp::Eq | CmpOp::Ne | CmpOp::Test => op,
     }
 }
 

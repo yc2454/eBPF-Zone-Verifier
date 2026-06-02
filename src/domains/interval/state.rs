@@ -279,6 +279,24 @@ impl Default for ScalarBounds {
     }
 }
 
+/// Kernel `mark_pkt_end` relationship for a packet pointer that took the
+/// "out of range" side of a `pkt OP pkt_end` comparison. Mirrors the
+/// kernel's `reg->range` sentinels `AT_PKT_END` (-1) / `BEYOND_PKT_END`
+/// (-2) (verifier.c `mark_pkt_end`). Used by `condition_outcome` to
+/// resolve a *duplicated* `pkt vs pkt_end` comparison (a compiler artifact,
+/// e.g. `test_tc_change_tail::change_tail`) so the contradictory
+/// `pkt > end ∧ pkt <= end` path goes empty instead of reaching an
+/// unrefined packet access. See kernel `is_pkt_ptr_branch_taken`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PktEndRel {
+    /// `pkt == pkt_end` exactly (kernel `AT_PKT_END`): proven on the taken
+    /// branch of `pkt >= pkt_end` (or `pkt <= pkt_end` fall-through).
+    At,
+    /// `pkt > pkt_end`, at least one byte beyond (kernel `BEYOND_PKT_END`):
+    /// proven on the taken branch of `pkt > pkt_end`.
+    Beyond,
+}
+
 /// Pointer offset information
 /// Tracks the relationship between a register and its base anchor
 /// Field names match Linux kernel's bpf_reg_state for clarity
@@ -314,6 +332,27 @@ pub struct PtrOffset {
     /// happen to share the same numeric `var_off` but came from
     /// independent arithmetic chains.
     pub id: Option<u32>,
+    /// Kernel `mark_pkt_end` relationship (`reg->range` sentinels
+    /// AT_PKT_END / BEYOND_PKT_END). `Some` only on the "out of range"
+    /// branch of a `pkt vs pkt_end` comparison; reset to `None` on any
+    /// pointer arithmetic and not round-tripped across spill/subprog
+    /// boundaries (conservative — losing it only costs branch resolution,
+    /// never soundness). See [`PktEndRel`].
+    pub pkt_end_rel: Option<PktEndRel>,
+}
+
+impl PtrOffset {
+    /// Kernel-equivalent `reg->range` value folding the proven good range
+    /// (`>= 0`) together with the `mark_pkt_end` sentinels
+    /// (`BEYOND_PKT_END = -2`, `AT_PKT_END = -1`). Used by subsumption to
+    /// mirror the kernel `regsafe` rule `rold->range > rcur->range`.
+    pub fn kernel_range(&self) -> i64 {
+        match self.pkt_end_rel {
+            Some(PktEndRel::Beyond) => -2,
+            Some(PktEndRel::At) => -1,
+            None => self.range.unwrap_or(0),
+        }
+    }
 }
 
 impl PtrOffset {
@@ -325,6 +364,7 @@ impl PtrOffset {
             var_off: 0,
             range: None,
             id: None,
+            pkt_end_rel: None,
         }
     }
 
@@ -337,6 +377,7 @@ impl PtrOffset {
             var_off: 0,
             range: None,
             id: None,
+            pkt_end_rel: None,
         }
     }
 
@@ -349,6 +390,7 @@ impl PtrOffset {
             var_off,
             range: None,
             id: None,
+            pkt_end_rel: None,
         }
     }
 

@@ -834,15 +834,34 @@ fn interval_subsumed_by(
     // never verified — a soundness FALSE_ACCEPT
     // (verifier_xdp_direct_packet_access::pkt_*_bad_access_2_*).
     for r in Reg::ALL {
-        let old_range = old_ivl.get_ptr_offset(r).and_then(|po| po.range);
-        let cur_range = cur_ivl.get_ptr_offset(r).and_then(|po| po.range);
+        let old_po = old_ivl.get_ptr_offset(r);
+        let cur_po = cur_ivl.get_ptr_offset(r);
+
+        // Prior good-range rule, preserved EXACTLY (Some/None distinction):
+        // old proving a (≥0) range that cur lacks/under-proves blocks
+        // subsumption. Untouched so BCF-mode behavior — where pkt_end_rel is
+        // always None (gated off, see refine_data_region_bounds) — is
+        // byte-identical to HEAD.
+        let old_range = old_po.and_then(|po| po.range);
+        let cur_range = cur_po.and_then(|po| po.range);
         match (old_range, cur_range) {
-            // old proves a range, cur proves none: old does NOT subsume cur.
             (Some(_), None) => return false,
-            // old proves a larger range than cur: old does NOT subsume cur.
             (Some(old_r), Some(cur_r)) if old_r > cur_r => return false,
-            // cur's range >= old's, or both absent: OK.
             _ => {}
+        }
+
+        // mark_pkt_end sentinels (base-mode only). Fold the BEYOND/AT
+        // `reg->range` sentinels into the kernel `regsafe` rule
+        // `rold->range > rcur->range → return false` (verifier.c L19801):
+        // a `cur` marked out-of-range carries a resolved-dup-check fact an
+        // unmarked `old` didn't establish, so old must not subsume it. With
+        // pkt_end_rel == None on both (always so in BCF mode) the kernel_range
+        // collapses to range.unwrap_or(0) and this never adds a block beyond
+        // the rule above.
+        let old_kr = old_po.map(|po| po.kernel_range()).unwrap_or(0);
+        let cur_kr = cur_po.map(|po| po.kernel_range()).unwrap_or(0);
+        if old_kr > cur_kr {
+            return false;
         }
     }
     true

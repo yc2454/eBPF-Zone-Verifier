@@ -276,6 +276,39 @@ fn refine_data_region_bounds(
                 ivl.set_packet_size_upper_bound(upper_exclusive as u64);
             }
         }
+
+        // Kernel `mark_pkt_end` (verifier.c): on the branch where the
+        // packet pointer is proven to be out of range (`pkt > pkt_end`
+        // ⇒ BEYOND, `pkt >= pkt_end` ⇒ AT), record the relationship on
+        // `checked_reg` so a *duplicated* `pkt vs pkt_end` comparison can
+        // be resolved statically (see `is_pkt_ptr_branch_taken` /
+        // `condition_outcome`). `upper_strict` distinguishes the two:
+        // strict (`>=`/`<=`) means AT, non-strict (`>`/`<`) means BEYOND.
+        // Works for variable-offset pointers too — exactly the case the
+        // `is_fixed` global-bound gate above skips (change_tail's R3 = udp+8).
+        //
+        // BASE-MODE ONLY (`state.bcf.is_none()`): packet comparisons ARE in
+        // the calico/cilium corpus, so this is BCF-trajectory-sensitive
+        // (it prunes the contradictory dup-check path). Mirrors the
+        // b5886c9 / b73140e precedent — keeping `pkt_end_rel` unset in BCF
+        // mode makes `condition_outcome` resolution and the subsumption
+        // sentinel inert there, so BCF bundles stay byte-identical to HEAD
+        // (kernel re-checks the bundle ⇒ exploring the extra path in BCF is
+        // fail-closed sound). The base verifier (FA=0 floor) gets the fix.
+        if state.bcf.is_none() {
+            let mark = if upper_strict {
+                crate::domains::interval::PktEndRel::At
+            } else {
+                crate::domains::interval::PktEndRel::Beyond
+            };
+            if let NumericDomain::Interval(ref mut ivl) = state.domain {
+                if let Some(po) = ivl.get_ptr_offset(checked_reg).cloned() {
+                    let mut new_po = po;
+                    new_po.pkt_end_rel = Some(mark);
+                    ivl.get_mut(checked_reg).ptr_offset = Some(new_po);
+                }
+            }
+        }
     }
 }
 

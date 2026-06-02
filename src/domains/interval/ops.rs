@@ -167,6 +167,9 @@ pub fn assign_reg_offset(state: &mut IntervalState, dst: Reg, src: Reg, imm: i64
         // id propagates: a constant offset adjustment leaves the
         // pointer in the same kernel-style identity family.
         id: po.id,
+        // Any arithmetic shifts the pointer relative to pkt_end, so the
+        // mark_pkt_end relationship no longer holds for the result.
+        pkt_end_rel: None,
     });
 
     state.set(
@@ -204,6 +207,7 @@ pub fn init_map_value_ptr(state: &mut IntervalState, reg: Reg) {
                 var_off: 0,
                 range: None,
                 id: None,
+                pkt_end_rel: None,
             }),
         },
     );
@@ -232,6 +236,7 @@ pub fn init_map_value_ptr_at(state: &mut IntervalState, reg: Reg, offset: i64) {
                 var_off: 0,
                 range: None,
                 id: None,
+                pkt_end_rel: None,
             }),
         },
     );
@@ -462,6 +467,7 @@ pub fn apply_scalar_add_ptr(
                     // Adding variable invalidates proven range
                     range: None,
                     id: new_id,
+                    pkt_end_rel: None,
                 }),
             },
         );

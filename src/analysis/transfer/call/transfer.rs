@@ -1791,6 +1791,9 @@ pub(crate) fn restore_interval_ptr_offset_from_return(
                     // returns; conservative None loses id-aware
                     // refinement at the boundary but is sound.
                     id: None,
+                    // mark_pkt_end relationship not round-tripped across
+                    // subprog returns; conservative None is sound.
+                    pkt_end_rel: None,
                 };
                 ivl.get_mut(Reg::R0).ptr_offset = Some(ptr_offset);
             }
