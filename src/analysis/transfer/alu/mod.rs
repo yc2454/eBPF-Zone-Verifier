@@ -246,7 +246,6 @@ pub(crate) fn transfer_alu(
             }
             (AluOp::Add, Operand::Imm(k))
                 if width == crate::ast::Width::W64
-                    && state.bcf.is_none()
                     && state.scalar_id(dst).is_some() =>
             {
                 // Kernel `BPF_ADD_CONST` (verifier.c v6.15 L16367): a 64-bit
@@ -254,11 +253,11 @@ pub(crate) fn transfer_alu(
                 // constant delta `K` so a later `if base < N` re-derives dst's
                 // range via `sync_linked_regs`. A SECOND `+= K` (dst already
                 // add-const) or `K > S32_MAX` would accumulate / overflow, so
-                // the kernel drops the link entirely. Base-mode only: the
-                // delta feeds scalar regsafe (BCF-trajectory-sensitive), so
-                // keeping scalar_id_off empty in BCF mode makes the sync and
-                // regsafe off/flag checks inert there (bundles byte-identical
-                // to HEAD; same precedent as the change_tail / b73140e fixes).
+                // the kernel drops the link entirely. Applied in BOTH base and
+                // BCF mode — a faithful kernel feature; BCF should mirror it.
+                // It enables loop convergence (fewer trajectories), though the
+                // regsafe off/flag match is subsumption-strictening; net BCF
+                // bundle effect under study (calico-19 size + VM-load gate).
                 let already_add_const = state.scalar_id_off(dst).is_some();
                 if already_add_const || *k > i32::MAX as i64 {
                     state.clear_scalar_id(dst);
