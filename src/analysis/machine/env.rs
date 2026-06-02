@@ -172,6 +172,12 @@ impl SubsumptionMissReason {
 pub struct VerifierEnv<'a> {
     pub ctx: &'a ExecContext,
     pub explored_states: HashMap<usize, Vec<State>>,
+    /// Count of cached states evicted by the `max_states_per_pc` cap
+    /// (unmet pruning demand). High = kernel-faithful pruning isn't
+    /// subsuming states the kernel would, so the per-pc list overflows the
+    /// cap and thrashes. Paired with `max_per_insn` (kernel ≤27 on calico)
+    /// as the convergence-quality metric. See cont.13.
+    pub cache_evictions: u64,
     /// Mapping from an iter_next kfunc call pc to the iter slot it
     /// operates on `(frame_idx, stack_offset)`. Populated lazily by
     /// `iter_next_fork` on first visit. Read by iter-loop pruning
@@ -369,6 +375,7 @@ impl<'a> VerifierEnv<'a> {
         VerifierEnv {
             ctx,
             explored_states: HashMap::new(),
+            cache_evictions: 0,
             iter_pc_slot: HashMap::new(),
             state_metrics: HashMap::new(),
             kernel_faithful_alu,

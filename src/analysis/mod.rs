@@ -395,6 +395,23 @@ pub fn analyze_program_full(
     }
 
     // --- FINAL REPORT ---
+    // Pruning-quality metric (kernel `[ZK summary]` analog): max states
+    // cached at any single pc + total cached + cap evictions. The kernel
+    // keeps ≤27 per insn on the calico corpus; zovia pegging the cap (with
+    // evictions > 0) is the pruning-effectiveness gap. See cont.13.
+    if config.verbosity >= 1 {
+        let max_per_insn = env.explored_states.values().map(|v| v.len()).max().unwrap_or(0);
+        let total_states: usize = env.explored_states.values().map(|v| v.len()).sum();
+        let n_at_cap = env
+            .explored_states
+            .values()
+            .filter(|v| config.max_states_per_pc > 0 && v.len() >= config.max_states_per_pc)
+            .count();
+        info!(target: "app",
+            "[Analysis] pruning-quality: max_per_insn={} total_states={} pcs_at_cap={} cap_evictions={}",
+            max_per_insn, total_states, n_at_cap, env.cache_evictions);
+    }
+
     let analysis_error = if let Some(err) = &env.error {
         info!(target: "app", "\n[Verifier] FAILURE: {}", err.description());
         if config.verbosity >= 1 {
