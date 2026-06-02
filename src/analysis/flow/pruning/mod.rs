@@ -265,6 +265,17 @@ fn handle_standard_pruning(
     let mut miss_idxs: Vec<usize> = Vec::new();
     let mut miss_reasons: Vec<SubsumptionMissReason> = Vec::new();
     let mut local_children_unsafe_skips: u64 = 0;
+    // Kernel `is_state_visited` `is_iter_next_insn` branch (verifier.c v6.15
+    // L19079): iterator convergence ALWAYS uses `states_equal(RANGE_WITHIN)`,
+    // never the looser NOT_EXACT. RANGE_WITHIN range-checks even non-precise
+    // scalars (the `!rold->precise && exact==NOT_EXACT` wildcard shortcut does
+    // NOT fire), which is exactly what catches iters.c::delayed_precision_mark:
+    // at the iter_next call r7 is reachable as -16 and -33 with no precision
+    // mark; NOT_EXACT would wildcard r7 and merge the two, dropping the unsafe
+    // `*(r10 + r7=-33)` deref. Forcing RANGE_WITHIN keeps them distinct so the
+    // widened (unbounded) r7 reaches the access and is rejected. `iter_pc_slot`
+    // is populated at every iter_next site by iter_next_fork.
+    let iter_next_pc = env.iter_pc_slot.contains_key(&pc);
     if let Some(prev_states) = env.explored_states.get(&pc) {
         for (i, prev) in prev_states.iter().enumerate() {
             // Kernel children_unsafe (bcf_refine, verifier.c:24580-81):
@@ -275,8 +286,10 @@ fn handle_standard_pruning(
                 continue;
             }
             // Kernel-faithful force_exact (see matching block above for
-            // full rationale and history).
-            let force_exact = crate::analysis::flow::scc::incomplete_read_marks(env, prev);
+            // full rationale and history). At iter_next sites the kernel
+            // pins RANGE_WITHIN regardless of read-mark completeness.
+            let force_exact =
+                iter_next_pc || crate::analysis::flow::scc::incomplete_read_marks(env, prev);
             match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
                 Ok(()) => {
                     hit_idx = Some(i);
