@@ -1575,6 +1575,14 @@ impl Analyzer {
                         (ProgramKind::Lsm, _, "file_open") => {
                             Some(vec![("file", false)])
                         }
+                        // kernel_read_file(struct file *file,
+                        //   enum kernel_read_file_id id, bool contents)
+                        // — drives ima.c::kernel_read_file. Only the leading
+                        // `struct file *` pointer needs typing; the trailing
+                        // enum/bool scalars fall through to ScalarValue.
+                        (ProgramKind::Lsm, _, "kernel_read_file") => {
+                            Some(vec![("file", false)])
+                        }
                         (ProgramKind::Lsm, _, "task_alloc") => {
                             Some(vec![("task_struct", false)])
                         }
