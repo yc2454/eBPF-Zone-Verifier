@@ -672,7 +672,17 @@ pub fn check_store(
             let store_skip = matches!(
                 base_ty,
                 PtrToBtfId {
-                    type_name: "nf_conn___init" | "nf_conn",
+                    // `tcp_sock`: the struct_ops sk arg promoted from
+                    // `sock` for tcp_congestion_ops (see runner.rs
+                    // struct_ops_entry_args). The kernel's
+                    // `bpf_tcp_ca_btf_struct_access` admits writes to the
+                    // CA state region (icsk_ca_priv) through it; we have no
+                    // tcp_sock mem_region layout, so treat it lax like
+                    // "unknown" — the same over-acceptance the arg carried
+                    // as "unknown" before the promotion (no new unsoundness
+                    // for this arg). Closes bpf_dctcp_cwnd_event's ca-state
+                    // store.
+                    type_name: "nf_conn___init" | "nf_conn" | "tcp_sock",
                     ..
                 }
             );
