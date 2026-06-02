@@ -158,6 +158,25 @@ fn handle_loop_pruning(
             // keeping the (over-pruning) hack there is fail-closed sound and
             // leaves BCF bundles byte-identical to HEAD. The selftest FA
             // floor runs base mode, where this fires.
+            //
+            // 2026-06-02 faithfulness RE-STUDY (un-gate experiment, isolated
+            // binary): un-gating in BCF mode = HARD non-convergence. On
+            // to_hep_debug_co-re_v6 it TIMES OUT (>600s vs 134s baseline);
+            // calico-19 → 12/19 build-timeouts, 16/19 load. Root cause traced
+            // via ZOVIA_DUMP_STATES_AT_PC: at the loop head (e.g. pc 2592) a
+            // precise down-counter (r7: 8→1) + a widening accumulator (r9)
+            // produce endlessly-distinct states; with the active-ancestor
+            // prune skipped (kernel-faithful), they can only converge against
+            // an EXPLORED (dfs_paths==0) ancestor, but zovia's INTERLEAVED
+            // WORKLIST keeps every in-flight loop iteration active at once, so
+            // none is ever available → the per-pc cache pegs at the FIFO cap
+            // (64) and churns via eviction (200k+ scalar-ids minted). This
+            // active-prune is a CRUTCH standing in for the kernel's strict-DFS
+            // branches-accounting + imprecise-scalar-wildcard loop
+            // convergence, which zovia lacks. Un-gating without first building
+            // that convergence makes zovia STRICTLY WORSE than the kernel
+            // (kernel converges; zovia doesn't). Keep gated until the
+            // loop-convergence rework (the documented multi-session landmine).
             if !env.bcf_enabled && prev.dfs_paths > 0 {
                 // Record as a miss so the kernel-faithful eviction
                 // (record_pruning_misses, n=3 at plain back-edges) keeps the

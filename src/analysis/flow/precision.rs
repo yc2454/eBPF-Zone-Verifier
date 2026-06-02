@@ -185,6 +185,17 @@ pub fn mark_chain_precision_backward(
             // caught by the calico-19 VM-load gate). So in BCF mode keep the
             // pre-fix reg-frontier-only termination (the gate-clean baseline
             // behavior). Base mode keeps the both-empty fix.
+            //
+            // 2026-06-02 faithfulness RE-STUDY (un-gate experiment, isolated
+            // binary): un-gating CONVERGES (no timeout) and is byte-neutral
+            // on _debug objects, but still bloats the no_log bundle
+            // to_l3_no_log_co-re_v6 19.3MB → 35.6MB (1.85×), and that bundle
+            // FAILS the VM load (0/1, was 1/1 baseline). The faithful
+            // precision is sound; the bloat is zovia's discharge OVER-emission
+            // (depth-64 ancestor shotgun + reg-filter) amplifying each extra
+            // trajectory into many obligations. So this stays gated until the
+            // no_log lean-bundle / emission-tightening work lands — then it
+            // can be un-gated. NOT a hard engine limit like the loop gate.
             let terminate = if env.bcf_enabled {
                 frontier.is_empty()
             } else {
