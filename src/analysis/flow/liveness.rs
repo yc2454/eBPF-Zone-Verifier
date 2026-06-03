@@ -20,7 +20,7 @@
 use crate::analysis::flow::subprog::{self, SubprogInfo};
 use crate::analysis::machine::env::VerifierEnv;
 use crate::analysis::machine::reg::Reg;
-use crate::ast::{Instr, Operand, Program};
+use crate::ast::{Instr, Operand, Program, Width};
 use std::collections::{BTreeMap, HashSet};
 
 // ---------- Internal Live-Set Representation ----------
@@ -131,6 +131,19 @@ fn compute_subprog_liveness(prog: &Program, env: &mut VerifierEnv, start: usize,
         return;
     }
 
+    // Forward must-alias pre-pass: `alias_in[idx]` maps each register that
+    // provably equals `R10 + offset` at the entry of instruction
+    // `start + idx`. Spills/fills through a frame-pointer copy (e.g.
+    // `r6 = r10; r6 += -8; *(u64*)(r6+0) = r2; r1 = *(u64*)(r6+0)`) touch a
+    // stack slot the syntactic `base == R10` check in `get_use_def` cannot
+    // see. Without the alias map that slot is invisible to liveness → marked
+    // dead → `stack_subsumed_by`'s clean_verifier_state skip merges two
+    // states that differ only in that slot's spilled pointer (unpriv
+    // `fill_of_different_pointers_*`). Resolving the base through the alias
+    // map marks the slot live in exactly the pcs that truly read/write it
+    // (precision-direction: more live slots ⇒ fewer skips ⇒ sound).
+    let alias_in = compute_fp_alias(prog, start, end);
+
     let mut live_in: Vec<LiveSet> = vec![LiveSet::default(); len];
     let mut changed = true;
 
@@ -152,7 +165,7 @@ fn compute_subprog_liveness(prog: &Program, env: &mut VerifierEnv, start: usize,
             }
 
             // 2. Compute live_in = use ∪ (live_out − def)
-            let ud = get_use_def(instr);
+            let ud = get_use_def(instr, &alias_in[idx]);
 
             let mut new_live_in = live_out;
 
@@ -228,6 +241,150 @@ fn get_local_successors(pc: usize, instr: &Instr, start: usize, end: usize) -> V
     succs
 }
 
+// ---------- Frame-Pointer Must-Alias (forward) ----------
+
+/// A per-instruction map `reg → k` meaning `reg == R10 + k` provably holds at
+/// the entry of that instruction. Returned indexed by `pc - start`.
+type AliasMap = std::collections::HashMap<Reg, i16>;
+
+/// Forward must-alias dataflow over [start, end). The transfer kills the
+/// destination of every reg-defining instruction, then re-derives the alias
+/// for moves/adds off an existing alias or off R10 itself. Join points
+/// intersect predecessor facts (keep only entries equal in every predecessor),
+/// which keeps the result a sound *must*-alias (never claims an alias that
+/// doesn't hold on some path).
+fn compute_fp_alias(prog: &Program, start: usize, end: usize) -> Vec<AliasMap> {
+    let len = end - start;
+
+    // Predecessor lists, subprogram-local.
+    let mut preds: Vec<Vec<usize>> = vec![Vec::new(); len];
+    for pc in start..end {
+        for succ in get_local_successors(pc, &prog.instrs[pc], start, end) {
+            preds[succ - start].push(pc);
+        }
+    }
+
+    let mut alias_in: Vec<AliasMap> = vec![AliasMap::new(); len];
+    let mut alias_out: Vec<AliasMap> = vec![AliasMap::new(); len];
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for idx in 0..len {
+            let pc = start + idx;
+            // IN = ∩ OUT[pred]. Entry (no local preds) ⇒ empty.
+            let new_in: AliasMap = if preds[idx].is_empty() {
+                AliasMap::new()
+            } else {
+                let mut it = preds[idx].iter();
+                let first = &alias_out[it.next().unwrap() - start];
+                let mut acc: AliasMap = first.clone();
+                for p in it {
+                    let po = &alias_out[p - start];
+                    acc.retain(|r, off| po.get(r) == Some(off));
+                }
+                acc
+            };
+            if new_in != alias_in[idx] {
+                alias_in[idx] = new_in.clone();
+                changed = true;
+            }
+            let new_out = alias_transfer(&prog.instrs[pc], new_in);
+            if new_out != alias_out[idx] {
+                alias_out[idx] = new_out;
+                changed = true;
+            }
+        }
+    }
+    alias_in
+}
+
+fn alias_transfer(instr: &Instr, mut map: AliasMap) -> AliasMap {
+    use crate::ast::AluOp;
+    match instr {
+        Instr::Alu { width, op, dst, src } => {
+            match op {
+                AluOp::Mov => match src {
+                    Operand::Reg(r) if *r == Reg::R10 => {
+                        map.insert(*dst, 0);
+                    }
+                    Operand::Reg(r) => match map.get(r).copied() {
+                        Some(k) => {
+                            map.insert(*dst, k);
+                        }
+                        None => {
+                            map.remove(dst);
+                        }
+                    },
+                    Operand::Imm(_) => {
+                        map.remove(dst);
+                    }
+                },
+                // Pointer arithmetic on a frame-pointer alias stays an alias
+                // only for 64-bit add/sub of a constant (the spill-base idiom
+                // `r6 += -8`). R10 itself is never a dst here.
+                AluOp::Add | AluOp::Sub if matches!(width, Width::W64) => {
+                    if let (Some(k), Operand::Imm(imm)) = (map.get(dst).copied(), src) {
+                        let delta = if matches!(op, AluOp::Sub) {
+                            (*imm).wrapping_neg()
+                        } else {
+                            *imm
+                        };
+                        let nk = (k as i64).saturating_add(delta);
+                        if let Ok(nk16) = i16::try_from(nk) {
+                            map.insert(*dst, nk16);
+                        } else {
+                            map.remove(dst);
+                        }
+                    } else {
+                        map.remove(dst);
+                    }
+                }
+                _ => {
+                    map.remove(dst);
+                }
+            }
+        }
+        // Reg-defining instructions that can never yield a frame-pointer alias.
+        Instr::Endian { dst, .. }
+        | Instr::Load { dst, .. }
+        | Instr::LoadSx { dst, .. }
+        | Instr::LoadAcq { dst, .. }
+        | Instr::MovSx { dst, .. }
+        | Instr::LoadMap { dst, .. } => {
+            map.remove(dst);
+        }
+        Instr::Atomic { fetch, src, .. } => {
+            if *fetch {
+                map.remove(src);
+            }
+        }
+        Instr::Call { .. } | Instr::CallRel { .. } => {
+            // R0-R5 are clobbered across calls; R6-R9 (and R10) preserved.
+            for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+                map.remove(&r);
+            }
+        }
+        Instr::LoadPacket { .. } => {
+            map.remove(&Reg::R0);
+        }
+        _ => {}
+    }
+    map
+}
+
+/// Resolve a memory base register + literal offset to a stack-slot offset
+/// relative to R10, if the base provably points into the current frame.
+fn resolve_stack_off(base: Reg, off: i16, alias: &AliasMap) -> Option<i16> {
+    if base == Reg::R10 {
+        Some(off)
+    } else {
+        alias
+            .get(&base)
+            .and_then(|k| (*k as i64).checked_add(off as i64))
+            .and_then(|v| i16::try_from(v).ok())
+    }
+}
+
 // ---------- Use/Def Analysis ----------
 
 struct UseDef {
@@ -248,7 +405,7 @@ impl UseDef {
     }
 }
 
-fn get_use_def(instr: &Instr) -> UseDef {
+fn get_use_def(instr: &Instr, alias: &AliasMap) -> UseDef {
     let mut ud = UseDef::new();
 
     match instr {
@@ -302,11 +459,12 @@ fn get_use_def(instr: &Instr) -> UseDef {
         } => {
             ud.use_regs.insert(*base);
             ud.def_regs.insert(*dst);
-            // If loading from stack (R10-based), the slot is "used" (read).
-            if *base == Reg::R10 {
+            // If loading from stack (R10-based or a frame-pointer alias), the
+            // slot is "used" (read).
+            if let Some(slot_off) = resolve_stack_off(*base, *off, alias) {
                 let byte_count = size.bytes();
                 for i in 0..byte_count {
-                    ud.use_slots.insert(*off + i as i16);
+                    ud.use_slots.insert(slot_off + i as i16);
                 }
             }
         }
@@ -321,11 +479,12 @@ fn get_use_def(instr: &Instr) -> UseDef {
             if let Operand::Reg(r) = src {
                 ud.use_regs.insert(*r);
             }
-            // If storing to stack (R10-based), the slot is "defined" (written).
-            if *base == Reg::R10 {
+            // If storing to stack (R10-based or a frame-pointer alias), the
+            // slot is "defined" (written).
+            if let Some(slot_off) = resolve_stack_off(*base, *off, alias) {
                 let byte_count = size.bytes();
                 for i in 0..byte_count {
-                    ud.def_slots.insert(*off + i as i16);
+                    ud.def_slots.insert(slot_off + i as i16);
                 }
             }
         }
@@ -340,11 +499,11 @@ fn get_use_def(instr: &Instr) -> UseDef {
             ud.use_regs.insert(*base);
             ud.use_regs.insert(*src);
             // Atomic ops read-modify-write the memory location.
-            if *base == Reg::R10 {
+            if let Some(slot_off) = resolve_stack_off(*base, *off, alias) {
                 let byte_count = size.bytes();
                 for i in 0..byte_count {
-                    ud.use_slots.insert(*off + i as i16);
-                    ud.def_slots.insert(*off + i as i16);
+                    ud.use_slots.insert(slot_off + i as i16);
+                    ud.def_slots.insert(slot_off + i as i16);
                 }
             }
         }
@@ -403,10 +562,10 @@ fn get_use_def(instr: &Instr) -> UseDef {
         } => {
             ud.use_regs.insert(*base);
             ud.def_regs.insert(*dst);
-            if *base == Reg::R10 {
+            if let Some(slot_off) = resolve_stack_off(*base, *off, alias) {
                 let byte_count = size.bytes();
                 for i in 0..byte_count {
-                    ud.use_slots.insert(*off + i as i16);
+                    ud.use_slots.insert(slot_off + i as i16);
                 }
             }
         }
@@ -426,10 +585,10 @@ fn get_use_def(instr: &Instr) -> UseDef {
         } => {
             ud.use_regs.insert(*base);
             ud.def_regs.insert(*dst);
-            if *base == Reg::R10 {
+            if let Some(slot_off) = resolve_stack_off(*base, *off, alias) {
                 let byte_count = size.bytes();
                 for i in 0..byte_count {
-                    ud.use_slots.insert(*off + i as i16);
+                    ud.use_slots.insert(slot_off + i as i16);
                 }
             }
         }
@@ -442,10 +601,10 @@ fn get_use_def(instr: &Instr) -> UseDef {
         } => {
             ud.use_regs.insert(*base);
             ud.use_regs.insert(*src);
-            if *base == Reg::R10 {
+            if let Some(slot_off) = resolve_stack_off(*base, *off, alias) {
                 let byte_count = size.bytes();
                 for i in 0..byte_count {
-                    ud.def_slots.insert(*off + i as i16);
+                    ud.def_slots.insert(slot_off + i as i16);
                 }
             }
         }

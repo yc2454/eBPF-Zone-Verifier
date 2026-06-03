@@ -88,6 +88,9 @@ pub struct GlobalOpts {
 
     #[arg(long, global = true, value_name = "N")]
     pub max_insn: Option<usize>,
+    /// BCF-mode-only complexity budget (base mode keeps `--max-insn`).
+    #[arg(long = "bcf-max-insn", global = true, value_name = "N")]
+    pub bcf_max_insn: Option<usize>,
     #[arg(long, global = true, value_name = "N")]
     pub max_states: Option<usize>,
     #[arg(long, global = true, value_name = "N")]
@@ -379,7 +382,14 @@ impl GlobalOpts {
         }
 
         if let Some(n) = self.max_insn {
+            // `--max-insn` sets BOTH budgets (so existing scripts that raise
+            // the base limit also raise BCF); `--bcf-max-insn` overrides the
+            // BCF one specifically. Keep BCF >= base.
             c.max_insn = n;
+            c.bcf_max_insn = c.bcf_max_insn.max(n);
+        }
+        if let Some(n) = self.bcf_max_insn {
+            c.bcf_max_insn = n;
         }
         if let Some(n) = self.max_states {
             c.max_states_per_pc = n;

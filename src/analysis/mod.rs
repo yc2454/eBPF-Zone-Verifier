@@ -61,6 +61,7 @@ pub fn analyze_program_full(
         prog,
         config.certificate.clone(),
         matches!(config.domain_mode, crate::common::config::DomainMode::Interval),
+        config.bcf_enabled,
     );
     if let Some(ref cert) = env.certificate {
         let computed_hash = program_hash(prog);
@@ -394,6 +395,23 @@ pub fn analyze_program_full(
     }
 
     // --- FINAL REPORT ---
+    // Pruning-quality metric (kernel `[ZK summary]` analog): max states
+    // cached at any single pc + total cached + cap evictions. The kernel
+    // keeps ≤27 per insn on the calico corpus; zovia pegging the cap (with
+    // evictions > 0) is the pruning-effectiveness gap. See cont.13.
+    if config.verbosity >= 1 {
+        let max_per_insn = env.explored_states.values().map(|v| v.len()).max().unwrap_or(0);
+        let total_states: usize = env.explored_states.values().map(|v| v.len()).sum();
+        let n_at_cap = env
+            .explored_states
+            .values()
+            .filter(|v| config.max_states_per_pc > 0 && v.len() >= config.max_states_per_pc)
+            .count();
+        info!(target: "app",
+            "[Analysis] pruning-quality: max_per_insn={} total_states={} pcs_at_cap={} cap_evictions={}",
+            max_per_insn, total_states, n_at_cap, env.cache_evictions);
+    }
+
     let analysis_error = if let Some(err) = &env.error {
         info!(target: "app", "\n[Verifier] FAILURE: {}", err.description());
         if config.verbosity >= 1 {
@@ -469,6 +487,7 @@ pub fn analyze_exception_cb(
         prog,
         None,
         matches!(config.domain_mode, crate::common::config::DomainMode::Interval),
+        config.bcf_enabled,
     );
     env.analyzing_exception_cb = true;
 
@@ -1081,13 +1100,22 @@ fn run_worklist(
         if std::env::var("ZOVIA_DUMP_VISITS").ok().as_deref() == Some("1") {
             *env.pc_visit_count.entry(state.pc).or_insert(0) += 1;
         }
-        if env.insn_processed > config.max_insn {
+        // BCF mode is an offline bundle generator that explores past
+        // rejects (discharge, not fail-fast), so it uses a higher budget
+        // than the kernel's 1M runtime cap. Base mode keeps 1M — hitting it
+        // there is a faithful kernel reject. See VerifierConfig::max_insn.
+        let insn_limit = if env.bcf_enabled {
+            config.bcf_max_insn
+        } else {
+            config.max_insn
+        };
+        if env.insn_processed > insn_limit {
             // We use error! with target="analysis" to auto-trigger the crash dump
-            error!(target: "analysis", "[Verifier] Hit complexity limit ({} instructions). Aborting.", config.max_insn);
+            error!(target: "analysis", "[Verifier] Hit complexity limit ({} instructions). Aborting.", insn_limit);
             info!(target: "app", "[Verifier] (Pruned {} states before limit)", prune_count);
             info!(target: "app", "[Verifier] Tip: Try --skip-dbm or --max-insn N to increase limit");
             env.fail(VerificationError::ComplexityLimitExceeded {
-                limit: config.max_insn,
+                limit: insn_limit,
             });
             break;
         }

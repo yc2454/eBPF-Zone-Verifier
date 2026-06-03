@@ -402,6 +402,31 @@ pub(crate) fn handle_or(state: &mut State, width: Width, dst: Reg, src: &Operand
         _ => None,
     };
 
+    // Pre-op unsigned mins for the kernel `scalar_min_max_or` bound (umin =
+    // max of operand umins — OR can only set bits, so x|y >= x and >= y).
+    // Captured before `forget` clears them. Non-negative-only (signed
+    // interval lower bound used as the unsigned floor when >= 0).
+    let (dst_lo_pre, dst_hi_pre) = state.domain.get_interval(dst);
+    let dst_umin_pre = if dst_lo_pre >= 0 { dst_lo_pre as u64 } else { 0 };
+    // dst's unsigned max (only meaningful when non-negative; else u64::MAX).
+    let dst_umax_pre = if dst_lo_pre >= 0 && dst_hi_pre >= 0 {
+        dst_hi_pre as u64
+    } else {
+        u64::MAX
+    };
+    let (src_umin_pre, src_umax_pre) = match src {
+        Operand::Imm(c) => {
+            let c = if width == Width::W32 { (*c as u32) as u64 } else { *c as u64 };
+            (c, c)
+        }
+        Operand::Reg(r) => {
+            let (lo, hi) = state.domain.get_interval(*r);
+            let umin = if lo >= 0 { lo as u64 } else { 0 };
+            let umax = if lo >= 0 && hi >= 0 { hi as u64 } else { u64::MAX };
+            (umin, umax)
+        }
+    };
+
     state.domain.forget(dst);
 
     let t = state.get_tnum(dst);
@@ -422,6 +447,34 @@ pub(crate) fn handle_or(state: &mut State, width: Width, dst: Reg, src: &Operand
     state.set_tnum(dst, new_t);
 
     sync_tnum_to_dbm(state, dst);
+
+    // Kernel `scalar_min_max_or` (verifier.c v6.15 ~L14710): umin =
+    // max(operand umins) (OR only sets bits, so x|y >= x and >= y); umax is
+    // the largest value consistent with the result. The kernel reads umax
+    // from var_off (value|mask), but zovia's tnum here is loose (the
+    // upstream `(u8 << 3)` keeps a tight INTERVAL [0,2040] but not a tight
+    // tnum), so derive umax from the interval instead: for non-negative
+    // operands, x|y <= fill_ones(dst_umax | src_umax) — round the combined
+    // max up to all-ones of its bit-width (an upper bound for any OR of
+    // values within those ranges). `forget` dropped the interval and the
+    // tnum→dbm sync can't rebuild it, so a bounded `x | c` collapsed to full
+    // range → `pkt_ptr += that` rejected as "invalid pointer arithmetic"
+    // (test_cls_redirect::cls_redirect pc265/pc269). Sound over-approx ⇒
+    // FA-safe; only fires when both operands are provably non-negative.
+    if dst_umax_pre != u64::MAX && src_umax_pre != u64::MAX {
+        let combined = dst_umax_pre | src_umax_pre;
+        let umax = if combined == 0 {
+            0
+        } else {
+            // smallest (2^k - 1) >= combined
+            u64::MAX >> combined.leading_zeros()
+        };
+        let umax = if width == Width::W32 { umax & 0xFFFF_FFFF } else { umax };
+        let umin = dst_umin_pre.max(src_umin_pre);
+        if umax <= i64::MAX as u64 && umin <= umax {
+            state.domain.assume_range(dst, umin as i64, umax as i64);
+        }
+    }
 
     // BCF: kernel routes BPF_OR through bcf_alu (in is_safe set) —
     // build OR(reg_expr(dst), reg_expr(src)) unless dropped. Was a

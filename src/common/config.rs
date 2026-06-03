@@ -22,8 +22,27 @@ pub struct VerifierConfig {
     /// Verbosity level (0=quiet, 1=info, 2=trace, 3=debug)
     pub verbosity: u8,
 
-    /// Maximum instructions to process before aborting
+    /// Maximum instructions to process before aborting.
+    ///
+    /// In BASE mode this mirrors the kernel's `BPF_COMPLEXITY_LIMIT_INSNS`
+    /// (1M): hitting it is a FAITHFUL kernel reject (a program too complex
+    /// to verify at runtime, e.g. loop3). In BCF mode the effective limit is
+    /// `bcf_max_insn` instead — zovia is then an OFFLINE bundle generator,
+    /// not the runtime verifier, and (unlike the kernel) it does NOT
+    /// fail-fast at a reject: it discharges via cvc5 and keeps exploring, so
+    /// it inherently walks a larger state space than the kernel's fail-fast
+    /// pass. The kernel's runtime DoS budget is the wrong yardstick there;
+    /// the only budget that matters for the kernel is its OWN re-verification
+    /// with the emitted bundle (≤1M, kernel-side).
     pub max_insn: usize,
+
+    /// BCF-mode complexity budget (see `max_insn`). Higher than the kernel's
+    /// 1M because BCF generation is offline and explores past rejects to
+    /// discharge them. Empirically several calico functions converge between
+    /// 1M–4M (they abort spuriously at the kernel's 1M); a few outliers need
+    /// far more (those need pruning-efficiency work, not just budget).
+    /// Tunable via `--bcf-max-insn`; a CLI `--max-insn` override sets BOTH.
+    pub bcf_max_insn: usize,
 
     /// Abstract domain mode (Zone or Interval)
     pub domain_mode: DomainMode,
@@ -134,6 +153,10 @@ impl Default for VerifierConfig {
         Self {
             verbosity: 1,
             max_insn: 1_000_000, // 1 million instructions to match modern kernel limits
+            // Offline BCF generation budget (4× the kernel runtime cap).
+            // Recovers calico functions that converge in 1M–4M but abort
+            // spuriously at the kernel's 1M; see `max_insn` doc.
+            bcf_max_insn: 4_000_000,
             domain_mode: DomainMode::Zone,
             skip_dbm_check: false,
             use_widening: false,

@@ -228,6 +228,24 @@ pub(super) fn state_subsumed_by(
         return Err(SubsumptionMissReason::ActiveLock);
     }
 
+    // Active synchronization depth (RCU read-side / preempt-disable / IRQ).
+    // These are part of the kernel verifier state and `states_equal`
+    // compares them exactly. They are NOT range-narrowable: a `cur` that
+    // holds an open RCU read section (or preempt/IRQ) which `old` does not
+    // carries an unreleased-section exit obligation (kernel rejects an exit
+    // with a non-baseline rcu_read_depth) AND a different set of
+    // allowed helpers along its continuation, neither of which `old`'s
+    // continuation checked. Pruning it drops the held-section exit path and
+    // FALSE-ACCEPTs (rcu_read_lock::non_sleepable_rcu_mismatch — same shape
+    // as the spin-lock case). Require exact equality.
+    if old.rcu_read_depth != cur.rcu_read_depth
+        || old.implicit_rcu_at_entry != cur.implicit_rcu_at_entry
+        || old.active_preempt_locks != cur.active_preempt_locks
+        || old.acquired_irq_ids != cur.acquired_irq_ids
+    {
+        return Err(SubsumptionMissReason::ActiveLock);
+    }
+
     // `old` must have at least as much may_goto budget remaining as
     // `cur`, otherwise pruning would let `cur` continue under behaviours
     // `old` never explored (old already exhausted the budget on a path cur
@@ -342,7 +360,14 @@ fn linkage_key(state: &State, r: Reg) -> Option<(LinkageKind, u32)> {
 /// the wrong identity. See `verifier_spin_lock::reg_id_for_map_value`.
 fn active_lock_subsumed_by(cur: &State, old: &State, live_regs: &HashSet<Reg>) -> bool {
     let Some(old_lock) = old.get_active_lock() else {
-        return true;
+        // `old` holds no lock. It can only subsume `cur` if `cur` also
+        // holds no lock: a lock-held `cur` carries an unreleased-lock exit
+        // obligation (kernel "BPF_EXIT ... inside bpf_spin_lock-ed region")
+        // that the no-lock `old`'s continuation never checked. Pruning it
+        // here drops the lock-held exit path and FALSE-ACCEPTs
+        // (verifier_spin_lock::spin_lock_test6_missing_unlock). Mirrors the
+        // kernel `states_equal` lock-state comparison.
+        return cur.get_active_lock().is_none();
     };
     let cur_lock_ptr = cur.get_active_lock().map(|l| l.ptr_id);
     for &r in live_regs {
@@ -435,6 +460,22 @@ fn scalar_ids_subsumed_by(cur: &State, old: &State, live_regs: &HashSet<Reg>) ->
         }
         if !old.is_reg_precise(r) {
             continue; // imprecise old scalar = wildcard (kernel)
+        }
+        // Kernel regsafe `BPF_ADD_CONST` (verifier.c v6.15 L19732): the
+        // add-const FLAG must match between old and cur, and when set, the
+        // delta OFF must match too. This is what keeps a loop's first
+        // iteration (base reg, no add-const) distinct from later iterations
+        // (the `rX = rY; rX += K` link, off=K) so the access bounds are
+        // re-verified — `verifier_iterating_callbacks::check_add_const`.
+        // Subsumption-STRICTENING ⇒ more exploration ⇒ FA-safe; inert in
+        // BCF mode (scalar_id_off is empty there, so both sides are None).
+        let o_off = old.scalar_id_off(r);
+        let c_off = cur.scalar_id_off(r);
+        if o_off.is_some() != c_off.is_some() {
+            return false; // add-const flag mismatch
+        }
+        if o_off.is_some() && o_off != c_off {
+            return false; // off mismatch while flag set
         }
         let oid = old.scalar_id(r).unwrap_or(0);
         let cid = cur.scalar_id(r).unwrap_or(0);
@@ -795,6 +836,49 @@ fn interval_subsumed_by(
     let cur_meta = cur_ivl.get_meta_size_bound().unwrap_or(0);
     if old_meta > cur_meta {
         return false;
+    }
+
+    // Per-register packet-pointer `range` subsumption — the register-level
+    // analog of the stack-slot check in `stack_subsumed_by` (PtrToPacket /
+    // PtrToPacketMeta `range`). The kernel's `regsafe` compares `reg->range`
+    // for packet pointers: a cached state proving a register can access
+    // `range` bytes does NOT subsume a current state with a smaller/absent
+    // range, because the current path may reach a packet access that the
+    // cached path would have rejected. Without this, the FALSE branch of a
+    // bounds check (range=Some(N)) gets recorded first, then the TRUE branch
+    // (range=None) is wrongly pruned against it and its unsafe access is
+    // never verified — a soundness FALSE_ACCEPT
+    // (verifier_xdp_direct_packet_access::pkt_*_bad_access_2_*).
+    for r in Reg::ALL {
+        let old_po = old_ivl.get_ptr_offset(r);
+        let cur_po = cur_ivl.get_ptr_offset(r);
+
+        // Prior good-range rule, preserved EXACTLY (Some/None distinction):
+        // old proving a (≥0) range that cur lacks/under-proves blocks
+        // subsumption. Untouched so BCF-mode behavior — where pkt_end_rel is
+        // always None (gated off, see refine_data_region_bounds) — is
+        // byte-identical to HEAD.
+        let old_range = old_po.and_then(|po| po.range);
+        let cur_range = cur_po.and_then(|po| po.range);
+        match (old_range, cur_range) {
+            (Some(_), None) => return false,
+            (Some(old_r), Some(cur_r)) if old_r > cur_r => return false,
+            _ => {}
+        }
+
+        // mark_pkt_end sentinels (base-mode only). Fold the BEYOND/AT
+        // `reg->range` sentinels into the kernel `regsafe` rule
+        // `rold->range > rcur->range → return false` (verifier.c L19801):
+        // a `cur` marked out-of-range carries a resolved-dup-check fact an
+        // unmarked `old` didn't establish, so old must not subsume it. With
+        // pkt_end_rel == None on both (always so in BCF mode) the kernel_range
+        // collapses to range.unwrap_or(0) and this never adds a block beyond
+        // the rule above.
+        let old_kr = old_po.map(|po| po.kernel_range()).unwrap_or(0);
+        let cur_kr = cur_po.map(|po| po.kernel_range()).unwrap_or(0);
+        if old_kr > cur_kr {
+            return false;
+        }
     }
     true
 }

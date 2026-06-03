@@ -606,6 +606,9 @@ impl State {
                             // today; conservative None — loses id-aware
                             // refinement on reload but stays sound.
                             id: None,
+                            // mark_pkt_end relationship not round-tripped
+                            // through spill/fill; conservative None is sound.
+                            pkt_end_rel: None,
                         };
 
                         // Set the PtrOffset on the register

@@ -387,13 +387,27 @@ fn transfer_kfunc_proto(
         // success branch is "in critical section"). We approximate
         // by running side-effects only on the success state below.
         let mut fail = state.clone();
-        // Emulate apply_call_proto_r0 for the failure branch but
-        // bound R0 to negative.
+        // Emulate apply_call_proto_r0 for the failure branch but bound
+        // R0 to the kernel's actual error range `[-MAX_ERRNO, -1]`
+        // (kernel `bpf_res_spin_lock` returns `-EDEADLK`/`-ETIMEDOUT`,
+        // and the verifier models the failure path's R0 as a negative
+        // errno bounded by `[-MAX_ERRNO, -1]`). The full range — not a
+        // bare `<= -1` — is what lets the common idiom
+        // `r = bpf_res_spin_lock(&l); if ((int)r) /* fail */`
+        // (the compiler truncates `r` to 32 bits, `if w0 != 0`) prove
+        // the failure arm: with R0 in `[-4095, -1]` the low 32 bits are
+        // `[0xFFFFF001, 0xFFFFFFFF]`, all non-zero, so `if w0 != 0` is
+        // provably taken on the failure path and the matching unlock is
+        // not reached with a stale lock stack. A bare `<= -1` admits
+        // e.g. `-2^32` whose low 32 bits are 0, so the fall-through
+        // (success-coded) arm stays live and a LIFO unlock check
+        // false-rejects. Tightening (narrower range) ⇒ FA-safe.
         fail.types.set(Reg::R0, RegType::ScalarValue);
         fail.domain.forget(Reg::R0);
         fail.set_tnum(Reg::R0, Tnum::unknown());
         fail.clear_scalar_id(Reg::R0);
-        fail.domain.assume_le_imm(Reg::R0, -1);
+        fail.domain
+            .assume_range(Reg::R0, -crate::common::constants::MAX_ERRNO, -1);
         // Caller-saved clobber on failure branch to match the
         // post-call sequence below.
         if !proto.flags.contains(CallFlags::FASTCALL) {

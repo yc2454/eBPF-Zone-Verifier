@@ -37,7 +37,33 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 # the known-class filter excludes it. The tag may itself contain
 # parenthesised `(...)` with no inner `]`, so match up to the final `]`.
 VERDICT_RE = re.compile(r"^\s+\[([^\]]+)\]\s+(\S+)")
-_KNOWN = {"PASS", "FALSE_ACCEPT", "FALSE_REJECT", "SKIP"}
+_KNOWN = {"PASS", "FALSE_ACCEPT", "FALSE_REJECT", "SKIP", "IGNORED_FR"}
+
+# Non-actionable FR reasons — NOT verifier-logic over-rejections, so bucketed
+# as IGNORED_FR and kept OUT of the headline FALSE_REJECT count (the FR
+# workstream tracks real over-rejections only). Two families:
+#   * "function ... not found in any of N code sections" — the program under
+#     test was not emitted into the compiled .o (cpuv4 dummy stubs, libbpf-
+#     linker subprogs, BPF_PROG-macro lowering). Fails at load, before any
+#     analysis — nothing for the verifier to get right.
+#   * "exceeds maximum known helper id" — an UNMODELED helper id; a coverage
+#     gap (add the helper proto), not a logic bug. Fails before analysis.
+# Matched on the space-stripped, upper-cased reason tag.
+_IGNORED_FR_MARKERS = ("NOTFOUNDINANYOF", "EXCEEDSMAXIMUMKNOWN")
+
+# Per-PROGRAM known-justified FRs whose reason tag is a generic message (no
+# distinctive marker to match on above), but which are accepted not-our-bug
+# over-rejections. Keyed on the function name (VERDICT_RE group 2). Bucketed
+# as IGNORED_FR and kept OUT of the headline FALSE_REJECT count.
+#   * handle_raw_tp_writable_bare (test_module_attach) — the writable raw_tp
+#     ctx type `bpf_testmod_test_writable_ctx` lives ONLY in the test module's
+#     BTF (bpf_testmod.ko), absent from vmlinux AND the program .o, so zovia
+#     (offline, no module BTF) cannot type the ctx arg. Closing it needs
+#     BPF_PROG array-idiom-vs-pt_regs-field disambiguation + a synthetic
+#     module-struct layout + writable-ptr stores — fragile low-value plumbing
+#     for one test-harness program, zero BCF relevance. See
+#     project_selftest_fa_arc_2026-06-01.md cont.11.
+_KNOWN_JUSTIFIED_FR = frozenset({"handle_raw_tp_writable_bare"})
 
 
 def classify(tag: str) -> str:
@@ -47,6 +73,8 @@ def classify(tag: str) -> str:
     if t.startswith("FALSE-ACCEPT") or t.startswith("FALSE_ACCEPT"):
         return "FALSE_ACCEPT"
     if t.startswith("FALSE-REJECT") or t.startswith("FALSE_REJECT"):
+        if any(m in t for m in _IGNORED_FR_MARKERS):
+            return "IGNORED_FR"
         return "FALSE_REJECT"
     if t.startswith("SKIP"):
         return "SKIP"
@@ -86,6 +114,9 @@ def run_one(args) -> tuple[str, list[tuple[str, str]], str | None]:
         if verdict not in _KNOWN:  # log noise / unknown bracket tag
             continue
         prog = m.group(2)
+        # Per-program known-justified FRs (generic reason tag) → IGNORED_FR.
+        if verdict == "FALSE_REJECT" and prog in _KNOWN_JUSTIFIED_FR:
+            verdict = "IGNORED_FR"
         if prog in seen:
             continue
         seen.add(prog)

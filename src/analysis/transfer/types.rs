@@ -841,6 +841,31 @@ pub(crate) fn update_load_types(
                 );
                 typed = true;
             }
+            // Fallback for kernel-internal structs whose full layout the
+            // program's BTF doesn't carry (so the BTF descend above can't
+            // resolve the field). `bpf_iter_meta` is the surface here: the
+            // bpf_iter ctx-access path types `ctx->meta` as
+            // PtrToBtfId{bpf_iter_meta}, but `meta->seq` (offset 0) loads as
+            // a bare scalar because bpf_iter_meta isn't a named struct in the
+            // .o BTF → bpf_seq_write then rejects its seq_file* arg
+            // (verifier_bpf_get_stack::return_r0_range_is_refined). Hand-model
+            // the pointer field like the existing field_tables/mem_region_model
+            // hardcodes. Sound: the field IS a typed kernel pointer.
+            if !typed
+                && let Some(pointee) = kernel_internal_ptr_field(type_name, off)
+            {
+                let pointee_static =
+                    crate::analysis::machine::context::intern_btf_type_name_strict(pointee);
+                state.types.set(
+                    dst,
+                    RegType::PtrToBtfId {
+                        type_name: pointee_static,
+                        flags: PtrFlags::TRUSTED,
+                        ref_id: None,
+                    },
+                );
+                typed = true;
+            }
             if !typed {
                 state.types.set(dst, RegType::ScalarValue);
             }
@@ -848,6 +873,19 @@ pub(crate) fn update_load_types(
         _ => state.types.set(dst, RegType::ScalarValue),
     }
     false
+}
+
+/// Hand-modeled pointer fields of kernel-internal structs whose full BTF
+/// layout the program's `.o` doesn't carry (so `field_at_offset_descend`
+/// can't resolve them). Returns the pointee struct name for a `(struct,
+/// byte-offset)` pair. Mirrors the existing `field_tables` /
+/// `mem_region_model` hardcodes for kernel types.
+fn kernel_internal_ptr_field(struct_name: &str, off: i16) -> Option<&'static str> {
+    match (struct_name, off) {
+        // struct bpf_iter_meta { struct seq_file *seq; u64 session_id; u64 seq_num; }
+        ("bpf_iter_meta", 0) => Some("seq_file"),
+        _ => None,
+    }
 }
 
 /// Allowlist of `(struct_name, field_name)` pairs whose loaded pointer

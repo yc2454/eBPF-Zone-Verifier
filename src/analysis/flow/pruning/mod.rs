@@ -38,6 +38,31 @@ fn is_inf_loop_skip_pc(prog: &Program, pc: usize) -> bool {
 
 /// Handle pruning decision at a loop point.
 /// Returns Some(true) to prune, Some(false) to continue, None if no previous states.
+/// Walk cur's `parent_cache_id` lineage and collect the cache_ids of all
+/// cached states cur descends from. A prev state whose cache_id is in this
+/// set is a true loop-ANCESTOR of cur; one that is not (but is co-active) is
+/// a SIBLING. Bounded by a budget to guard against a malformed cycle.
+fn collect_ancestor_ids(env: &VerifierEnv, state: &State) -> HashSet<u32> {
+    let mut set = HashSet::new();
+    let mut next = state.parent_cache_id;
+    let mut budget = 16_384u32;
+    while let Some(cid) = next {
+        if budget == 0 || !set.insert(cid) {
+            break;
+        }
+        budget -= 1;
+        match env
+            .cache_loc_by_id
+            .get(&cid)
+            .and_then(|&(p, i)| env.explored_states.get(&p).and_then(|v| v.get(i)))
+        {
+            Some(st) => next = st.parent_cache_id,
+            None => break,
+        }
+    }
+    set
+}
+
 fn handle_loop_pruning(
     env: &mut VerifierEnv,
     state: &mut State,
@@ -103,6 +128,13 @@ fn handle_loop_pruning(
     // wildcard fixpoint, complexity-limit terminates them — matching
     // the kernel's actual behavior (e.g. test_verif_scale_loop3
     // is `should_fail`).
+    // cur's ancestor cache_id lineage (walk of the parent_cache_id
+    // chain), used to distinguish a true loop-ANCESTOR (cur descends
+    // from prev) from a co-active SIBLING at the dfs_paths>0 prune-skip
+    // below. Computed lazily — only when an active prev is actually
+    // encountered — so converged loops (no active prev) pay nothing.
+    let mut ancestor_ids: Option<HashSet<u32>> = None;
+
     let (hit_idx, miss_idxs, miss_reasons): (
         Option<usize>,
         Vec<usize>,
@@ -136,6 +168,54 @@ fn handle_loop_pruning(
             // insns / 0 prunes; ksnoop AND mode → 970k bundle entries
             // at one PC).
             let force_exact = crate::analysis::flow::scc::incomplete_read_marks(env, prev);
+            // Active-state prune-skip, refined to ANCESTORS ONLY
+            // (kernel-faithful; replaces the former base-mode `!env.bcf_enabled`
+            // gate and the BCF-only "prune against active ancestors" hack).
+            //
+            // The kernel's is_state_visited (verifier.c v6.15 L19024) never
+            // takes a NOT_EXACT/RANGE_WITHIN prune against an active ancestor
+            // (`sl->state.branches>0`) at a plain back-edge — those go
+            // `goto miss`. That keeps the EXACT inf-loop trap as the only
+            // thing terminating an unbounded loop (conditional_loop / movsx /
+            // short_loop1 FA-safety).
+            //
+            // But "active" in the kernel's strict DFS means specifically an
+            // ANCESTOR on the current path (the loop's own prior iterations).
+            // A SIBLING that forked earlier in the same iteration (e.g. the
+            // two arms of an `if r0==0` inside the loop body) is fully
+            // EXPLORED by the kernel before the next arrival collides with it,
+            // so the kernel DOES prune against it. zovia's interleaved
+            // worklist keeps such siblings co-active (dfs_paths>0) when cur
+            // arrives, so a blanket dfs_paths>0 skip wrongly protects them:
+            // they accumulate ~one extra state per body-fork per iteration and
+            // bounded loops blow up exponentially (measured on from_hep
+            // calico_tc_skb_accepted pc293, sparse caching: 108,884
+            // cap-evictions → thorough-mode timeout when the skip was
+            // unconditional).
+            //
+            // Refinement: skip ONLY when prev is a true ancestor of cur (its
+            // cache_id lies on cur's parent_cache_id lineage). For a co-active
+            // sibling, fall through to state_subsumed_by — the prune the
+            // kernel's strict DFS would have taken. Ancestors (and any prev
+            // with no cache_id, treated conservatively) still skip, so
+            // inf-loop FA-safety is preserved by direction. Validated: FA=0
+            // and 0 selftest regressions; calico-19 BCF bundles byte-identical
+            // to the prior gated HEAD.
+            let skip_active = prev.dfs_paths > 0 && {
+                let anc = ancestor_ids
+                    .get_or_insert_with(|| collect_ancestor_ids(env, state));
+                prev.cache_id.is_none_or(|cid| anc.contains(&cid))
+            };
+            if skip_active {
+                // Record as a miss so the kernel-faithful eviction
+                // (record_pruning_misses, n=3 at plain back-edges) keeps the
+                // per-pc cache small. Without this the FIFO cap (64) fills
+                // with distinct-precise-counter states that all miss, making
+                // every back-edge arrival walk 64 entries (O(N·64)) — the
+                // dominant cost on big bounded loops like nested_loops.
+                m.push(i);
+                continue;
+            }
             match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
                 Ok(()) => {
                     if crate::analysis::trace_pc_in_range(pc) {
@@ -233,6 +313,17 @@ fn handle_standard_pruning(
     let mut miss_idxs: Vec<usize> = Vec::new();
     let mut miss_reasons: Vec<SubsumptionMissReason> = Vec::new();
     let mut local_children_unsafe_skips: u64 = 0;
+    // Kernel `is_state_visited` `is_iter_next_insn` branch (verifier.c v6.15
+    // L19079): iterator convergence ALWAYS uses `states_equal(RANGE_WITHIN)`,
+    // never the looser NOT_EXACT. RANGE_WITHIN range-checks even non-precise
+    // scalars (the `!rold->precise && exact==NOT_EXACT` wildcard shortcut does
+    // NOT fire), which is exactly what catches iters.c::delayed_precision_mark:
+    // at the iter_next call r7 is reachable as -16 and -33 with no precision
+    // mark; NOT_EXACT would wildcard r7 and merge the two, dropping the unsafe
+    // `*(r10 + r7=-33)` deref. Forcing RANGE_WITHIN keeps them distinct so the
+    // widened (unbounded) r7 reaches the access and is rejected. `iter_pc_slot`
+    // is populated at every iter_next site by iter_next_fork.
+    let iter_next_pc = env.iter_pc_slot.contains_key(&pc);
     if let Some(prev_states) = env.explored_states.get(&pc) {
         for (i, prev) in prev_states.iter().enumerate() {
             // Kernel children_unsafe (bcf_refine, verifier.c:24580-81):
@@ -243,8 +334,10 @@ fn handle_standard_pruning(
                 continue;
             }
             // Kernel-faithful force_exact (see matching block above for
-            // full rationale and history).
-            let force_exact = crate::analysis::flow::scc::incomplete_read_marks(env, prev);
+            // full rationale and history). At iter_next sites the kernel
+            // pins RANGE_WITHIN regardless of read-mark completeness.
+            let force_exact =
+                iter_next_pc || crate::analysis::flow::scc::incomplete_read_marks(env, prev);
             match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
                 Ok(()) => {
                     hit_idx = Some(i);
@@ -356,16 +449,27 @@ pub fn should_prune(
     // iter loop's back-edge target (a body pc) isn't cached, the
     // iter_next call site IS cached but pruning short-circuits via
     // on_path → bpf_iter_num loops never converge → timeout.
-    let pc_is_iter_next_call = matches!(prog.instrs.get(pc), Some(Instr::Call { .. }))
-        && env
-            .insn_aux_data
-            .get(pc)
-            .map(|a| a.force_checkpoint)
-            .unwrap_or(false);
+    // Generalized to ALL force-checkpoint pcs (iter_next/sync-cb Call sites
+    // AND may_goto insns): the kernel's is_state_visited runs at EVERY
+    // checkpoint and converges may_goto loops AT the may_goto pc itself
+    // (verifier.c L19102, RANGE_WITHIN + depth-differ) — not at the loop's
+    // back-edge target. A may_goto pc is a force-checkpoint but NOT a
+    // back-edge target, so `in_loop` is false there; without exempting it
+    // from the on-path skip, may_goto_range_within_prune never runs and the
+    // loop only converges via the (non-kernel) active-ancestor hit.
+    let pc_is_force_checkpoint = env
+        .insn_aux_data
+        .get(pc)
+        .map(|a| a.force_checkpoint)
+        .unwrap_or(false)
+        && matches!(
+            prog.instrs.get(pc),
+            Some(Instr::Call { .. }) | Some(Instr::MayGoto { .. })
+        );
 
     // Re-entry to a PC from a different depth (e.g. repeated call in a loop).
     // Must continue to reach the actual loop back-edge.
-    if is_on_path && !in_loop && !pc_is_iter_next_call {
+    if is_on_path && !in_loop && !pc_is_force_checkpoint {
         env.pruning_stats.on_path_skip += 1;
         return false;
     }

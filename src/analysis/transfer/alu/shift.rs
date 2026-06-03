@@ -568,12 +568,34 @@ pub(crate) fn handle_arsh(state: &mut State, width: Width, dst: Reg, src: &Opera
                     }
                 }
 
-                if old_lo != i64::MIN && old_hi != i64::MAX {
-                    let (lo, hi) = (old_lo, old_hi);
-                    let new_lo = lo >> shift_amount;
-                    let new_hi = hi >> shift_amount;
+                // ARSH by K structurally bounds the result to
+                // [i64::MIN >> K, i64::MAX >> K] for ANY input — the top K+1
+                // bits become the sign extension. The W32 path already
+                // applies this "absolute structural limit"; the W64 path
+                // previously set interval bounds ONLY when the input was
+                // already finite, leaving the result unbounded otherwise.
+                // That broke the shl-K/arsh-K sign-extend idiom (USDT
+                // `(s16)x`: `r1 <<= 48; r1 s>>= 48`): the preceding shl
+                // widens [0,65535] past the signed boundary and resets it to
+                // full, so arsh saw an unbounded input and produced an
+                // unbounded result → a later `ptr += r1` hit the "unbounded
+                // min value" ptr-arith reject (test_usdt / test_urandom_usdt).
+                // arsh is monotonic for signed values, so intersect the
+                // structural bound with the per-side shifted input bound.
+                if shift_amount > 0 {
+                    let mut new_lo = i64::MIN >> shift_amount;
+                    let mut new_hi = i64::MAX >> shift_amount;
+                    if old_lo != i64::MIN {
+                        new_lo = new_lo.max(old_lo >> shift_amount);
+                    }
+                    if old_hi != i64::MAX {
+                        new_hi = new_hi.min(old_hi >> shift_amount);
+                    }
                     state.domain.assume_ge_imm(dst, new_lo);
                     state.domain.assume_le_imm(dst, new_hi);
+                } else if old_lo != i64::MIN && old_hi != i64::MAX {
+                    state.domain.assume_ge_imm(dst, old_lo);
+                    state.domain.assume_le_imm(dst, old_hi);
                 }
 
                 let new_tnum = old_tnum.arsh_imm(shift_amount as u64);

@@ -163,7 +163,63 @@ pub fn mark_chain_precision_backward(
             }
             current_history = parent_idx;
 
-            if frontier.is_empty() {
+            // Terminate only when BOTH the register frontier and the
+            // stack-slot frontier are empty — the kernel's backtrack loop
+            // continues while `bt_reg_mask || bt_stack_mask` (verifier.c
+            // `__mark_chain_precision`). A FILL moves the last frontier reg
+            // into `stack_frontier` (reg frontier now empty); stopping here
+            // would abandon the spilled-slot lineage before reaching the
+            // matching SPILL that converts the slot back to its source reg,
+            // so the spilled scalar (and its source) never get marked
+            // precise. That left two paths spilling distinct constants to
+            // the same slot wrongly subsuming (search_pruning
+            // should_be_verified_nop_operation / tracking_for_u32_spill_fill).
+            //
+            // BCF GATE: this stack-frontier continuation is base-verifier
+            // soundness (FA=0 floor for the selftest, `bcf_enabled=false`).
+            // In userspace-BCF mode the KERNEL re-checks the emitted bundle,
+            // so the extra precision is not needed for soundness — and the
+            // additional trajectory distinctness it produces explodes the
+            // no_log bundle past the kernel size limit (calico
+            // to_l3_no_log_co-re_v6: 19.4MB→40MB → E2BIG → load regression,
+            // caught by the calico-19 VM-load gate). So in BCF mode keep the
+            // pre-fix reg-frontier-only termination (the gate-clean baseline
+            // behavior). Base mode keeps the both-empty fix.
+            //
+            // 2026-06-02 faithfulness RE-STUDY (un-gate experiment, isolated
+            // binary): un-gating CONVERGES (no timeout) and is byte-neutral
+            // on _debug objects, but still bloats the no_log bundle
+            // to_l3_no_log_co-re_v6 19.3MB → 35.6MB (1.85×), and that bundle
+            // FAILS the VM load (0/1, was 1/1 baseline). The faithful
+            // precision is sound; the bloat is zovia's discharge OVER-emission
+            // (depth-64 ancestor shotgun + reg-filter) amplifying each extra
+            // trajectory into many obligations. So this stays gated until the
+            // no_log lean-bundle / emission-tightening work lands — then it
+            // can be un-gated. NOT a hard engine limit like the loop gate.
+            // Kernel-faithful termination: continue the backward walk while
+            // EITHER the register frontier OR the stack-slot frontier is
+            // non-empty (kernel `__mark_chain_precision` loops while
+            // `bt_reg_mask || bt_stack_mask`). A register FILL moves the last
+            // frontier reg into the stack frontier; stopping there would
+            // abandon the spilled-slot lineage before its matching SPILL.
+            //
+            // This was formerly gated to base mode (`if env.bcf_enabled {
+            // frontier.is_empty() }`) — BCF mode used the pre-fix
+            // reg-frontier-only termination to avoid growing the no_log
+            // bundle, on the belief (memory 2026-06-02) that the extra
+            // precision pushed to_l3_no_log past an E2BIG limit. That belief
+            // was FALSE on both counts (2026-06-03 re-validation): the kernel
+            // limit is 64MB (bcf_bundle.c:92) and the faithful no_log bundle
+            // is 35.6MB (loads fine); and to_l3_no_log loads an IDENTICAL 5/7
+            // with and without the precision. Full calico-19 VM gate confirmed
+            // 0 load regressions (19/19 objects, per-object loaded=N/M
+            // identical gated-vs-faithful; 5 objects provably safe by bundle
+            // hash-superset, 14 VM-confirmed). The precision is also FA-safe
+            // by direction (more conservative) and the kernel re-checks every
+            // bundle by canonical hash (fail-closed). So base and BCF now
+            // share this one faithful rule.
+            let terminate = frontier.is_empty() && stack_frontier.is_empty();
+            if terminate {
                 break 'outer;
             }
         }

@@ -146,6 +146,7 @@ pub fn record_state(
             .skip(excess)
             .filter_map(|s| s.cache_id)
             .collect();
+        env.cache_evictions += excess as u64;
         states.drain(0..excess);
         metrics.drain(0..excess);
         for id in evicted_ids {

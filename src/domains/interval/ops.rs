@@ -167,6 +167,9 @@ pub fn assign_reg_offset(state: &mut IntervalState, dst: Reg, src: Reg, imm: i64
         // id propagates: a constant offset adjustment leaves the
         // pointer in the same kernel-style identity family.
         id: po.id,
+        // Any arithmetic shifts the pointer relative to pkt_end, so the
+        // mark_pkt_end relationship no longer holds for the result.
+        pkt_end_rel: None,
     });
 
     state.set(
@@ -204,6 +207,36 @@ pub fn init_map_value_ptr(state: &mut IntervalState, reg: Reg) {
                 var_off: 0,
                 range: None,
                 id: None,
+                pkt_end_rel: None,
+            }),
+        },
+    );
+}
+
+/// Like `init_map_value_ptr` but the pointer starts at a fixed `offset`
+/// from the map value's start (a direct LD_IMM64 BPF_PSEUDO_MAP_VALUE /
+/// .bss/.data/.rodata global is at its section offset, not 0). The bounds
+/// (which the kernel/refine_map model as the pointer's offset) and the
+/// PtrOffset.off both carry `offset`, so a subsequent `ptr += bounded_idx`
+/// produces a checkable [offset+idx_min, offset+idx_max] range in
+/// `interval_check_map_access`. Seeding 0 here would be UNSOUND — it would
+/// under-count the offset of a nonzero-offset global and accept an access
+/// past value_size.
+pub fn init_map_value_ptr_at(state: &mut IntervalState, reg: Reg, offset: i64) {
+    if reg == Reg::Zero || reg.is_anchor() {
+        return;
+    }
+    state.set(
+        reg,
+        RegInterval {
+            bounds: ScalarBounds::constant(offset),
+            ptr_offset: Some(PtrOffset {
+                anchor: Reg::Zero,
+                off: offset,
+                var_off: 0,
+                range: None,
+                id: None,
+                pkt_end_rel: None,
             }),
         },
     );
@@ -434,6 +467,7 @@ pub fn apply_scalar_add_ptr(
                     // Adding variable invalidates proven range
                     range: None,
                     id: new_id,
+                    pkt_end_rel: None,
                 }),
             },
         );

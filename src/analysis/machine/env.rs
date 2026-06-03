@@ -172,6 +172,12 @@ impl SubsumptionMissReason {
 pub struct VerifierEnv<'a> {
     pub ctx: &'a ExecContext,
     pub explored_states: HashMap<usize, Vec<State>>,
+    /// Count of cached states evicted by the `max_states_per_pc` cap
+    /// (unmet pruning demand). High = kernel-faithful pruning isn't
+    /// subsuming states the kernel would, so the per-pc list overflows the
+    /// cap and thrashes. Paired with `max_per_insn` (kernel ≤27 on calico)
+    /// as the convergence-quality metric. See cont.13.
+    pub cache_evictions: u64,
     /// Mapping from an iter_next kfunc call pc to the iter slot it
     /// operates on `(frame_idx, stack_offset)`. Populated lazily by
     /// `iter_next_fork` on first visit. Read by iter-loop pruning
@@ -194,6 +200,14 @@ pub struct VerifierEnv<'a> {
     /// the same kernel-side "unbounded min" rejections at later
     /// pointer-arith sites so BCF can emit a bound-refine discharge.
     pub kernel_faithful_alu: bool,
+    /// Whether userspace-BCF mode is active (`--bcf`). The precision
+    /// backward walk uses this to stay at the kernel-faithful (base-mode)
+    /// stack-frontier continuation only when BCF is OFF: in BCF mode the
+    /// kernel re-checks the emitted bundle, so the extra precision isn't
+    /// needed for soundness, and the additional trajectory distinctness it
+    /// creates bloats the no_log bundle past the kernel's size limit
+    /// (E2BIG → load failure). See the precision.rs termination gate.
+    pub bcf_enabled: bool,
     /// Per-PC histogram of subsumption-miss reasons (one bucket per
     /// `SubsumptionMissReason` variant). `subsumption_misses[pc][r.idx()]`
     /// is incremented every time the per-cached-state subsumption check
@@ -356,13 +370,16 @@ impl<'a> VerifierEnv<'a> {
         prog: &'a Program,
         certificate: Option<ProgramCertificate>,
         kernel_faithful_alu: bool,
+        bcf_enabled: bool,
     ) -> Self {
         VerifierEnv {
             ctx,
             explored_states: HashMap::new(),
+            cache_evictions: 0,
             iter_pc_slot: HashMap::new(),
             state_metrics: HashMap::new(),
             kernel_faithful_alu,
+            bcf_enabled,
             subsumption_misses: HashMap::new(),
             pruning_stats: PruningStats::default(),
             insn_aux_data: vec![InsnAuxData::default(); prog.instrs.len()],

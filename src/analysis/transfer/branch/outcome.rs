@@ -24,6 +24,18 @@ pub(crate) fn condition_outcome(
         }
     }
 
+    // Packet-pointer vs pkt_end: resolve a *duplicated* bounds check using
+    // the kernel `mark_pkt_end` relationship (BEYOND_PKT_END / AT_PKT_END).
+    // Mirrors `is_pkt_ptr_branch_taken` (verifier.c). 64-bit comparisons
+    // only (packet pointers are always 64-bit). This must run BEFORE the
+    // generic pointer bail below, which conservatively returns None for all
+    // pointer comparisons. See `test_tc_change_tail::change_tail`.
+    if width == Width::W64 {
+        if let Some(outcome) = pkt_ptr_branch_taken(state, left, op, right) {
+            return Some(outcome);
+        }
+    }
+
     // Don't eliminate paths based on pointer comparisons
     if state.types.get(left).is_pointer() {
         return None;
@@ -150,13 +162,17 @@ pub(crate) fn condition_outcome(
                             _ => unreachable!(),
                         }
                     } else {
-                        // W64 signed comparison: use i64 bounds directly.
-                        // `min` and `max` are u64; for W64 signed we need them as i64.
-                        // Only safe if both fit in i64 (top bit = 0, i.e., no wrap).
-                        if max > i64::MAX as u64 {
-                            return None; // range spans sign boundary — conservative
-                        }
-                        let (s64_lo, s64_hi) = (min as i64, max as i64);
+                        // W64 signed comparison: use the register's SIGNED
+                        // bounds directly. The unsigned `(min,max)` from
+                        // get_combined_bounds can't serve here — a one-sided
+                        // range like r0 ∈ [4, +inf] has unsigned max u64::MAX
+                        // (spans the sign boundary) yet a perfectly good
+                        // signed range [4, i64::MAX]. get_combined_signed_bounds
+                        // returns that and stays full when truly unknown, so a
+                        // const-on-left signed compare (`<const> s> <non_const>`,
+                        // deducing_bounds_from_non_const_15/16) can prove the
+                        // dead branch.
+                        let (s64_lo, s64_hi) = get_combined_signed_bounds(state, left);
                         match op {
                             CmpOp::SGe => {
                                 if s64_lo >= imm_s { Some(true) }
@@ -255,6 +271,87 @@ pub(crate) fn condition_outcome(
     }
 }
 
+/// Resolve a `pkt OP pkt_end` (or `pkt_end OP pkt`) comparison using the
+/// kernel `mark_pkt_end` relationship recorded on the packet pointer.
+/// Mirrors `is_pkt_ptr_branch_taken` (verifier.c v6.15):
+///
+/// - `BEYOND_PKT_END`: pkt has ≥1 byte beyond pkt_end ⇒ `pkt > end` true,
+///   `pkt <= end` false, `pkt >= end` true, `pkt < end` false.
+/// - `AT_PKT_END`: pkt == pkt_end ⇒ only `pkt >= end` / `pkt < end`
+///   resolve (`>=` true, `<` false); `>` / `<=` stay unknown.
+///
+/// Returns `Some(true)` if the branch is always taken, `Some(false)` if
+/// never taken, `None` if undetermined.
+fn pkt_ptr_branch_taken(
+    state: &State,
+    left: Reg,
+    op: CmpOp,
+    right: &Operand,
+) -> Option<bool> {
+    use crate::analysis::machine::reg_types::RegType;
+    use crate::domains::interval::PktEndRel;
+    use crate::domains::numeric::NumericDomain;
+
+    let Operand::Reg(right_reg) = right else {
+        return None;
+    };
+    let right_reg = *right_reg;
+
+    let left_ty = state.types.get(left);
+    let right_ty = state.types.get(right_reg);
+
+    // Normalize so `pkt_reg` is the packet pointer and `op` is written as
+    // `pkt OP pkt_end`. If pkt_end is on the left, flip the comparison.
+    let (pkt_reg, op) = if matches!(right_ty, RegType::PtrToPacketEnd)
+        && matches!(left_ty, RegType::PtrToPacket)
+    {
+        (left, op)
+    } else if matches!(left_ty, RegType::PtrToPacketEnd)
+        && matches!(right_ty, RegType::PtrToPacket)
+    {
+        (right_reg, flip_cmp_op(op))
+    } else {
+        return None;
+    };
+
+    let rel = match state.domain {
+        NumericDomain::Interval(ref ivl) => ivl.get_ptr_offset(pkt_reg).and_then(|po| po.pkt_end_rel),
+        _ => None,
+    }?;
+
+    // Kernel `is_pkt_ptr_branch_taken`: only the unsigned pkt comparisons
+    // are modeled. `pkt->range < 0` is implied by `rel` being set.
+    match op {
+        // `pkt > end` / `pkt <= end`: resolvable only when BEYOND.
+        CmpOp::UGt | CmpOp::ULe => match rel {
+            PktEndRel::Beyond => Some(op == CmpOp::UGt),
+            PktEndRel::At => None,
+        },
+        // `pkt >= end` / `pkt < end`: resolvable for BEYOND and AT.
+        CmpOp::UGe | CmpOp::ULt => match rel {
+            PktEndRel::Beyond | PktEndRel::At => Some(op == CmpOp::UGe),
+        },
+        _ => None,
+    }
+}
+
+/// Flip a comparison operator's operands (kernel `flip_opcode`): rewrite
+/// `a OP b` as `b FLIP(OP) a`. Only the orderings used by packet-pointer
+/// comparisons matter here; equality/JSET are unaffected by swapping.
+fn flip_cmp_op(op: CmpOp) -> CmpOp {
+    match op {
+        CmpOp::UGt => CmpOp::ULt,
+        CmpOp::ULt => CmpOp::UGt,
+        CmpOp::UGe => CmpOp::ULe,
+        CmpOp::ULe => CmpOp::UGe,
+        CmpOp::SGt => CmpOp::SLt,
+        CmpOp::SLt => CmpOp::SGt,
+        CmpOp::SGe => CmpOp::SLe,
+        CmpOp::SLe => CmpOp::SGe,
+        CmpOp::Eq | CmpOp::Ne | CmpOp::Test => op,
+    }
+}
+
 /// Convert u64 combined bounds (from `get_combined_bounds` for W32) to a signed
 /// i64 range representing the s32 interpretation of those u32 values.
 /// Returns None if the range spans the u32 sign boundary (0x7FFF_FFFF → 0x8000_0000),
@@ -283,36 +380,52 @@ pub(crate) fn get_combined_bounds(state: &State, reg: Reg, width: Width) -> Opti
     let tnum_min = tnum.min_value();
     let tnum_max = tnum.max_value();
 
-    // DBM bounds
-    let (dbm_lo, dbm_hi) = state.domain.get_interval(reg);
+    // Interval-domain bounds (kernel-mode: the Interval domain; legacy
+    // names `dbm_*`). `get_interval` returns signed i64 bounds with
+    // i64::MIN / i64::MAX standing for "unbounded". A one-SIDED bound is
+    // still useful: e.g. after `if r0 < 3` the fall-through has the
+    // interval [3, i64::MAX] — the finite lower bound 3 proves `r0 == 2`
+    // is unsatisfiable even though the upper bound is unknown. The earlier
+    // all-or-nothing gate (`dbm_lo != MIN && dbm_hi != MAX`) discarded the
+    // whole interval whenever EITHER side was open, dropping that lower
+    // bound and falling back to the unconstrained tnum (0..U64_MAX), so
+    // `condition_outcome` couldn't prove the dead branch
+    // (verifier_bounds_deduction_non_const::* + the USDT progs).
+    //
+    // Intersect each side independently. An interval bound is only a valid
+    // UNSIGNED bound when it is non-negative; a negative signed bound says
+    // nothing about the unsigned magnitude (the value could be a large
+    // u64), so leave that side to the tnum.
+    // For a W32 comparison the relevant interval is the register's u32
+    // sub-bounds (the low 32 bits the branch narrows), NOT the 64-bit
+    // interval — after `if w0 < 4` the u32 bounds are [4, U32_MAX] while
+    // the 64-bit interval stays unbounded (upper 32 bits unknown).
+    let (dbm_lo, dbm_hi): (i64, i64) = if width == Width::W32 {
+        let (u_lo, u_hi) = state.domain.get_u32_bounds(reg);
+        (u_lo as i64, u_hi as i64)
+    } else {
+        state.domain.get_interval(reg)
+    };
 
-    // Combine bounds
-    if dbm_lo != i64::MIN && dbm_hi != i64::MAX {
-        let lo = dbm_lo;
-        let hi = dbm_hi;
-        // For unsigned comparison, DBM bounds only useful if non-negative
-        if lo >= 0 {
-            let dbm_min = lo as u64;
-            let dbm_max = hi as u64;
+    let mut lo = tnum_min;
+    let mut hi = tnum_max;
 
-            // For W32, also check DBM is in u32 range
-            if width == Width::W32 && dbm_max > 0xFFFFFFFF {
-                return Some((tnum_min, tnum_max));
-            }
-
-            // Intersect the ranges
-            let combined_min = tnum_min.max(dbm_min);
-            let combined_max = tnum_max.min(dbm_max);
-
-            // Sanity check - ranges should overlap
-            if combined_min <= combined_max {
-                Some((combined_min, combined_max))
-            } else {
-                Some((tnum_min, tnum_max))
-            }
-        } else {
-            Some((tnum_min, tnum_max))
+    if dbm_lo != i64::MIN && dbm_lo >= 0 {
+        lo = lo.max(dbm_lo as u64);
+    }
+    if dbm_hi != i64::MAX && dbm_hi >= 0 {
+        let dbm_max = dbm_hi as u64;
+        // For W32, an interval upper bound outside u32 range is not a
+        // tighter u32 bound — ignore it (keep the tnum's u32-truncated max).
+        if !(width == Width::W32 && dbm_max > 0xFFFF_FFFF) {
+            hi = hi.min(dbm_max);
         }
+    }
+
+    // Sanity: if the per-side intersection inverted the range (shouldn't
+    // happen for consistent bounds), fall back to the tnum range.
+    if lo <= hi {
+        Some((lo, hi))
     } else {
         Some((tnum_min, tnum_max))
     }

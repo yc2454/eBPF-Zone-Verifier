@@ -962,10 +962,27 @@ impl Analyzer {
                                 crate::analysis::machine::reg_types::new_ref_id();
                             EntryArg::TrustedRefcountedTask { ref_id }
                         }
-                        StructOpsArg::TrustedPtr(name) => EntryArg::TrustedPtrBtfId {
-                            type_name: intern_btf_type_name(&name),
-                            nullable,
-                        },
+                        StructOpsArg::TrustedPtr(name) => {
+                            // Kernel `bpf_tcp_ca_is_valid_access`
+                            // (net/ipv4/bpf_tcp_ca.c) promotes any
+                            // `struct sock *` ctx arg to `tcp_sock` for
+                            // tcp_congestion_ops — TCP CA ops always operate
+                            // on a tcp_sock at runtime. Mirror it so helpers
+                            // like `bpf_tcp_send_ack` (ARG_PTR_TO_BTF_ID
+                            // tcp_sock) accept the cwnd_event/etc. `sk` arg
+                            // (closes bpf_dctcp::bpf_dctcp_cwnd_event). Sound:
+                            // kernel-guaranteed runtime type. All other names
+                            // keep the lax "unknown" widening so no-layout
+                            // field access stays permissive.
+                            let type_name = if binding.ops_struct == "tcp_congestion_ops"
+                                && name == "sock"
+                            {
+                                "tcp_sock"
+                            } else {
+                                intern_btf_type_name(&name)
+                            };
+                            EntryArg::TrustedPtrBtfId { type_name, nullable }
+                        }
                     }
                 })
                 .collect(),
@@ -1556,6 +1573,14 @@ impl Analyzer {
                         // pointer fields, scalars fall through to
                         // ScalarValue and pose no soundness issue.
                         (ProgramKind::Lsm, _, "file_open") => {
+                            Some(vec![("file", false)])
+                        }
+                        // kernel_read_file(struct file *file,
+                        //   enum kernel_read_file_id id, bool contents)
+                        // — drives ima.c::kernel_read_file. Only the leading
+                        // `struct file *` pointer needs typing; the trailing
+                        // enum/bool scalars fall through to ScalarValue.
+                        (ProgramKind::Lsm, _, "kernel_read_file") => {
                             Some(vec![("file", false)])
                         }
                         (ProgramKind::Lsm, _, "task_alloc") => {

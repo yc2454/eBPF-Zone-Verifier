@@ -693,6 +693,23 @@ pub(crate) mod pairs {
     pub static GET_STACK: [MemSizePair; 1] = [MemSizePair::new_nullable(Reg::R2, Reg::R3)];
     pub static PERF_EVENT_OUTPUT: [MemSizePair; 1] = [MemSizePair::new(Reg::R4, Reg::R5)];
     pub static GET_CURRENT_COMM: [MemSizePair; 1] = [MemSizePair::new(Reg::R1, Reg::R2)];
+    // ---- EXCEEDSMAXIMUMKNOWN backlog protos (helper-coverage gaps) ----
+    // bpf_lwt_seg6_store_bytes(skb, offset, from, len): R3=from / R4=len.
+    pub static LWT_SEG6_STORE_BYTES: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
+    // bpf_xdp_store_bytes(xdp, offset, buf, len): R3=buf / R4=len.
+    pub static XDP_STORE_BYTES: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
+    // bpf_store_hdr_opt(skops, from, len, flags): R2=from / R3=len.
+    pub static STORE_HDR_OPT: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
+    // bpf_sysctl_get_current_value(ctx, buf, buf_len): R2=buf(uninit) / R3=len.
+    pub static SYSCTL_GET_CURRENT_VALUE: [MemSizePair; 1] = [MemSizePair::new_nullable(Reg::R2, Reg::R3)];
+    // bpf_ima_file_hash(file, dst, size): R2=dst(uninit) / R3=size.
+    pub static IMA_FILE_HASH: [MemSizePair; 1] = [MemSizePair::new_nullable(Reg::R2, Reg::R3)];
+    // bpf_tcp_{check,gen}_syncookie(sk, iph, iph_len, th, th_len):
+    // R2=iph / R3=iph_len and R4=th / R5=th_len.
+    pub static TCP_SYNCOOKIE: [MemSizePair; 2] = [
+        MemSizePair::new(Reg::R2, Reg::R3),
+        MemSizePair::new(Reg::R4, Reg::R5),
+    ];
     pub static PERF_EVENT_READ_VALUE: [MemSizePair; 1] = [MemSizePair::new(Reg::R3, Reg::R4)];
     pub static PERF_PROG_READ_VALUE: [MemSizePair; 1] = [MemSizePair::new(Reg::R2, Reg::R3)];
 
