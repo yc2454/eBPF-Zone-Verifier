@@ -38,6 +38,31 @@ fn is_inf_loop_skip_pc(prog: &Program, pc: usize) -> bool {
 
 /// Handle pruning decision at a loop point.
 /// Returns Some(true) to prune, Some(false) to continue, None if no previous states.
+/// Walk cur's `parent_cache_id` lineage and collect the cache_ids of all
+/// cached states cur descends from. A prev state whose cache_id is in this
+/// set is a true loop-ANCESTOR of cur; one that is not (but is co-active) is
+/// a SIBLING. Bounded by a budget to guard against a malformed cycle.
+fn collect_ancestor_ids(env: &VerifierEnv, state: &State) -> HashSet<u32> {
+    let mut set = HashSet::new();
+    let mut next = state.parent_cache_id;
+    let mut budget = 16_384u32;
+    while let Some(cid) = next {
+        if budget == 0 || !set.insert(cid) {
+            break;
+        }
+        budget -= 1;
+        match env
+            .cache_loc_by_id
+            .get(&cid)
+            .and_then(|&(p, i)| env.explored_states.get(&p).and_then(|v| v.get(i)))
+        {
+            Some(st) => next = st.parent_cache_id,
+            None => break,
+        }
+    }
+    set
+}
+
 fn handle_loop_pruning(
     env: &mut VerifierEnv,
     state: &mut State,
@@ -103,6 +128,13 @@ fn handle_loop_pruning(
     // wildcard fixpoint, complexity-limit terminates them — matching
     // the kernel's actual behavior (e.g. test_verif_scale_loop3
     // is `should_fail`).
+    // cur's ancestor cache_id lineage (walk of the parent_cache_id
+    // chain), used to distinguish a true loop-ANCESTOR (cur descends
+    // from prev) from a co-active SIBLING at the dfs_paths>0 prune-skip
+    // below. Computed lazily — only when an active prev is actually
+    // encountered — so converged loops (no active prev) pay nothing.
+    let mut ancestor_ids: Option<HashSet<u32>> = None;
+
     let (hit_idx, miss_idxs, miss_reasons): (
         Option<usize>,
         Vec<usize>,
@@ -136,48 +168,45 @@ fn handle_loop_pruning(
             // insns / 0 prunes; ksnoop AND mode → 970k bundle entries
             // at one PC).
             let force_exact = crate::analysis::flow::scc::incomplete_read_marks(env, prev);
-            // Kernel `is_state_visited` (verifier.c v6.15 L19024) wraps the
-            // whole ACTIVE-ancestor (`sl->state.branches>0`) case in
-            // special-case-hits-then-`goto miss`: it NEVER takes a
-            // NOT_EXACT/RANGE_WITHIN subsumption prune against an active
-            // ancestor at a plain back-edge. Those active hits live only at
-            // iter_next/may_goto/callback force-checkpoint sites (handled
-            // before this function / by may_goto_range_within_prune). zovia's
-            // generic loop walk historically took them — a non-kernel hack
-            // that over-converged the conditional_loop/movsx/short_loop1
-            // infinite loops before they stabilize into the EXACT inf-loop
-            // trap (FA). Skipping active ancestors is kernel-faithful;
-            // bounded loops converge against EXPLORED ancestors (dfs_paths==0)
-            // and at force-checkpoints, infinite loops hit the EXACT trap.
+            // Active-state prune-skip, refined to ANCESTORS ONLY
+            // (kernel-faithful; replaces the former base-mode `!env.bcf_enabled`
+            // gate and the BCF-only "prune against active ancestors" hack).
             //
-            // Gated to base mode (`!env.bcf_enabled`): skipping active hits
-            // REDUCES pruning ⇒ more distinct trajectories ⇒ larger no_log
-            // BCF bundles (the documented E2BIG cascade — same trajectory-
-            // sensitivity that forced `b5886c9`/`587ed7d` to base-mode). In
-            // BCF mode the kernel re-checks the bundle via canonical hash, so
-            // keeping the (over-pruning) hack there is fail-closed sound and
-            // leaves BCF bundles byte-identical to HEAD. The selftest FA
-            // floor runs base mode, where this fires.
+            // The kernel's is_state_visited (verifier.c v6.15 L19024) never
+            // takes a NOT_EXACT/RANGE_WITHIN prune against an active ancestor
+            // (`sl->state.branches>0`) at a plain back-edge — those go
+            // `goto miss`. That keeps the EXACT inf-loop trap as the only
+            // thing terminating an unbounded loop (conditional_loop / movsx /
+            // short_loop1 FA-safety).
             //
-            // 2026-06-02 faithfulness RE-STUDY (un-gate experiment, isolated
-            // binary): un-gating in BCF mode = HARD non-convergence. On
-            // to_hep_debug_co-re_v6 it TIMES OUT (>600s vs 134s baseline);
-            // calico-19 → 12/19 build-timeouts, 16/19 load. Root cause traced
-            // via ZOVIA_DUMP_STATES_AT_PC: at the loop head (e.g. pc 2592) a
-            // precise down-counter (r7: 8→1) + a widening accumulator (r9)
-            // produce endlessly-distinct states; with the active-ancestor
-            // prune skipped (kernel-faithful), they can only converge against
-            // an EXPLORED (dfs_paths==0) ancestor, but zovia's INTERLEAVED
-            // WORKLIST keeps every in-flight loop iteration active at once, so
-            // none is ever available → the per-pc cache pegs at the FIFO cap
-            // (64) and churns via eviction (200k+ scalar-ids minted). This
-            // active-prune is a CRUTCH standing in for the kernel's strict-DFS
-            // branches-accounting + imprecise-scalar-wildcard loop
-            // convergence, which zovia lacks. Un-gating without first building
-            // that convergence makes zovia STRICTLY WORSE than the kernel
-            // (kernel converges; zovia doesn't). Keep gated until the
-            // loop-convergence rework (the documented multi-session landmine).
-            if !env.bcf_enabled && prev.dfs_paths > 0 {
+            // But "active" in the kernel's strict DFS means specifically an
+            // ANCESTOR on the current path (the loop's own prior iterations).
+            // A SIBLING that forked earlier in the same iteration (e.g. the
+            // two arms of an `if r0==0` inside the loop body) is fully
+            // EXPLORED by the kernel before the next arrival collides with it,
+            // so the kernel DOES prune against it. zovia's interleaved
+            // worklist keeps such siblings co-active (dfs_paths>0) when cur
+            // arrives, so a blanket dfs_paths>0 skip wrongly protects them:
+            // they accumulate ~one extra state per body-fork per iteration and
+            // bounded loops blow up exponentially (measured on from_hep
+            // calico_tc_skb_accepted pc293, sparse caching: 108,884
+            // cap-evictions → thorough-mode timeout when the skip was
+            // unconditional).
+            //
+            // Refinement: skip ONLY when prev is a true ancestor of cur (its
+            // cache_id lies on cur's parent_cache_id lineage). For a co-active
+            // sibling, fall through to state_subsumed_by — the prune the
+            // kernel's strict DFS would have taken. Ancestors (and any prev
+            // with no cache_id, treated conservatively) still skip, so
+            // inf-loop FA-safety is preserved by direction. Validated: FA=0
+            // and 0 selftest regressions; calico-19 BCF bundles byte-identical
+            // to the prior gated HEAD.
+            let skip_active = prev.dfs_paths > 0 && {
+                let anc = ancestor_ids
+                    .get_or_insert_with(|| collect_ancestor_ids(env, state));
+                prev.cache_id.is_none_or(|cid| anc.contains(&cid))
+            };
+            if skip_active {
                 // Record as a miss so the kernel-faithful eviction
                 // (record_pruning_misses, n=3 at plain back-edges) keeps the
                 // per-pc cache small. Without this the FIFO cap (64) fills
