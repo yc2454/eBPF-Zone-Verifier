@@ -251,6 +251,26 @@ impl NumericDomain {
         }
     }
 
+    /// Extracts the 64-bit unsigned bounds (kernel `umin_value` /
+    /// `umax_value`) for a register. These are tracked INDEPENDENTLY of
+    /// the signed interval — a value can have `umax=0xffffffff` while
+    /// `smax=0x7fffffff` (e.g. a zero-extended 32-bit jump-table index).
+    /// `bcf_bound_reg` emits both as separate predicates, so the BCF
+    /// materializer needs the real u64 bounds rather than a smax-derived
+    /// approximation.
+    pub fn get_u64_bounds(&self, x: Reg) -> (u64, u64) {
+        match self {
+            NumericDomain::Zone(dbm) => {
+                let b = &dbm.bounds[x.idx()];
+                (b.u64_min, b.u64_max)
+            }
+            NumericDomain::Interval(ivl) => {
+                let st = ivl.get_bounds(x);
+                (st.umin, st.umax)
+            }
+        }
+    }
+
     /// Extracts the 32-bit unsigned bounds for a register.
     pub fn get_u32_bounds(&self, x: Reg) -> (u32, u32) {
         match self {

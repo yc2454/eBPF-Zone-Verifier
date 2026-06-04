@@ -38,6 +38,14 @@ pub struct RegBounds {
     pub const_val: Option<u64>,
     pub smin: i64,
     pub smax: i64,
+    /// 64-bit unsigned interval (kernel `umin_value` / `umax_value`),
+    /// tracked INDEPENDENTLY of the signed interval. `bound_reg64` emits
+    /// `ULE(reg, umax)` from this directly rather than deriving it from
+    /// `smax`, so a reg with `umax=0xffffffff` but `smax=0x7fffffff`
+    /// (e.g. a zero-extended jump-table index) yields BOTH bound preds,
+    /// matching the kernel's `bcf_bound_reg`.
+    pub umin: u64,
+    pub umax: u64,
     pub s32_min: i32,
     pub s32_max: i32,
     pub u32_min: u32,
@@ -53,6 +61,8 @@ impl RegBounds {
             const_val: None,
             smin: i64::MIN,
             smax: i64::MAX,
+            umin: 0,
+            umax: u64::MAX,
             s32_min: i32::MIN,
             s32_max: i32::MAX,
             u32_min: 0,
@@ -882,38 +892,28 @@ impl SymbolicState {
                 emitted.push(self.add_pred(BPF_JSLE, expr, rhs));
             }
         } else {
-            let umin: Option<u64> = if bounds.smin >= 0 {
-                Some(bounds.smin as u64)
-            } else if bounds.smax < 0 {
-                Some(bounds.smin as u64)
-            } else {
-                None
-            };
-            let umax: Option<u64> = if bounds.smin >= 0 && bounds.smax != i64::MAX {
-                Some(bounds.smax as u64)
-            } else if bounds.smax < 0 {
-                Some(bounds.smax as u64)
-            } else {
-                None
-            };
-            if let Some(umin) = umin {
-                if umin != 0 {
-                    let rhs = self.add_val(umin, false);
-                    emitted.push(self.add_pred(BPF_JGE, expr, rhs));
-                }
+            // Mirror kernel `bcf_bound_reg` (verifier.c:873) EXACTLY: emit
+            // umin/umax/smin/smax from the reg's INDEPENDENT u64 + s64
+            // fields, skipping a signed bound when it equals the unsigned
+            // one. The u64 bounds come straight from the domain (no longer
+            // derived from `smax`), so a zero-extended index reg with
+            // umax=0xffffffff but smax=0x7fffffff yields BOTH preds.
+            let (umin, umax) = (bounds.umin, bounds.umax);
+            let (smin, smax) = (bounds.smin, bounds.smax);
+            if umin != 0 {
+                let rhs = self.add_val(umin, false);
+                emitted.push(self.add_pred(BPF_JGE, expr, rhs));
             }
-            if let Some(umax) = umax {
-                if umax != u64::MAX {
-                    let rhs = self.add_val(umax, false);
-                    emitted.push(self.add_pred(BPF_JLE, expr, rhs));
-                }
+            if umax != u64::MAX {
+                let rhs = self.add_val(umax, false);
+                emitted.push(self.add_pred(BPF_JLE, expr, rhs));
             }
-            if bounds.smin != i64::MIN && umin.map(|u| bounds.smin as u64 != u).unwrap_or(true) {
-                let rhs = self.add_val(bounds.smin as u64, false);
+            if smin != i64::MIN && smin as u64 != umin {
+                let rhs = self.add_val(smin as u64, false);
                 emitted.push(self.add_pred(BPF_JSGE, expr, rhs));
             }
-            if bounds.smax != i64::MAX && umax.map(|u| bounds.smax as u64 != u).unwrap_or(true) {
-                let rhs = self.add_val(bounds.smax as u64, false);
+            if smax != i64::MAX && smax as u64 != umax {
+                let rhs = self.add_val(smax as u64, false);
                 emitted.push(self.add_pred(BPF_JSLE, expr, rhs));
             }
         }
@@ -946,46 +946,26 @@ impl SymbolicState {
     /// for 64-bit, so we approximate from the signed interval when it's
     /// fully non-negative.
     fn bound_reg64(&mut self, expr: u32, bounds: &RegBounds) {
-        // 64-bit unsigned bounds: derive from signed interval when sign is
-        // determinate. If smin >= 0, the u-range equals the s-range. If
-        // smax < 0, the u-range is [smin as u64, smax as u64] (both above
-        // 2^63). Mixed sign → no useful u-bound.
-        let umin: Option<u64> = if bounds.smin >= 0 {
-            Some(bounds.smin as u64)
-        } else if bounds.smax < 0 {
-            Some(bounds.smin as u64)
-        } else {
-            None
-        };
-        // When smin >= 0 the unsigned upper bound equals the signed upper bound —
-        // BUT only when smax < i64::MAX.  If smax == i64::MAX the register's
-        // actual u64 upper bound may be u64::MAX (unbounded); emitting
-        // JLE(v, 0x7fff...ffff) would be a spurious vacuous predicate not
-        // present in the kernel's bcf_bound_reg output.  The kernel's
-        // umax_value field tracks the true u64 bound; zovia derives it from
-        // the signed interval, so cap at i64::MAX-exclusive to stay faithful.
-        let umax: Option<u64> = if bounds.smin >= 0 && bounds.smax != i64::MAX {
-            Some(bounds.smax as u64)
-        } else if bounds.smax < 0 {
-            Some(bounds.smax as u64)
-        } else {
-            None
-        };
-        if let Some(umin) = umin {
-            if umin != 0 {
-                self.bound_pred(BPF_JGE, expr, umin, false);
-            }
+        // Mirror kernel `bcf_bound_reg` (verifier.c:873) EXACTLY: emit from
+        // the reg's INDEPENDENT u64 (umin/umax) and s64 (smin/smax) fields,
+        // skipping a signed bound when it equals the unsigned one. The u64
+        // bounds come straight from the domain's umin_value/umax_value
+        // (no longer derived from the signed interval), so a zero-extended
+        // jump-table index with umax=0xffffffff but smax=0x7fffffff yields
+        // BOTH ULE(reg,0xffffffff) and JSLE(reg,0x7fffffff).
+        let (umin, umax) = (bounds.umin, bounds.umax);
+        let (smin, smax) = (bounds.smin, bounds.smax);
+        if umin != 0 {
+            self.bound_pred(BPF_JGE, expr, umin, false);
         }
-        if let Some(umax) = umax {
-            if umax != u64::MAX {
-                self.bound_pred(BPF_JLE, expr, umax, false);
-            }
+        if umax != u64::MAX {
+            self.bound_pred(BPF_JLE, expr, umax, false);
         }
-        if bounds.smin != i64::MIN && umin.map(|u| bounds.smin as u64 != u).unwrap_or(true) {
-            self.bound_pred(BPF_JSGE, expr, bounds.smin as u64, false);
+        if smin != i64::MIN && smin as u64 != umin {
+            self.bound_pred(BPF_JSGE, expr, smin as u64, false);
         }
-        if bounds.smax != i64::MAX && umax.map(|u| bounds.smax as u64 != u).unwrap_or(true) {
-            self.bound_pred(BPF_JSLE, expr, bounds.smax as u64, false);
+        if smax != i64::MAX && smax as u64 != umax {
+            self.bound_pred(BPF_JSLE, expr, smax as u64, false);
         }
     }
 
@@ -1245,6 +1225,8 @@ mod tests {
             const_val: None,
             smin: 0,
             smax: 0xff,
+            umin: 0,
+            umax: 0xff,
             s32_min: 0,
             s32_max: 0xff,
             u32_min: 0,
@@ -1261,6 +1243,8 @@ mod tests {
             const_val: None,
             smin: -1,
             smax: 100,
+            umin: 0,
+            umax: u64::MAX,
             s32_min: -1,
             s32_max: 100,
             u32_min: 0,
@@ -1278,6 +1262,8 @@ mod tests {
             const_val: Some(0xdead_beef),
             smin: 0xdead_beef,
             smax: 0xdead_beef,
+            umin: 0xdead_beef,
+            umax: 0xdead_beef,
             s32_min: i32::MIN,
             s32_max: i32::MAX,
             u32_min: 0,
@@ -1303,6 +1289,8 @@ mod tests {
             const_val: None,
             smin: 0,
             smax: 0xff,
+            umin: 0,
+            umax: 0xff,
             s32_min: 0,
             s32_max: 0xff,
             u32_min: 0,
@@ -1335,6 +1323,8 @@ mod tests {
             const_val: None,
             smin: 0,
             smax: 100,
+            umin: 0,
+            umax: 100,
             s32_min: 0,
             s32_max: 100,
             u32_min: 0,
@@ -1370,6 +1360,8 @@ mod tests {
             const_val: None,
             smin: 5,
             smax: 100,
+            umin: 5,
+            umax: 100,
             s32_min: 5,
             s32_max: 100,
             u32_min: 5,
