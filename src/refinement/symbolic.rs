@@ -196,6 +196,26 @@ impl SymbolicState {
         Self::default()
     }
 
+    /// Reset for a faithful base→reject replay: mark every register uncached
+    /// (`bcf_expr = -1` in kernel terms) and clear the accumulated path
+    /// condition, so the replay re-materializes each register at its first
+    /// in-window reference exactly as the kernel's `bcf_track` re-execution
+    /// does. The expression ARENA is intentionally KEPT (not cleared): the
+    /// base State may still hold bcf-slot references (e.g. spilled stack
+    /// slots) into it, and truncating the arena would dangle them. New
+    /// materializations append fresh slots; the rebuilt goal only walks
+    /// those, so retaining the old (now-unreferenced) slots is harmless.
+    pub fn reset_for_replay(&mut self) {
+        self.reg_expr = [None; NUM_REGS];
+        self.reg_expr_pc = [None; NUM_REGS];
+        self.path_conds.clear();
+        self.path_cond_pcs.clear();
+        self.path_cond_is_branch.clear();
+        self.path_cond_narrowed_const.clear();
+        self.path_cond_lhs_meta.clear();
+        self.refine_cond = None;
+    }
+
     /// Append an expression and return its slot offset.
     pub fn push_expr(&mut self, e: BcfExpr) -> u32 {
         let idx = self.next_slot;
@@ -331,6 +351,10 @@ impl SymbolicState {
     pub fn expr32(&mut self, slot: u32) -> u32 {
         // Inspect under immutable borrow first, drop it before mutating.
         let (code, params, first_arg) = {
+            if self.expr_at(slot).is_none() && std::env::var("ZOVIA_BCF_REPLAY_DEBUG").is_ok() {
+                eprintln!("[expr32-BAD] slot={} next_slot={} n_exprs={} reg_expr={:?}",
+                    slot, self.next_slot, self.exprs.len(), self.reg_expr);
+            }
             let e = self
                 .expr_at(slot)
                 .expect("expr32: slot must point at an expr header");

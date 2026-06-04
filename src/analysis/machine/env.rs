@@ -338,6 +338,16 @@ pub struct VerifierEnv<'a> {
     /// argument's only definition.
     pub current_step_idx: Option<usize>,
 
+    /// Faithful-discharge replay mode (mirrors kernel `env->bcf.tracking`).
+    /// When true, the verifier is re-executing a base→reject suffix to
+    /// reconstruct the kernel's exact `bcf_track` path condition. Side
+    /// effects that would corrupt the in-flight analysis are suppressed:
+    /// `fail()` (no spurious errors), `mark_chain_precision_backward()` (no
+    /// precision marking), and the reject-site discharge speculation (no
+    /// re-entrant discharge). History/cache aren't touched by `transfer`, so
+    /// nothing else needs gating. Default false ⇒ zero behavior change.
+    pub replay_mode: bool,
+
     /// Eviction-resistant precision marks keyed by `(pc, reg)`.
     /// `mark_chain_precision_backward` writes here as it walks the
     /// per-path history, so widening sites can detect "this reg was
@@ -405,11 +415,19 @@ impl<'a> VerifierEnv<'a> {
             bcf_size_reg: None,
             bcf_path_unreachable: false,
             current_step_idx: None,
+            replay_mode: false,
         }
     }
 
     /// Report a failure. Only the first failure is recorded.
     pub fn fail(&mut self, err: VerificationError) {
+        // During a faithful-discharge replay we re-execute a known-good
+        // suffix purely to rebuild the bcf path condition; any "failure"
+        // is an artifact of re-running checks out of their original
+        // context and must not poison the real analysis.
+        if self.replay_mode {
+            return;
+        }
         if self.error.is_none() {
             self.error = Some(err);
         }

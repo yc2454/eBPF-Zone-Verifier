@@ -53,6 +53,12 @@ pub fn mark_chain_precision_backward(
     parent_cache_id: Option<u32>,
     sink_reg: Reg,
 ) {
+    // Suppressed during faithful-discharge replay: re-executing the suffix
+    // must not re-mark precision on the shared history (the marks already
+    // exist from the original forward pass).
+    if env.replay_mode {
+        return;
+    }
     let mut frontier: HashSet<Reg> = HashSet::new();
     frontier.insert(sink_reg);
 

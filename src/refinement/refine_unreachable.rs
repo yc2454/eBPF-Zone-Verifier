@@ -711,3 +711,30 @@ fn try_prove_unreachable_inner(
         }
     }
 }
+
+/// Build a path-unreachable proof directly from a SymbolicState whose
+/// `path_conds` were produced by the faithful base→reject replay
+/// (`ZOVIA_BCF_REPLAY`). Unlike [`try_prove_unreachable_inner`], this does
+/// NO suffix filter and NO K==K / fresh-VAR fold rewrites — the replay
+/// already re-materialized every register exactly as the kernel's
+/// `bcf_track` re-execution does (verifier.c:24633 + bcf_reg_expr@897), so
+/// `path_conds` is the kernel-faithful goal verbatim. Just CONJ + cvc5.
+pub fn build_unreachable_from_replay(mut sym: SymbolicState) -> Option<UnreachableOk> {
+    if sym.path_conds.is_empty() {
+        return None;
+    }
+    let goal_root = match sym.path_conds.len() {
+        0 => return None,
+        1 => sym.path_conds[0],
+        _ => {
+            let pcs = sym.path_conds.clone();
+            sym.add_conj(pcs)
+        }
+    };
+    let smt = smtlib::encode(&sym).ok()?;
+    if std::env::var("ZOVIA_BCF_DUMP_SMT").is_ok() {
+        eprintln!("---- [bcf] SMT-LIB to cvc5 (replay) ----\n{}\n---- end ----", smt);
+    }
+    let bytes = solver::solve(&smt).ok()?;
+    Some(UnreachableOk { proof_bytes: bytes, goal_root, sym })
+}
