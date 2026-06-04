@@ -100,6 +100,7 @@ pub(crate) fn transfer_load(
             state.var_off_contributor.remove(&dst);
             if let Some(idx) = env.current_step_idx
                 && slot_is_spilled_reg
+                && !env.replay_mode
             {
                 env.history.set_stack_access(idx);
             }

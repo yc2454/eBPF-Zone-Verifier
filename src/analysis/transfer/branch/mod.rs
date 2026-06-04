@@ -192,7 +192,7 @@ pub(crate) fn transfer_if(
                 linked.push(lr);
             }
         }
-        if linked.len() > 1 {
+        if linked.len() > 1 && !env.replay_mode {
             env.history.set_linked_regs(hidx, linked);
         }
     }
