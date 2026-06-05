@@ -551,6 +551,35 @@ impl NumericDomain {
         }
     }
 
+    /// Kernel `zext_32_to_64` (verifier.c): after a 32-bit ALU op the
+    /// destination is zero-extended, so its 64-bit bounds equal its 32-bit
+    /// bounds. Mirrors `__reg_assign_32_into_64`. Applied uniformly at the
+    /// W32 ALU tail so umax/smax reflect the zero-extension (the kernel
+    /// does this for every BPF_ALU 32-bit-class op).
+    pub fn zext_32_into_64(&mut self, x: Reg) {
+        if x == Reg::Zero || x.is_anchor() {
+            return;
+        }
+        match self {
+            NumericDomain::Zone(dbm) => {
+                let b = &mut dbm.bounds[x.idx()];
+                b.u64_min = b.u32_min as u64;
+                b.u64_max = b.u32_max as u64;
+                if b.s32_min >= 0 && b.s32_max >= 0 {
+                    b.s64_min = b.s32_min as i64;
+                    b.s64_max = b.s32_max as i64;
+                } else {
+                    b.s64_min = 0;
+                    b.s64_max = u32::MAX as i64;
+                }
+                zone_ops::sync_bounds(dbm, x);
+            }
+            NumericDomain::Interval(ivl) => {
+                ivl.get_bounds_mut(x).assign_32_into_64();
+            }
+        }
+    }
+
     /// Check if value is known to be in u32 range [0, 0xFFFFFFFF]
     pub fn fits_in_u32_range(&self, reg: Reg) -> bool {
         let (lo, hi) = self.get_interval(reg);

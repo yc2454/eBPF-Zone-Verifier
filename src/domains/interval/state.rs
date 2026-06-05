@@ -234,6 +234,30 @@ impl ScalarBounds {
         self.sync_bounds();
     }
 
+    /// Mirror kernel `__reg_assign_32_into_64` (verifier.c:2789) + the
+    /// `zext_32_to_64` it serves: after a 32-bit ALU op the result is
+    /// zero-extended, so the full 64-bit value EQUALS the 32-bit value and
+    /// the 64-bit bounds must be assigned from the 32-bit ones. Without
+    /// this, a register written by a W32 op keeps umax/smax at the full
+    /// 64-bit range, so `bcf_bound_reg`-style materialization never emits
+    /// the `ULE(reg,0xffffffff)` / signed bounds the kernel emits (the
+    /// from_nat 0x23a1dc index reg, and the to_l3 0xd13031 reg).
+    pub fn assign_32_into_64(&mut self) {
+        self.umin = self.u32_min as u64;
+        self.umax = self.u32_max as u64;
+        // Pull s32 into s64 only when both halves are non-negative (the
+        // value's sign-extension equals its zero-extension); otherwise the
+        // zero-extended value spans [0, U32_MAX] as signed-64.
+        if self.s32_min >= 0 && self.s32_max >= 0 {
+            self.smin = self.s32_min as i64;
+            self.smax = self.s32_max as i64;
+        } else {
+            self.smin = 0;
+            self.smax = u32::MAX as i64;
+        }
+        self.sync_bounds();
+    }
+
     /// Apply signed constraint: value <= c
     pub fn assume_sle(&mut self, c: i64) {
         self.smax = self.smax.min(c);
