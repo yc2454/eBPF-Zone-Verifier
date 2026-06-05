@@ -237,6 +237,22 @@ impl ScalarBounds {
         let new_smax = ((self.smax as u64 & hi_mask) | (self.u32_max as u64)) as i64;
         self.smin = self.smin.max(new_smin);
         self.smax = self.smax.min(new_smax);
+        // (6) s64 → u64 consistency (kernel `__reg64_deduce_bounds`,
+        // verifier.c:2820). A SIGN-CROSSING range [smin<0, smax>=0] can
+        // take the most-negative value smin (= 0x8000.. as unsigned), so
+        // its unsigned max MUST be >= 0x8000_0000_0000_0000. If a prior op
+        // left umax capped below that (e.g. at i64::MAX), the reg is in
+        // fact unsigned-unbounded above — the kernel keeps umax_value at
+        // U64_MAX. Restoring it (a WIDENING, hence sound) stops zovia
+        // emitting a spurious `ULE(v, i64::MAX)` the kernel never has
+        // (the to_l3_debug_v6 0xd13031 regression). Symmetrically, a
+        // fully non-negative reg's umax is its smax.
+        if self.smin >= 0 {
+            self.umin = self.umin.max(self.smin as u64);
+            self.umax = self.umax.min(self.smax as u64);
+        } else if self.smin < 0 && self.smax >= 0 && self.umax < 0x8000_0000_0000_0000 {
+            self.umax = u64::MAX;
+        }
     }
 
     /// Reset 32-bit halves to full range, then re-derive tightest
