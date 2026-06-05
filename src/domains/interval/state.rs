@@ -218,6 +218,25 @@ impl ScalarBounds {
             self.u32_min = self.u32_min.max(self.s32_min as u32);
             self.u32_max = self.u32_max.min(self.s32_max as u32);
         }
+        // (5) 32 → 64 mixed deduction (kernel `__reg_deduce_mixed_bounds`,
+        // verifier.c:2955). Substitute the (now-tightest) low 32 bits into
+        // the 64-bit bounds, keeping the high 32 bits from the existing
+        // 64-bit range. This lets a reg whose low 32 bits are known —
+        // e.g. R0 after a `w0 == 0` branch (u32=[0,0], high 32 unknown) —
+        // derive umax=0xffffffff_00000000 / smax=0x7fffffff_00000000, the
+        // exact bounds the kernel's bcf_bound_reg emits for the from_nat
+        // skb_load_bytes return (0x23a1dc). zovia previously had only the
+        // 64→32 direction, so umax/smax stayed at the full 64-bit range.
+        // Always well-formed (kernel comment).
+        let hi_mask: u64 = !0xffff_ffffu64;
+        let new_umin = (self.umin & hi_mask) | (self.u32_min as u64);
+        let new_umax = (self.umax & hi_mask) | (self.u32_max as u64);
+        self.umin = self.umin.max(new_umin);
+        self.umax = self.umax.min(new_umax);
+        let new_smin = ((self.smin as u64 & hi_mask) | (self.u32_min as u64)) as i64;
+        let new_smax = ((self.smax as u64 & hi_mask) | (self.u32_max as u64)) as i64;
+        self.smin = self.smin.max(new_smin);
+        self.smax = self.smax.min(new_smax);
     }
 
     /// Reset 32-bit halves to full range, then re-derive tightest
