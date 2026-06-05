@@ -106,19 +106,30 @@ pub(crate) fn handle_shr(state: &mut State, width: Width, dst: Reg, src: &Operan
             } else {
                 state.domain.assume_ge_imm(dst, 0);
 
-                if old_lo != i64::MIN && old_hi != i64::MAX {
-                    let (lo, hi) = (old_lo, old_hi);
-                    if lo >= 0 {
-                        let new_lo = (lo as u64 >> shift_amount) as i64;
-                        let new_hi = (hi as u64 >> shift_amount) as i64;
-                        state.domain.assume_ge_imm(dst, new_lo);
-                        state.domain.assume_le_imm(dst, new_hi);
-                    } else if shift_amount > 0 {
-                        let max_result = u64::MAX >> shift_amount;
-                        if max_result <= i64::MAX as u64 {
-                            state.domain.assume_le_imm(dst, max_result as i64);
-                        }
+                // A logical right shift by k caps the result at
+                // `u64::MAX >> k` UNCONDITIONALLY — independent of the
+                // input range. For k=32 this is 0xffffffff, the bound the
+                // `r <<= 32; r >>= 32` zero-extend idiom relies on. When
+                // the input range is unknown (full), this is the ONLY
+                // thing keeping umax finite; the kernel always sets
+                // umax_value = umax >> k (<= this cap). Previously this
+                // cap was nested inside `old bounds finite`, so a
+                // full-range input (e.g. after `<<= 32` widened it) left
+                // umax at u64::MAX and `bcf_bound_reg` never emitted the
+                // ULE(reg,0xffffffff) the kernel emits (from_nat 0x23a1dc).
+                if shift_amount > 0 {
+                    let cap = u64::MAX >> shift_amount;
+                    if cap <= i64::MAX as u64 {
+                        state.domain.assume_le_imm(dst, cap as i64);
                     }
+                }
+                // Tighten further when the input range is known and
+                // non-negative (an exact shift of a known interval).
+                if old_lo != i64::MIN && old_hi != i64::MAX && old_lo >= 0 {
+                    let new_lo = (old_lo as u64 >> shift_amount) as i64;
+                    let new_hi = (old_hi as u64 >> shift_amount) as i64;
+                    state.domain.assume_ge_imm(dst, new_lo);
+                    state.domain.assume_le_imm(dst, new_hi);
                 }
 
                 let new_tnum = old_tnum.shr_imm(shift_amount as u64);
