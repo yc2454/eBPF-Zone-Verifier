@@ -615,12 +615,29 @@ fn apply_w32_unsigned_fallback(
             }
         }
         CmpOp::Eq => {
+            // then: == rv ; else: != rv — boundary-bump the else side
+            // (mirrors apply_cmp_to_domain's refine_ne_imm, now in the
+            // u32 subreg so the kernel's `reg_set_min_max` 32-bit ≠
+            // narrowing is preserved; without it the proto switch's
+            // `w2 != 6` no longer refines proto to ≥7 and the fold can't
+            // synthesize from_nat 0x618296's `JGE(proto,7)` conjunct).
             t_min = t_min.max(rv);
             t_max = t_max.min(rv);
+            if e_min == rv && e_min < e_max {
+                e_min += 1;
+            } else if e_max == rv && e_min < e_max {
+                e_max -= 1;
+            }
         }
         CmpOp::Ne => {
+            // else: == rv ; then: != rv — boundary-bump the then side.
             e_min = e_min.max(rv);
             e_max = e_max.min(rv);
+            if t_min == rv && t_min < t_max {
+                t_min += 1;
+            } else if t_max == rv && t_min < t_max {
+                t_max -= 1;
+            }
         }
         _ => return,
     }
