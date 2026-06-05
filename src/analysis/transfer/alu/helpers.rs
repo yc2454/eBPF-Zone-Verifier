@@ -172,8 +172,11 @@ pub(crate) fn emit_bcf_alu_unary(
     }
 }
 
-/// Tightens DBM bounds using information from Tnum.
-pub(crate) fn sync_tnum_to_dbm(state: &mut State, reg: Reg) {
+/// Tightens the active numeric domain's bounds using information from
+/// the register's Tnum. Dispatches through `state.domain` so it applies
+/// to whichever domain is in use — in kernel-mode that's the Interval
+/// domain, NOT Zone/DBM (the old `_to_dbm` name was a misnomer).
+pub(crate) fn sync_tnum_to_bounds(state: &mut State, reg: Reg) {
     let tnum = state.get_tnum(reg);
     let tnum_min = tnum.min_value();
     let tnum_max = tnum.max_value();

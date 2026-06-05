@@ -9,7 +9,7 @@ use crate::domains::tnum::Tnum;
 use log::debug;
 
 use super::helpers::{
-    bcf_reg_bounds, check_ptr_bounds, emit_bcf_alu_binop, emit_bcf_alu_unary, sync_tnum_to_dbm,
+    bcf_reg_bounds, check_ptr_bounds, emit_bcf_alu_binop, emit_bcf_alu_unary, sync_tnum_to_bounds,
 };
 
 pub(crate) fn handle_add(
@@ -147,7 +147,7 @@ pub(crate) fn handle_add(
         }
     }
 
-    // Tnum / sync_tnum_to_dbm are scalar-domain bookkeeping. When the dst
+    // Tnum / sync_tnum_to_bounds are scalar-domain bookkeeping. When the dst
     // is (or stays) a pointer and the src is a scalar, the dst's tnum
     // represents the offset within the base, not the absolute address —
     // syncing it to DBM bounds-from-zero installs a bogus absolute bound
@@ -272,7 +272,7 @@ pub(crate) fn handle_add(
         }
 
         check_ptr_bounds(state, dst);
-        sync_tnum_to_dbm(state, dst);
+        sync_tnum_to_bounds(state, dst);
     }
 }
 
@@ -350,7 +350,7 @@ pub(crate) fn handle_sub(
     // See handle_add for rationale: when dst is a pointer and src is a
     // scalar, skip the absolute-address tnum propagation and reset the
     // tnum to unknown so a stale scalar-era value can't leak into DBM
-    // via sync_tnum_to_dbm.
+    // via sync_tnum_to_bounds.
     let dst_is_ptr_post = state.types.get(dst).is_pointer();
     let src_is_ptr = match src {
         Operand::Imm(_) => false,
@@ -460,7 +460,7 @@ pub(crate) fn handle_sub(
             check_ptr_bounds(state, dst);
         }
 
-        sync_tnum_to_dbm(state, dst);
+        sync_tnum_to_bounds(state, dst);
     }
 }
 

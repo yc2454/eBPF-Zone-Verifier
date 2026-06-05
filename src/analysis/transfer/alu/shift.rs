@@ -5,7 +5,7 @@ use crate::analysis::machine::state::State;
 use crate::ast::{Operand, Width};
 use crate::domains::tnum::Tnum;
 
-use super::helpers::{bcf_reg_bounds, sync_tnum_to_dbm};
+use super::helpers::{bcf_reg_bounds, sync_tnum_to_bounds};
 
 /// Kernel `is_safe_to_compute_dst_reg_range` (verifier.c:15064): a
 /// shift's dst range is only computable when the amount is a constant
@@ -46,7 +46,7 @@ fn mark_unknown_if_oversized_shift(
     // not-safe path) for both W32 and W64.
     state.domain.forget(dst);
     state.set_tnum(dst, Tnum::unknown());
-    sync_tnum_to_dbm(state, dst);
+    sync_tnum_to_bounds(state, dst);
     if let Some(d) = dst.bcf_idx()
         && let Some(bcf) = state.bcf.as_mut()
     {
@@ -149,7 +149,7 @@ pub(crate) fn handle_shr(state: &mut State, width: Width, dst: Reg, src: &Operan
         }
     }
 
-    sync_tnum_to_dbm(state, dst);
+    sync_tnum_to_bounds(state, dst);
 
     // --- BCF symbolic mirror. Mirrors kernel `bcf_alu` (verifier.c:15139)
     //     with kernel-shape width discipline. For W32 RSH or for W64 RSH
@@ -309,7 +309,7 @@ fn lsh_domain_known(state: &mut State, width: Width, dst: Reg, shift_amount: u32
         state.set_tnum(dst, new_tnum);
     }
 
-    sync_tnum_to_dbm(state, dst);
+    sync_tnum_to_bounds(state, dst);
 }
 
 pub(crate) fn handle_shl(state: &mut State, width: Width, dst: Reg, src: &Operand) {
@@ -364,7 +364,7 @@ pub(crate) fn handle_shl(state: &mut State, width: Width, dst: Reg, src: &Operan
                     state.set_tnum(dst, Tnum::unknown());
                 }
 
-                sync_tnum_to_dbm(state, dst);
+                sync_tnum_to_bounds(state, dst);
             }
         }
     }
@@ -574,7 +574,7 @@ pub(crate) fn handle_arsh(state: &mut State, width: Width, dst: Reg, src: &Opera
 
                         let new_tnum = old_tnum.arsh_imm(shift_amount as u64);
                         state.set_tnum(dst, new_tnum);
-                        sync_tnum_to_dbm(state, dst);
+                        sync_tnum_to_bounds(state, dst);
                         return;
                     }
                 }
@@ -613,7 +613,7 @@ pub(crate) fn handle_arsh(state: &mut State, width: Width, dst: Reg, src: &Opera
                 state.set_tnum(dst, new_tnum);
             }
 
-            sync_tnum_to_dbm(state, dst);
+            sync_tnum_to_bounds(state, dst);
         }
         Operand::Reg(_) => {
             state.domain.forget(dst);
@@ -624,7 +624,7 @@ pub(crate) fn handle_arsh(state: &mut State, width: Width, dst: Reg, src: &Opera
             }
 
             state.set_tnum(dst, Tnum::unknown());
-            sync_tnum_to_dbm(state, dst);
+            sync_tnum_to_bounds(state, dst);
         }
     }
 
@@ -776,5 +776,5 @@ pub(crate) fn handle_rsh(state: &mut State, width: Width, dst: Reg, src: &Operan
         }
     }
 
-    sync_tnum_to_dbm(state, dst);
+    sync_tnum_to_bounds(state, dst);
 }

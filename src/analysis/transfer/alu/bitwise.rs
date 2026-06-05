@@ -6,7 +6,7 @@ use crate::ast::{Operand, Width};
 use crate::domains::tnum::Tnum;
 use crate::refinement::bcf::{BPF_AND, BPF_OR, BPF_XOR};
 
-use super::helpers::{bcf_reg_bounds, emit_bcf_alu_binop, sync_tnum_to_dbm};
+use super::helpers::{bcf_reg_bounds, emit_bcf_alu_binop, sync_tnum_to_bounds};
 
 // BCF symbolic mirror for `mov32 dst, src` (W32 Reg→Reg). Mirrors kernel
 // `bcf_alu` (verifier.c:15139)'s mov32 shape: reads src in 32-bit form,
@@ -446,7 +446,7 @@ pub(crate) fn handle_or(state: &mut State, width: Width, dst: Reg, src: &Operand
     };
     state.set_tnum(dst, new_t);
 
-    sync_tnum_to_dbm(state, dst);
+    sync_tnum_to_bounds(state, dst);
 
     // Kernel `scalar_min_max_or` (verifier.c v6.15 ~L14710): umin =
     // max(operand umins) (OR only sets bits, so x|y >= x and >= y); umax is
@@ -517,7 +517,7 @@ pub(crate) fn handle_xor(state: &mut State, width: Width, dst: Reg, src: &Operan
     };
     state.set_tnum(dst, new_t);
 
-    sync_tnum_to_dbm(state, dst);
+    sync_tnum_to_bounds(state, dst);
 
     // BCF: kernel routes BPF_XOR through bcf_alu (in is_safe set).
     // Was a STALE-bcf_expr gap (no build, no clear).
