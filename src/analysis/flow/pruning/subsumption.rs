@@ -689,8 +689,8 @@ fn domain_subsumed_by(
         if !(old_smin <= cur_smin && old_smax >= cur_smax) {
             if std::env::var("ZOVIA_DUMP_DOMAIN_MISS").ok().as_deref() == Some("1") {
                 eprintln!(
-                    "[domain_miss] reg={:?} precise s64 old=[{},{}] cur=[{},{}]",
-                    r, old_smin, old_smax, cur_smin, cur_smax
+                    "[domain_miss] reg={:?} precise={} force_exact={} s64 old=[{},{}] cur=[{},{}]",
+                    r, precise.contains(&r), force_exact, old_smin, old_smax, cur_smin, cur_smax
                 );
             }
             return false;
