@@ -294,6 +294,19 @@ impl StackState {
         std::sync::Arc::make_mut(&mut self.slots)
     }
 
+    /// Mark every spilled slot's `bcf_expr` uncached for a faithful
+    /// base→reject replay (kernel `state->stack[*].spilled_ptr.bcf_expr = -1`,
+    /// verifier.c:5677). Without this, a fill during the replay restores a
+    /// stale slot index into the (reset) symbolic arena and dangles.
+    pub fn reset_bcf_for_replay(&mut self) {
+        if self.slots.values().all(|s| s.bcf_expr.is_none()) {
+            return; // nothing cached → avoid the CoW clone
+        }
+        for s in self.slots_mut().values_mut() {
+            s.bcf_expr = None;
+        }
+    }
+
     /// Mutable iteration. Triggers CoW on first call after a fork.
     pub fn iter_mut(&mut self) -> std::collections::btree_map::IterMut<'_, i16, SpilledReg> {
         self.slots_mut().iter_mut()

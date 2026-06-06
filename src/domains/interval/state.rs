@@ -218,6 +218,41 @@ impl ScalarBounds {
             self.u32_min = self.u32_min.max(self.s32_min as u32);
             self.u32_max = self.u32_max.min(self.s32_max as u32);
         }
+        // (5) 32 → 64 mixed deduction (kernel `__reg_deduce_mixed_bounds`,
+        // verifier.c:2955). Substitute the (now-tightest) low 32 bits into
+        // the 64-bit bounds, keeping the high 32 bits from the existing
+        // 64-bit range. This lets a reg whose low 32 bits are known —
+        // e.g. R0 after a `w0 == 0` branch (u32=[0,0], high 32 unknown) —
+        // derive umax=0xffffffff_00000000 / smax=0x7fffffff_00000000, the
+        // exact bounds the kernel's bcf_bound_reg emits for the from_nat
+        // skb_load_bytes return (0x23a1dc). zovia previously had only the
+        // 64→32 direction, so umax/smax stayed at the full 64-bit range.
+        // Always well-formed (kernel comment).
+        let hi_mask: u64 = !0xffff_ffffu64;
+        let new_umin = (self.umin & hi_mask) | (self.u32_min as u64);
+        let new_umax = (self.umax & hi_mask) | (self.u32_max as u64);
+        self.umin = self.umin.max(new_umin);
+        self.umax = self.umax.min(new_umax);
+        let new_smin = ((self.smin as u64 & hi_mask) | (self.u32_min as u64)) as i64;
+        let new_smax = ((self.smax as u64 & hi_mask) | (self.u32_max as u64)) as i64;
+        self.smin = self.smin.max(new_smin);
+        self.smax = self.smax.min(new_smax);
+        // (6) s64 → u64 consistency (kernel `__reg64_deduce_bounds`,
+        // verifier.c:2820). A SIGN-CROSSING range [smin<0, smax>=0] can
+        // take the most-negative value smin (= 0x8000.. as unsigned), so
+        // its unsigned max MUST be >= 0x8000_0000_0000_0000. If a prior op
+        // left umax capped below that (e.g. at i64::MAX), the reg is in
+        // fact unsigned-unbounded above — the kernel keeps umax_value at
+        // U64_MAX. Restoring it (a WIDENING, hence sound) stops zovia
+        // emitting a spurious `ULE(v, i64::MAX)` the kernel never has
+        // (the to_l3_debug_v6 0xd13031 regression). Symmetrically, a
+        // fully non-negative reg's umax is its smax.
+        if self.smin >= 0 {
+            self.umin = self.umin.max(self.smin as u64);
+            self.umax = self.umax.min(self.smax as u64);
+        } else if self.smin < 0 && self.smax >= 0 && self.umax < 0x8000_0000_0000_0000 {
+            self.umax = u64::MAX;
+        }
     }
 
     /// Reset 32-bit halves to full range, then re-derive tightest
@@ -231,6 +266,30 @@ impl ScalarBounds {
         self.s32_max = i32::MAX;
         self.u32_min = 0;
         self.u32_max = u32::MAX;
+        self.sync_bounds();
+    }
+
+    /// Mirror kernel `__reg_assign_32_into_64` (verifier.c:2789) + the
+    /// `zext_32_to_64` it serves: after a 32-bit ALU op the result is
+    /// zero-extended, so the full 64-bit value EQUALS the 32-bit value and
+    /// the 64-bit bounds must be assigned from the 32-bit ones. Without
+    /// this, a register written by a W32 op keeps umax/smax at the full
+    /// 64-bit range, so `bcf_bound_reg`-style materialization never emits
+    /// the `ULE(reg,0xffffffff)` / signed bounds the kernel emits (the
+    /// from_nat 0x23a1dc index reg, and the to_l3 0xd13031 reg).
+    pub fn assign_32_into_64(&mut self) {
+        self.umin = self.u32_min as u64;
+        self.umax = self.u32_max as u64;
+        // Pull s32 into s64 only when both halves are non-negative (the
+        // value's sign-extension equals its zero-extension); otherwise the
+        // zero-extended value spans [0, U32_MAX] as signed-64.
+        if self.s32_min >= 0 && self.s32_max >= 0 {
+            self.smin = self.s32_min as i64;
+            self.smax = self.s32_max as i64;
+        } else {
+            self.smin = 0;
+            self.smax = u32::MAX as i64;
+        }
         self.sync_bounds();
     }
 

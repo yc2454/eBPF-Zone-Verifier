@@ -21,7 +21,11 @@ use log::warn;
 
 /// Main transfer function - dispatches to appropriate handler based on instruction type.
 pub fn transfer(env: &mut VerifierEnv, mut state: State, instr: &Instr) -> Vec<State> {
-    if state.pc < env.insn_aux_data.len() {
+    // During a faithful-discharge replay we re-execute an already-explored
+    // suffix; it must not mutate shared analysis state (insn_aux_data,
+    // history back-patches, etc.) or the main worklist's exploration shifts
+    // (e.g. from_nat 618296 vanished when the replay polluted env).
+    if !env.replay_mode && state.pc < env.insn_aux_data.len() {
         env.insn_aux_data[state.pc].seen = true;
     }
 

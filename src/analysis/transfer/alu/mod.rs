@@ -309,6 +309,18 @@ pub(crate) fn transfer_alu(
         state.clear_reg_precise(dst);
     }
 
+    // 6b. Kernel `zext_32_to_64` (verifier.c): every 32-bit-class ALU op
+    // zero-extends its result, so the 64-bit bounds must be assigned from
+    // the 32-bit bounds. zovia's per-op handlers compute the 32-bit view
+    // but historically left the 64-bit unsigned range full — so a reg
+    // written by a W32 op kept umax=u64::MAX and `bcf_bound_reg`-style
+    // materialization never emitted the ULE(reg,0xffffffff)/signed bounds
+    // the kernel emits. Apply the zero-extension uniformly here (scalars
+    // only; pointers don't zero-extend through this path).
+    if width == Width::W32 && state.types.get(dst) == RegType::ScalarValue {
+        state.domain.zext_32_into_64(dst);
+    }
+
     // 7. Post-operation consistency check
     //
     // If an ALU op pushes the zone domain into inconsistency (negative

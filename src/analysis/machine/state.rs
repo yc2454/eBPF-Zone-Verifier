@@ -1085,6 +1085,23 @@ impl State {
         &mut self.frames.current_mut().stack
     }
 
+    /// Reset ALL bcf tracking (registers + every frame's stack slots) so a
+    /// faithful base→reject replay re-materializes from scratch, mirroring
+    /// the kernel's `bcf_track` start (every reg/stack `bcf_expr = -1`,
+    /// arena expr_cnt=0 — verifier.c:24644 + 5677). Keeps the symbolic
+    /// expression arena (base-state references into it must stay valid; new
+    /// materializations append and the rebuilt goal only walks those).
+    pub fn reset_bcf_for_replay(&mut self) {
+        if let Some(b) = self.bcf.as_mut() {
+            b.reset_for_replay();
+        } else {
+            self.bcf = Some(Box::new(crate::refinement::symbolic::SymbolicState::new()));
+        }
+        for frame in self.frames.iter_mut() {
+            frame.stack.reset_bcf_for_replay();
+        }
+    }
+
     // ── Cross-frame access (for PtrToStack with different frame_level) ──
 
     pub fn stack_at(&self, level: FrameLevel) -> &StackState {

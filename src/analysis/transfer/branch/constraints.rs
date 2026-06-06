@@ -95,7 +95,7 @@ pub fn apply_jmp_constraints(
         Either::Right(v) => Some(v),
         Either::Left(_) => None,
     };
-    apply_eq_refinements(then_s, else_s, left, op, imm_val);
+    apply_eq_refinements(then_s, else_s, left, op, width, imm_val);
 }
 
 fn can_apply_dbm_constraint(
@@ -121,6 +121,20 @@ fn can_apply_dbm_constraint(
     let dominated_by_unsigned = matches!(op, CmpOp::ULt | CmpOp::ULe | CmpOp::UGt | CmpOp::UGe);
 
     if width == Width::W32 {
+        // W32 Eq/Ne against an IMMEDIATE narrow only the LOW 32 bits (the
+        // subreg). The full-reg `assume_eq_imm` in apply_cmp_to_domain
+        // would zero the whole 64-bit reg (e.g. `w0 == 0` ⇒ R0 == 0),
+        // losing the high-32 bits the kernel keeps unknown. Route these to
+        // apply_w32_unsigned_fallback, which narrows u32 bounds +
+        // refine_subreg_tnum (upper 32 preserved), so reg_bounds_sync's
+        // 32→64 mixed deduction yields the kernel's umax/smax (from_nat
+        // skb_load_bytes return → 0x23a1dc). Restricted to imm operands:
+        // the fallback can't narrow a reg==reg compare (no const), and
+        // diverting those would drop apply_cmp_to_domain's intersect_eq_reg
+        // (regressed from_nat 0x618296).
+        if matches!(op, CmpOp::Eq | CmpOp::Ne) && matches!(right, Either::Right(_)) {
+            return false;
+        }
         let left_bounds = get_combined_signed_bounds(state, left);
         if dominated_by_signed {
             return fits_in_i32(left_bounds) && fits_in_i32(right_bounds);
@@ -307,8 +321,17 @@ fn apply_eq_refinements(
     else_s: &mut State,
     left: Reg,
     op: CmpOp,
+    width: Width,
     imm: Option<i64>,
 ) {
+    // W32 Eq/Ne constrain only the LOW 32 bits — apply_w32_unsigned_fallback
+    // already set the subreg tnum (upper 32 preserved) via
+    // refine_subreg_tnum. Setting a full-width `Tnum::constant` here would
+    // clobber the upper 32 bits back to known, re-introducing the
+    // over-narrowing this routing was meant to avoid. So skip for W32.
+    if width == Width::W32 {
+        return;
+    }
     match (op, imm) {
         (CmpOp::Eq, Some(v)) => {
             then_s.set_tnum(left, Tnum::constant(v as u64));
@@ -592,12 +615,29 @@ fn apply_w32_unsigned_fallback(
             }
         }
         CmpOp::Eq => {
+            // then: == rv ; else: != rv — boundary-bump the else side
+            // (mirrors apply_cmp_to_domain's refine_ne_imm, now in the
+            // u32 subreg so the kernel's `reg_set_min_max` 32-bit ≠
+            // narrowing is preserved; without it the proto switch's
+            // `w2 != 6` no longer refines proto to ≥7 and the fold can't
+            // synthesize from_nat 0x618296's `JGE(proto,7)` conjunct).
             t_min = t_min.max(rv);
             t_max = t_max.min(rv);
+            if e_min == rv && e_min < e_max {
+                e_min += 1;
+            } else if e_max == rv && e_min < e_max {
+                e_max -= 1;
+            }
         }
         CmpOp::Ne => {
+            // else: == rv ; then: != rv — boundary-bump the then side.
             e_min = e_min.max(rv);
             e_max = e_max.min(rv);
+            if t_min == rv && t_min < t_max {
+                t_min += 1;
+            } else if t_max == rv && t_min < t_max {
+                t_max -= 1;
+            }
         }
         _ => return,
     }

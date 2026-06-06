@@ -257,17 +257,57 @@ fn run_analyze_all_thorough(path: &str, _config: VerifierConfig) {
         child_args.push("--no-bcf-thorough".to_string());
     }
 
-    // Variations: (label, env_kernel_engine, env_kernel_engine_and).
+    // Variations: (label, per-pass env toggles).
     // First = original dense-cache baseline; the kernel-shape variations
     // cover rejection sites the baseline's cache pattern misses on
-    // certain program shapes.
-    let variations: &[(&str, Option<&str>, Option<&str>)] = &[
-        ("baseline",  None,      None),
-        ("variant a", Some("1"), Some("1")),
-        ("variant b", Some("1"), None),
+    // certain program shapes. The full set of toggles any pass might set
+    // is TOGGLE_KEYS below; each pass clears ALL of them, then applies
+    // only its own — so a pass never inherits a sibling's (or the
+    // parent's) leftover engine flags.
+    //
+    //   variant b = plain-KE             → faithful K==K reconstruction
+    //               (gets from_wep 034f37 + legacy hashes)
+    //   variant c = KE+FOLD+PRENARROW+REPLAY → proto-arm fan (618296) via
+    //               fold, plus the bcf_track-mirror REPLAY re-execution
+    //               that reproduces a1c4/78171d/32add9 byte-identical.
+    // Passes MERGE into one bundle (ZOVIA_BUNDLE_KEEP=1); the replay is
+    // additive/superset so it can only add hashes, never drop a sibling's.
+    const TOGGLE_KEYS: &[&str] = &[
+        "ZOVIA_KERNEL_ENGINE",
+        "ZOVIA_KERNEL_ENGINE_AND",
+        "ZOVIA_BCF_FAITHFUL_FOLD",
+        "ZOVIA_BCF_FOLD_PRENARROW",
+        "ZOVIA_BCF_REPLAY",
+        "ZOVIA_BCF_ANCESTOR_DEPTH",
+    ];
+    let variations: &[(&str, &[(&str, &str)])] = &[
+        ("baseline",  &[]),
+        ("variant a", &[("ZOVIA_KERNEL_ENGINE", "1"), ("ZOVIA_KERNEL_ENGINE_AND", "1")]),
+        ("variant b", &[("ZOVIA_KERNEL_ENGINE", "1")]),
+        // variant c re-anchors the REPLAY at each chain ancestor. The
+        // kernel does ONE re-execution per refine site; we shotgun the
+        // ancestors because we can't predict which base the kernel used.
+        // But each anchor yields a DISTINCT obligation (distinct base →
+        // distinct reconstructed cond → distinct hash), so the default
+        // depth-64 walk emits ~244k entries/func (7.9 MB) — a build-time
+        // and bundle-size blow-up. But depth must be high enough to
+        // capture the kernel's ACTUAL obligation: on from_nat the real
+        // whole-object load queries a CONJ-17 pc-735 hash 0x9b9b7853..
+        // that first appears at depth 4 (depth 2 gets the 4 "named"
+        // hashes but NOT the one the kernel computes). Depth 16 is the
+        // saturation point for this function (== default 64) — it covers
+        // the full pc-735 proto-switch fan the kernel walks. We cap at 16
+        // rather than 64 only to bound wall-time; coverage is identical.
+        ("variant c", &[
+            ("ZOVIA_KERNEL_ENGINE", "1"),
+            ("ZOVIA_BCF_FAITHFUL_FOLD", "1"),
+            ("ZOVIA_BCF_FOLD_PRENARROW", "1"),
+            ("ZOVIA_BCF_REPLAY", "1"),
+            ("ZOVIA_BCF_ANCESTOR_DEPTH", "16"),
+        ]),
     ];
 
-    for (label, ke, ke_and) in variations {
+    for (label, toggles) in variations {
         println!("--- pass: {} ---", label);
         let mut cmd = Command::new(&bin);
         cmd.args(&child_args);
@@ -284,13 +324,13 @@ fn run_analyze_all_thorough(path: &str, _config: VerifierConfig) {
         // in the process that actually does the analysis — this env var
         // is the only reliable "am I part of a thorough run" signal.
         cmd.env("ZOVIA_BCF_THOROUGH_PASS", "1");
-        match ke {
-            Some(v) => { cmd.env("ZOVIA_KERNEL_ENGINE", v); }
-            None    => { cmd.env_remove("ZOVIA_KERNEL_ENGINE"); }
+        // Clear every toggle, then apply this pass's own. Prevents a
+        // sibling pass's flags (or a stray parent env) from leaking in.
+        for k in TOGGLE_KEYS {
+            cmd.env_remove(k);
         }
-        match ke_and {
-            Some(v) => { cmd.env("ZOVIA_KERNEL_ENGINE_AND", v); }
-            None    => { cmd.env_remove("ZOVIA_KERNEL_ENGINE_AND"); }
+        for (k, v) in toggles.iter() {
+            cmd.env(k, v);
         }
         match cmd.status() {
             Ok(s) if s.success() => {}

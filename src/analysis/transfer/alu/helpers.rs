@@ -18,6 +18,7 @@ use crate::refinement::symbolic::{RegBounds, SymbolicState};
 /// `op_u32` / `op_s32`). Mirrors kernel's pattern at verifier.c:16178-16181.
 pub(crate) fn bcf_reg_bounds(state: &State, reg: Reg) -> RegBounds {
     let (smin, smax) = state.domain.get_interval(reg);
+    let (umin, umax) = state.domain.get_u64_bounds(reg);
     let (mut s32_min, mut s32_max) = state.domain.get_s32_bounds(reg);
     let (mut u32_min, mut u32_max) = state.domain.get_u32_bounds(reg);
     let const_val = state.domain.get_fixed_value(reg).map(|v| v as u64);
@@ -46,6 +47,8 @@ pub(crate) fn bcf_reg_bounds(state: &State, reg: Reg) -> RegBounds {
         const_val,
         smin,
         smax,
+        umin,
+        umax,
         s32_min,
         s32_max,
         u32_min,
@@ -169,8 +172,11 @@ pub(crate) fn emit_bcf_alu_unary(
     }
 }
 
-/// Tightens DBM bounds using information from Tnum.
-pub(crate) fn sync_tnum_to_dbm(state: &mut State, reg: Reg) {
+/// Tightens the active numeric domain's bounds using information from
+/// the register's Tnum. Dispatches through `state.domain` so it applies
+/// to whichever domain is in use — in kernel-mode that's the Interval
+/// domain, NOT Zone/DBM (the old `_to_dbm` name was a misnomer).
+pub(crate) fn sync_tnum_to_bounds(state: &mut State, reg: Reg) {
     let tnum = state.get_tnum(reg);
     let tnum_min = tnum.min_value();
     let tnum_max = tnum.max_value();

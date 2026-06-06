@@ -881,7 +881,7 @@ fn iter_next_fork(
     // (kernel `mark_force_checkpoint` at verifier.c L17523, gated on
     // `is_iter_next_kfunc`). Set the flag lazily on first visit — CFG
     // doesn't have kfunc-name resolution at build time.
-    if pc < env.insn_aux_data.len() {
+    if pc < env.insn_aux_data.len() && !env.replay_mode {
         env.insn_aux_data[pc].force_checkpoint = true;
     }
     let reg = arg_reg(iter_arg);

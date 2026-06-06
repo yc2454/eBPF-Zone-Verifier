@@ -251,6 +251,26 @@ impl NumericDomain {
         }
     }
 
+    /// Extracts the 64-bit unsigned bounds (kernel `umin_value` /
+    /// `umax_value`) for a register. These are tracked INDEPENDENTLY of
+    /// the signed interval — a value can have `umax=0xffffffff` while
+    /// `smax=0x7fffffff` (e.g. a zero-extended 32-bit jump-table index).
+    /// `bcf_bound_reg` emits both as separate predicates, so the BCF
+    /// materializer needs the real u64 bounds rather than a smax-derived
+    /// approximation.
+    pub fn get_u64_bounds(&self, x: Reg) -> (u64, u64) {
+        match self {
+            NumericDomain::Zone(dbm) => {
+                let b = &dbm.bounds[x.idx()];
+                (b.u64_min, b.u64_max)
+            }
+            NumericDomain::Interval(ivl) => {
+                let st = ivl.get_bounds(x);
+                (st.umin, st.umax)
+            }
+        }
+    }
+
     /// Extracts the 32-bit unsigned bounds for a register.
     pub fn get_u32_bounds(&self, x: Reg) -> (u32, u32) {
         match self {
@@ -527,6 +547,35 @@ impl NumericDomain {
                 self.forget(dst);
                 self.assume_ge_imm(dst, 0);
                 self.assume_le_imm(dst, 0xFFFFFFFF);
+            }
+        }
+    }
+
+    /// Kernel `zext_32_to_64` (verifier.c): after a 32-bit ALU op the
+    /// destination is zero-extended, so its 64-bit bounds equal its 32-bit
+    /// bounds. Mirrors `__reg_assign_32_into_64`. Applied uniformly at the
+    /// W32 ALU tail so umax/smax reflect the zero-extension (the kernel
+    /// does this for every BPF_ALU 32-bit-class op).
+    pub fn zext_32_into_64(&mut self, x: Reg) {
+        if x == Reg::Zero || x.is_anchor() {
+            return;
+        }
+        match self {
+            NumericDomain::Zone(dbm) => {
+                let b = &mut dbm.bounds[x.idx()];
+                b.u64_min = b.u32_min as u64;
+                b.u64_max = b.u32_max as u64;
+                if b.s32_min >= 0 && b.s32_max >= 0 {
+                    b.s64_min = b.s32_min as i64;
+                    b.s64_max = b.s32_max as i64;
+                } else {
+                    b.s64_min = 0;
+                    b.s64_max = u32::MAX as i64;
+                }
+                zone_ops::sync_bounds(dbm, x);
+            }
+            NumericDomain::Interval(ivl) => {
+                ivl.get_bounds_mut(x).assign_32_into_64();
             }
         }
     }

@@ -963,7 +963,16 @@ pub(super) fn apply_return_bounds(state: &mut State, helper: u32) {
             | constants::BPF_MAP_UPDATE_ELEM
             | constants::BPF_MAP_DELETE_ELEM
             | constants::BPF_SKB_STORE_BYTES
-            | constants::BPF_SKB_LOAD_BYTES
+            // BPF_SKB_LOAD_BYTES intentionally NOT pre-cached: pre-caching
+            // R0 as an unbounded VAR_64 here freezes its BCF expr before
+            // the subsequent `w0 == 0` branch narrows R0's low-32 to 0, so
+            // the kernel's post-narrow bounds (umax=0xffffffff_00000000,
+            // smax=0x7fffffff_00000000) never reach the goal (from_nat
+            // 0x23a1dc). Letting it materialize lazily is faithful: at the
+            // narrowed point R0 = [low-32=0, high unknown] fails
+            // fit_u32/fit_s32 (high 32 unknown) so it still takes the
+            // VAR_64 path — now WITH bound_reg64 preds. (Re-validate the
+            // cilium wireguard pc167 `if w0 s<0` 1-vs-3-clause case.)
             | constants::BPF_XDP_ADJUST_HEAD
             | constants::BPF_L3_CSUM_REPLACE
             | constants::BPF_L4_CSUM_REPLACE

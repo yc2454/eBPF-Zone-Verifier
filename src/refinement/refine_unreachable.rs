@@ -440,7 +440,10 @@ fn try_prove_unreachable_inner(
         // (verifier.c bcf_reg_expr). Without this zovia shares one VAR across
         // both null-checks (kernel emits VAR3{JNE0}+VAR4{JEQ0}, two vars).
         // Gated additive: only changes behaviour when materialize_pc differs.
-        let mut fresh_var_for_reg: HashMap<(usize, Option<usize>), u32> = HashMap::new();
+        // Value = (natural-form expr slot, nat_is_64): a 64-bit-materialized
+        // reg caches its 64-bit VAR and EXTRACTs for a jmp32 compare; a
+        // 32-bit-fit reg caches its branch-width var (legacy).
+        let mut fresh_var_for_reg: HashMap<(usize, Option<usize>), (u32, bool)> = HashMap::new();
         let mut newly_orphaned: HashSet<u32> = HashSet::new();
         let mut new_conds: Vec<u32> = Vec::with_capacity(sym.path_conds.len() + 8);
         let mut new_pcs: Vec<usize> = Vec::with_capacity(sym.path_conds.len() + 8);
@@ -513,6 +516,27 @@ fn try_prove_unreachable_inner(
             // first-reference-range semantics. Gated.
             let prenarrow_on =
                 std::env::var("ZOVIA_BCF_FOLD_PRENARROW").ok().as_deref() == Some("1");
+            // In-suffix branches (pc ≥ base) materialize the reg AT their own
+            // branch, so they use the range ENTERING it — PRE-narrow
+            // `pre_bounds` — mirroring kernel bcf_reg_expr, which runs before
+            // reg_set_min_max narrows (the branch's own narrowing is the
+            // recorded COND, not a bound pred). This is correct for both the
+            // reload R1==6 @729 (→ VAR{JLE0xff}, not folded to K6) AND the
+            // proto switch w2 @506 (u8 load → ULE(w2,0xff) bound + JSLE(w2,5)
+            // branch cond, NOT ULE(w2,5)). Carried conds (pc < base) reflect
+            // the reg's FINAL narrowed range carried into the suffix →
+            // post-narrow `lhs_bounds`.
+            // NB: this uniform per-branch rule canNOT recover from_nat 23a1dc's
+            // r0 bounds, because r0's narrowing (`if w0==0` @445) is itself a
+            // pre-window carried narrowing in the kernel (whose window opens at
+            // pc 504, the w0==0 jump target) — r0 enters the window already
+            // narrowed (umax=0xffffffff00000000). zovia's replay window opens
+            // earlier (includes 445), so r0's first ref is the 445 branch
+            // (pre-narrow = unbounded). The real fix is replay-base placement
+            // (open at 504), NOT a per-branch pre/post toggle: r0 and w2 need
+            // OPPOSITE bound-timing under one window, so no single rule serves
+            // both. (Reverted a const-distinguisher that fixed r0 but
+            // regressed w2's umax 0xff→5.)
             let use_pre = prenarrow_on && base_pc.map(|bp| pc >= bp).unwrap_or(false);
             let mat_bounds = if use_pre { &pre_bounds } else { &lhs_bounds };
             // Re-mint cache key: under the flag, key by (reg, materialize_pc)
@@ -521,9 +545,12 @@ fn try_prove_unreachable_inner(
             // off → reg-only key (legacy behaviour, keeps the 12 working
             // discharges byte-stable until VM-gated).
             let key = if prenarrow_on { (lhs_reg, lhs_pc) } else { (lhs_reg, None) };
-            if let Some(&fv) = fresh_var_for_reg.get(&key) {
-                // CACHED: reuse the reg's already-materialized VAR.
-                let new_pred = sym.add_pred(op, fv, arg1);
+            if let Some(&(fv, nat_is_64)) = fresh_var_for_reg.get(&key) {
+                // CACHED: reuse the reg's already-materialized VAR. A 64-bit
+                // natural form is EXTRACTed for a jmp32 compare (kernel
+                // bcf_reg_expr → expr32 of the cached 64-bit expr).
+                let cmp = if nat_is_64 && jmp32 { sym.expr32(fv) } else { fv };
+                let new_pred = sym.add_pred(op, cmp, arg1);
                 new_conds.push(new_pred);
             } else if let Some(kval) = mat_bounds.const_val {
                 // UNCACHED + const (at first-reference range): fold LHS to a
@@ -531,11 +558,12 @@ fn try_prove_unreachable_inner(
                 let lit = sym.add_val(kval, jmp32);
                 let new_pred = sym.add_pred(op, lit, arg1);
                 new_conds.push(new_pred);
-            } else {
-                // UNCACHED + non-const: fresh VAR + bound preds (spliced
-                // before the branch), cache for subsequent reuse.
+            } else if mat_bounds.fit_u32() || mat_bounds.fit_s32() {
+                // UNCACHED + fits 32: legacy path — branch-width VAR + bounds.
+                // (Kernel's VAR_U32/VAR_S32 peels to a 32-bit var under a
+                // jmp32 compare, matching add_var_bits(jmp32) here.)
                 let fresh = sym.add_var_bits(jmp32);
-                fresh_var_for_reg.insert(key, fresh);
+                fresh_var_for_reg.insert(key, (fresh, false));
                 let bound_pred_slots = sym.bound_reg_emit_preds(fresh, mat_bounds, jmp32);
                 for bp in bound_pred_slots {
                     new_conds.push(bp);
@@ -545,6 +573,28 @@ fn try_prove_unreachable_inner(
                     new_lhs_meta.push(None);
                 }
                 let new_pred = sym.add_pred(op, fresh, arg1);
+                new_conds.push(new_pred);
+            } else {
+                // UNCACHED + non-const + high bits set: the reg does NOT fit
+                // u32/s32, so the kernel materializes a 64-BIT VAR (bcf_var
+                // (false)) with 64-bit bound-preds and EXTRACTs [31:0] for a
+                // jmp32 compare (verifier.c bcf_reg_expr VAR_64 path). The old
+                // code made a branch-width (32-bit) var, DROPPING the reg's
+                // 64-bit ULE/JSLE conjuncts (from_nat 23a1dc: r0 from
+                // skb_load_bytes, w0==0 → umax=0xffffffff00000000,
+                // smax=0x7fffffff00000000 — the two missing bounds on V0).
+                let v64 = sym.add_var_bits(false);
+                fresh_var_for_reg.insert(key, (v64, true));
+                let bound_pred_slots = sym.bound_reg_emit_preds(v64, mat_bounds, false);
+                for bp in bound_pred_slots {
+                    new_conds.push(bp);
+                    new_pcs.push(pc);
+                    new_is_branch.push(false);
+                    new_narrowed.push(None);
+                    new_lhs_meta.push(None);
+                }
+                let cmp = if jmp32 { sym.expr32(v64) } else { v64 };
+                let new_pred = sym.add_pred(op, cmp, arg1);
                 new_conds.push(new_pred);
             }
             new_pcs.push(pc);
@@ -710,4 +760,31 @@ fn try_prove_unreachable_inner(
             None
         }
     }
+}
+
+/// Build a path-unreachable proof directly from a SymbolicState whose
+/// `path_conds` were produced by the faithful base→reject replay
+/// (`ZOVIA_BCF_REPLAY`). Unlike [`try_prove_unreachable_inner`], this does
+/// NO suffix filter and NO K==K / fresh-VAR fold rewrites — the replay
+/// already re-materialized every register exactly as the kernel's
+/// `bcf_track` re-execution does (verifier.c:24633 + bcf_reg_expr@897), so
+/// `path_conds` is the kernel-faithful goal verbatim. Just CONJ + cvc5.
+pub fn build_unreachable_from_replay(mut sym: SymbolicState) -> Option<UnreachableOk> {
+    if sym.path_conds.is_empty() {
+        return None;
+    }
+    let goal_root = match sym.path_conds.len() {
+        0 => return None,
+        1 => sym.path_conds[0],
+        _ => {
+            let pcs = sym.path_conds.clone();
+            sym.add_conj(pcs)
+        }
+    };
+    let smt = smtlib::encode(&sym).ok()?;
+    if std::env::var("ZOVIA_BCF_DUMP_SMT").is_ok() {
+        eprintln!("---- [bcf] SMT-LIB to cvc5 (replay) ----\n{}\n---- end ----", smt);
+    }
+    let bytes = solver::solve(&smt).ok()?;
+    Some(UnreachableOk { proof_bytes: bytes, goal_root, sym })
 }
