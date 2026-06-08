@@ -33,6 +33,13 @@ if __name__=='__main__':
     cmd=sys.argv[1]
     if cmd=='hashes':
         for h,k,g,p in parse(sys.argv[2]): print('%016x'%h)
+    elif cmd=='clone':  # clone donor_bundle hashfile out -> bundle where EVERY hash is a clone of donor[0]
+        donor=parse(sys.argv[2])[0]   # (h,kind,goal,proof); kind must be 2 (UNREACHABLE)
+        hs=[l.strip() for l in open(sys.argv[3]) if l.strip()]
+        ents=[(int(h,16), 2, donor[2], donor[3]) for h in hs]
+        open(sys.argv[4],'wb').write(build(ents))
+        import os
+        print('cloned',len(ents),'entries bytes',os.path.getsize(sys.argv[4]))
     elif cmd=='pickx':  # pickx superset wantfile fakefile out -> real picks + cloned fakes (cond_hash overridden)
         sup=parse(sys.argv[2])
         want=[l.strip() for l in open(sys.argv[3]) if l.strip()]

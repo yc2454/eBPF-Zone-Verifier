@@ -34,7 +34,9 @@ non-BCF blocker (precision FA, other reject kind) stands in the way.
 
 | file | what it does |
 |------|--------------|
-| `bundle_tool.py` | Parse / build BCF bundles (16B hdr magic `0x42464342` + u32 count@4; 28B entries, `cond_hash` u64 first). Subcommands: `hashes <bundle>` (list cond_hashes), `pick <superset> <wantfile> <out>` (sub-bundle of superset entries whose hash is in wantfile), `pickx <superset> <wantfile> <fakefile> <out>` (real picks **+ cloned fakes** with overridden cond_hash — the fabrication step), `merge <base> <superset> <wantfile> <out>` (base + named superset hashes). Importable: `parse()`, `build()`, `parse_goal()`. |
+| `bundle_tool.py` | Parse / build BCF bundles (16B hdr magic `0x42464342` + u32 count@4; 28B entries, `cond_hash` u64 first). Subcommands: `hashes <bundle>` (list cond_hashes), `clone <donor> <hashfile> <out>` (bundle where EVERY hash is a clone of donor[0] — the fully-fabricated probe, RAM-trivial), `pick <superset> <wantfile> <out>` (sub-bundle of superset entries whose hash is in wantfile), `pickx <superset> <wantfile> <fakefile> <out>` (real picks **+ cloned fakes** — fabrication on top of real bytes), `merge <base> <superset> <wantfile> <out>`. Importable: `parse()`, `build()`, `parse_goal()`. |
+| `build_superset.sh` | `<obj> <func> <out_hashset.txt> [depth]` — build ONE function's zovia obligation superset (variant-c recipe) **under a macOS memory watchdog**, extract its unique cond_hash set, discard the big bundle. Watchdog kills on RSS>`KILL_GB` (15) or `memory_pressure` free% < `MIN_FREE_PCT` (12); exit 99 = OOM-guard. ⚠️ use `memory_pressure` free%, NOT vm_stat "Pages free" (≈0 by design on macOS). |
+| `chase_clone.sh` | Lightweight chase: clone-based bundles + classify each miss against a precomputed superset hash set (`SUPHASH`). RAM-trivial, fast (no big-bundle re-parse). Env: `SUPHASH DONOR HOST VMKEY OBJ PROG ITERS DIR`. Outputs `real.txt`/`fake.txt` + a `total / real / engine-shape (%)` tally. Use this for surveys; `chase_chain.sh` is the original real-bytes version. |
 | `chase_chain.sh` | The miss-driven prune loop above, end-to-end over the VM. Classifies each miss real vs engine-shape, fabricates the gaps, loops to `err=0`. All paths configurable via env (`SUP HOST VMKEY OBJ PROG WANT FAKE ITERS DIR`); defaults reproduce the accepted_entrypoint run. Seed `WANT` with known reals to skip iterations. |
 | `decode_canon.py` | Decode ONE kernel canonical-hash byte buffer (chunked `off=N bytes:` lines copied from `dmesg | grep "hash=0x<HASH>"`) into a flat post-order record list. `decode_canon.py <file>`. |
 | `render_canon.py` | Same kernel-chunked input, but renders the expression **tree** as a readable conjunct list (top-level AND over comparison conjuncts). `render_canon.py <file>`. |
@@ -81,6 +83,18 @@ interleaved ~1:1 across the proto-switch reject fan. The engine-shape gaps are t
 disasm pc897 `If R9==0` folds to `0x0==0x0` and skips the `&1024` block, so those
 obligations lack the `(reg != 0x400)` conjunct that all of zovia's emitted variants
 carry). Same DFS-route-divergence class as calico_tc_main's 78171d.
+
+### Corpus survey (2026-06-08): the coverage wall is NARROW
+Per-prog empty-bundle triage across no_log objs (ll2_loader `--prog <fn> <obj> empty.bundle`):
+- **from_nat_no_log** is the only real obligation-coverage blocker: `accepted_entrypoint` 36/72 (50%);
+  `calico_tc_main` fails `err=-28` (ENOSPC, a kernel complexity limit + a re-missing cloned hash) — a *different*
+  failure mode, the "45KB monster", not clean coverage.
+- **from_nat_fib / from_tnl / from_tnl_fib / from_wep / from_l3 (_no_log)**: every function loads with an EMPTY
+  bundle (err=0) → zero per-prog obligation requirement.
+
+⇒ The engine-shape obligation gap is concentrated in from_nat's proto-switch fan, **not** a uniform wall across
+the ~147 no_log failers. Most failers are not per-prog obligation-blocked — their failer status is likely
+zovia-side (generation OOM/timeout/FR) or whole-object, a separate problem from obligation under-generation.
 
 ## VM access
 
