@@ -1,0 +1,93 @@
+# BCF reject-chain chase tools
+
+Diagnostic tooling for **userspace-BCF coverage analysis**: given a zovia-emitted
+bundle and a BCF-patched kernel, determine *exactly* which path-unreachable
+obligations the kernel requires to load a program, which of those zovia generates,
+and which are engine-shape DFS-route gaps it cannot. No kernel rebuild needed.
+
+These were built chasing `from_nat_no_log/calico_tc_skb_accepted_entrypoint`
+(2026-06-08). See `memory/project_no_log_reopen_experiment_2026-06-03.md` for the
+narrative; this README is the operational reference.
+
+## The core trick
+
+The BCF kernel logs `bcf_canonical_hash:` for **every** discharge query and **stops
+at the first MISS** (load fails `EACCES -13`). And the prototype kernel **trusts the
+hash match** — `bcf_bundle.c` has an explicit `TODO: structural equiv check ... For
+the prototype we trust the hash match`. So we can:
+
+1. Load a small bundle → read the one missed hash from `dmesg`.
+2. If that hash is in zovia's emitted **superset**, it's a **real** obligation
+   (zovia can generate it) → add the real entry and reload.
+3. If it's **not** in the superset, it's an **engine-shape gap** (zovia cannot
+   generate it) → **clone-fabricate** an entry with that `cond_hash` + `kind=2
+   (UNREACHABLE)` and any donor goal/proof. The kernel discharges it on hash match
+   and advances.
+4. Loop until the program loads (`err=0`).
+
+The final tally `|real| : |engine-shape|` quantifies the coverage gap precisely.
+⚠️ **Fabrication is a DIAGNOSTIC ONLY** — the fake proofs do not actually prove
+their goals (unsound). It proves the obligation *set* is complete and that no
+non-BCF blocker (precision FA, other reject kind) stands in the way.
+
+## Scripts
+
+| file | what it does |
+|------|--------------|
+| `bundle_tool.py` | Parse / build BCF bundles (16B hdr magic `0x42464342` + u32 count@4; 28B entries, `cond_hash` u64 first). Subcommands: `hashes <bundle>` (list cond_hashes), `pick <superset> <wantfile> <out>` (sub-bundle of superset entries whose hash is in wantfile), `pickx <superset> <wantfile> <fakefile> <out>` (real picks **+ cloned fakes** with overridden cond_hash — the fabrication step), `merge <base> <superset> <wantfile> <out>` (base + named superset hashes). Importable: `parse()`, `build()`, `parse_goal()`. |
+| `chase_chain.sh` | The miss-driven prune loop above, end-to-end over the VM. Classifies each miss real vs engine-shape, fabricates the gaps, loops to `err=0`. All paths configurable via env (`SUP HOST VMKEY OBJ PROG WANT FAKE ITERS DIR`); defaults reproduce the accepted_entrypoint run. Seed `WANT` with known reals to skip iterations. |
+| `decode_canon.py` | Decode ONE kernel canonical-hash byte buffer (chunked `off=N bytes:` lines copied from `dmesg | grep "hash=0x<HASH>"`) into a flat post-order record list. `decode_canon.py <file>`. |
+| `render_canon.py` | Same kernel-chunked input, but renders the expression **tree** as a readable conjunct list (top-level AND over comparison conjuncts). `render_canon.py <file>`. |
+| `render_zovia.py` | Decode zovia's own dump format — the single-line `[zovia] bcf_canonical_hash: ... bytes: ..` emitted by `ZOVIA_BCF_DUMP_HASH_BYTES=1`. CLI prints conjuncts for the first (or a given) hash; importable `conjuncts(line)`, `parse(bytes)`, `render(node)`. |
+| `closest.py` | Rank zovia's emitted entries by conjunct-multiset symmetric-difference to a target missed hash (var-renamed), revealing the exact prefix/anchor/fold conjuncts the kernel wanted that zovia didn't emit. `closest.py <target_chunked> <hashbytes_log> [signature_hex]`. |
+
+### Canonical byte format (both decoders)
+Post-order stream of records: `tag(u8)` `code(u8)` `vlen(u8)` `width(u16)` then
+payload. `tag` 1=VAR (+u32 id), 2=CONST (+vlen u32 words), 3=OP (pops `vlen`
+children). `code` low bit = `BCF_BV` flag; strip it for the op: `0x10`==, `0x50`!=,
+`0x30`u>=, `0xb0`u<=, `0x00`+, top-level AND/CONJ has `vlen>2`. zovia goal `root`
+is a **slot index** (flat layout), not a record index.
+
+## Building the superset (zovia side)
+
+```
+# whole 4-pass thorough is the real superset; per-func variant-c is the cheap proxy:
+ZOVIA_EXP_SKIP_LOOP_HEADER_UNSAFE=1 ZOVIA_EXP_LOOP_SUFFIX_BASE=1 ZOVIA_BCF_ANCESTOR_DEPTH=16 \
+ZOVIA_KERNEL_ENGINE=1 ZOVIA_BCF_FAITHFUL_FOLD=1 ZOVIA_BCF_FOLD_PRENARROW=1 ZOVIA_BCF_REPLAY=1 \
+./target/release/zovia -q --bcf --kernel-mode --no-bcf-thorough \
+    verify --func <NAME> <obj>          # writes <obj>.bcf-bundle
+```
+⚠️ env vars **INLINE**, never via an unquoted `$ENV` shell var (silently dropped).
+⚠️ `--kernel-mode` is required (zone mode false-OOMs at the map-load before the fan).
+⚠️ `verify --func` is baseline-only unless you set the variant env explicitly (above).
+Add `ZOVIA_BCF_DUMP_HASH_BYTES=1` to also emit the per-goal canonical streams for
+`closest.py` / `render_zovia.py`.
+
+## Ground-truth result (accepted_entrypoint, 2026-06-08)
+
+`from_nat_no_log` (`clang-15_-O1_felix_bin_bpf_from_nat_no_log.o`),
+prog `calico_tc_skb_accepted_entrypoint`, VM-validated `err=0`:
+
+```
+72 distinct path-unreachable obligations required to LOAD:
+   36 REAL          (zovia generates; in the variant-c superset)  -> accepted_entrypoint.real_36.txt
+   36 ENGINE-SHAPE  (zovia CANNOT generate; fabricated)           -> accepted_entrypoint.engine_shape_36.txt
+   all 72 present -> total_disc=96 found=96 miss=0 -> LOADS CLEAN, no other blocker
+```
+
+The two `.txt` files are **ground truth** — the exact cond_hashes. They are
+interleaved ~1:1 across the proto-switch reject fan. The engine-shape gaps are the
+`R9==0` straight-line / flag-block-bypass routes to the proto dead-arms (root cause:
+disasm pc897 `If R9==0` folds to `0x0==0x0` and skips the `&1024` block, so those
+obligations lack the `(reg != 0x400)` conjunct that all of zovia's emitted variants
+carry). Same DFS-route-divergence class as calico_tc_main's 78171d.
+
+## VM access
+
+Host `ssh <HOST>` → nested `ssh -i <VMKEY> -p 10023 root@localhost`.
+Loader `/root/bcf/sweep/ll2_loader --prog <name> <obj> <bundle>` (NOT `test_loader`
+— that loads at log_level 0, no `[ZK]` prints). Read `dmesg | grep "ZK summary. END"`
+(`total_disc/found/miss`) and `dmesg | grep bcf_canonical_hash:` (queried hashes; the
+last before the reject = the miss). `E2BIG` ⇒ bundle > kernel 64MB `BCF_BUNDLE_MAX_SIZE`.
+Do not hardcode the cloudlab hostname long-term — it rotates; read it from your git
+remote / memory.
