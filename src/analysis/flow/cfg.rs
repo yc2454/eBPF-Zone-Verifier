@@ -357,17 +357,23 @@ fn get_successors(pc: usize, prog: &Program) -> Vec<usize> {
 /// Check if there's a path from `start` to `target` without going through `exit` instructions.
 /// Used to detect if a backward jump is part of a real loop.
 fn has_path_to(prog: &Program, start: usize, target: usize, visited: &mut Vec<bool>) -> bool {
-    if start == target {
-        return true;
-    }
-    if start >= prog.instrs.len() || visited[start] {
-        return false;
-    }
-    visited[start] = true;
-
-    for succ in get_successors(start, prog) {
-        if has_path_to(prog, succ, target, visited) {
+    // Iterative DFS (explicit stack) — recursion here overflowed the native
+    // stack on long straight-line programs, since the recursion depth equals
+    // the path length (e.g. the gotol selftest). The visited-set makes it
+    // linear in CFG size regardless.
+    let mut stack: Vec<usize> = vec![start];
+    while let Some(node) = stack.pop() {
+        if node == target {
             return true;
+        }
+        if node >= prog.instrs.len() || visited[node] {
+            continue;
+        }
+        visited[node] = true;
+        for succ in get_successors(node, prog) {
+            if !(succ < prog.instrs.len() && visited[succ]) {
+                stack.push(succ);
+            }
         }
     }
     false
@@ -383,7 +389,7 @@ fn is_real_loop(prog: &Program, back_edge_src: usize, back_edge_tgt: usize) -> b
 /// Collect all back-edges that form actual loops.
 /// A back-edge is a jump from a higher PC to a lower PC that creates a cycle.
 /// Returns vec of (source_pc, target_pc).
-fn collect_loop_back_edges(prog: &Program) -> Vec<(usize, usize)> {
+pub fn collect_loop_back_edges(prog: &Program) -> Vec<(usize, usize)> {
     let mut back_edges = Vec::new();
     for (pc, instr) in prog.instrs.iter().enumerate() {
         let target = match instr {

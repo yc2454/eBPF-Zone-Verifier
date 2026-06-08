@@ -40,7 +40,20 @@ pub fn try_prove_unreachable(
     base_pc: Option<usize>,
     prev_insn_pc: Option<usize>,
 ) -> Option<UnreachableOk> {
-    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, true, None)
+    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, true, None, false)
+}
+
+/// Loop-suffix-base variant: re-anchors the goal at the loop exit when the
+/// reject's recorded path crossed an unrolled bounded loop (see the filter in
+/// `try_prove_unreachable_inner`). Emitted ADDITIVELY by the caller (deduped),
+/// so it only ADDS the kernel's post-loop obligation (accepted_entrypoint
+/// 0x11cc); returns `None` if the path crossed no loop / the filter is a no-op.
+pub fn try_prove_unreachable_loop_suffix(
+    state: &State,
+    base_pc: Option<usize>,
+    prev_insn_pc: Option<usize>,
+) -> Option<UnreachableOk> {
+    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, false, None, true)
 }
 
 /// Register-filtered discharge: like [`try_prove_unreachable`] but, after
@@ -65,7 +78,7 @@ pub fn try_prove_unreachable_reg_filtered(
     state: &State,
     hops: usize,
 ) -> Option<UnreachableOk> {
-    try_prove_unreachable_inner(state, None, None, true, Some(hops))
+    try_prove_unreachable_inner(state, None, None, true, Some(hops), false)
 }
 
 /// Register-filtered discharge with the per-reg fresh-VAR rewrite
@@ -74,7 +87,7 @@ pub fn try_prove_unreachable_reg_filtered_no_rewrite(
     state: &State,
     hops: usize,
 ) -> Option<UnreachableOk> {
-    try_prove_unreachable_inner(state, None, None, false, Some(hops))
+    try_prove_unreachable_inner(state, None, None, false, Some(hops), false)
 }
 
 /// Like [`try_prove_unreachable`] but with the per-reg fresh-VAR rewrite
@@ -89,7 +102,7 @@ pub fn try_prove_unreachable_no_rewrite(
     base_pc: Option<usize>,
     prev_insn_pc: Option<usize>,
 ) -> Option<UnreachableOk> {
-    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, false, None)
+    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, false, None, false)
 }
 
 fn try_prove_unreachable_inner(
@@ -98,6 +111,7 @@ fn try_prove_unreachable_inner(
     prev_insn_pc: Option<usize>,
     do_fresh_var_rewrite: bool,
     reg_filter_hops: Option<usize>,
+    loop_suffix: bool,
 ) -> Option<UnreachableOk> {
     let bcf_ref = state.bcf.as_ref()?;
     let mut sym: SymbolicState = (**bcf_ref).clone();
@@ -690,6 +704,70 @@ fn try_prove_unreachable_inner(
     if sym.path_conds.is_empty() {
         debug!("[bcf] path-unreachable: no path_conds accumulated, nothing to prove");
         return None;
+    }
+
+    // Loop-suffix-base discharge variant (accepted_entrypoint 0x11cc). Emitted
+    // ADDITIVELY by the caller alongside the normal discharge (deduped by hash),
+    // so it can only ADD the kernel's post-loop obligation, never drop another
+    // reject's (e.g. calico_tc_main 32add9 stays via the normal discharge).
+    // When the reject's recorded path crossed a bounded loop, zovia (which
+    // unrolls it) accumulates one cond per iteration at the loop's back-edge
+    // insn — e.g. 31× `r8!=32` (loop-back) + 31× `r8<r1` (continue) + the exit
+    // `r8==32`. The kernel's bcf_track base is the LOOP EXIT (back-edge src+1):
+    // its replay never re-executes the loop, so only the exit branch (32==32)
+    // and the post-loop suffix survive. Detect the unrolled loop from the conds
+    // (a BRANCH source-pc that REPEATS == a back-edge), anchor at exit = max
+    // such pc + 1: keep pc>=exit plus EXACTLY the LAST branch at the back-edge
+    // pc (the exit eval). No-op when no source-pc repeats.
+    if loop_suffix {
+        use std::collections::HashMap;
+        let mut branch_pc_count: HashMap<usize, usize> = HashMap::new();
+        for i in 0..sym.path_cond_pcs.len() {
+            if sym.path_cond_is_branch[i] {
+                *branch_pc_count.entry(sym.path_cond_pcs[i]).or_insert(0) += 1;
+            }
+        }
+        let src = branch_pc_count
+            .iter()
+            .filter(|&(_pc, &c)| c > 1)
+            .map(|(&pc, _)| pc)
+            .max();
+        match src {
+            None => return None, // no unrolled loop → nothing this variant adds
+            Some(src) => {
+                let exit = src + 1;
+                let last_at_src = (0..sym.path_cond_pcs.len())
+                    .rev()
+                    .find(|&i| sym.path_cond_pcs[i] == src && sym.path_cond_is_branch[i]);
+                let n = sym.path_conds.len();
+                let mut kc = Vec::with_capacity(n);
+                let mut kp = Vec::with_capacity(n);
+                let mut kb = Vec::with_capacity(n);
+                let mut kn = Vec::with_capacity(n);
+                let mut km = Vec::with_capacity(n);
+                for i in 0..n {
+                    let pc = sym.path_cond_pcs[i];
+                    if pc == 0 || pc >= exit || Some(i) == last_at_src {
+                        kc.push(sym.path_conds[i]);
+                        kp.push(pc);
+                        kb.push(sym.path_cond_is_branch[i]);
+                        kn.push(sym.path_cond_narrowed_const[i]);
+                        km.push(sym.path_cond_lhs_meta[i]);
+                    }
+                }
+                if kc.is_empty() || kc.len() == n {
+                    return None; // filter changed nothing → no distinct variant
+                }
+                if std::env::var("ZOVIA_DUMP_DISCHARGE").ok().as_deref() == Some("1") {
+                    eprintln!("[loop-suffix-base] src={} exit={} conds {}->{}", src, exit, n, kc.len());
+                }
+                sym.path_conds = kc;
+                sym.path_cond_pcs = kp;
+                sym.path_cond_is_branch = kb;
+                sym.path_cond_narrowed_const = kn;
+                sym.path_cond_lhs_meta = km;
+            }
+        }
     }
 
     // Build the goal root: for path-unreachable the goal is the path_cond

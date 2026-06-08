@@ -688,6 +688,8 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
         return false;
     }
     let base_pc = unreachable_base_pc(env, state);
+    let loop_suffix_on =
+        std::env::var("ZOVIA_EXP_LOOP_SUFFIX_BASE").ok().as_deref() == Some("1");
     // Mirror kernel's `vstate->last_insn_idx` retrieval at bcf_track
     // replay start: look up the prev_insn PC of the cached state AT
     // base_pc (the cache the suffix walk landed on, not the immediate
@@ -849,6 +851,32 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
                 entry_no_rw.cond_hash
             );
             env.bcf_proofs.push(entry_no_rw);
+        }
+    }
+
+    // Loop-suffix-base discharge (additive). When the reject's recorded path
+    // crossed an unrolled bounded loop, re-anchor the goal at the loop exit
+    // (the kernel's bcf_track base) so only the exit branch + post-loop suffix
+    // survive — produces the kernel's post-loop obligation (accepted_entrypoint
+    // 0x11cc) that the pre-loop-anchored discharges above miss. ADDITIVE +
+    // deduped: returns None when the path crossed no loop, so it never drops
+    // another reject's obligation.
+    if loop_suffix_on {
+        if let Some(ok_ls) = crate::refinement::refine_unreachable::try_prove_unreachable_loop_suffix(
+            state, base_pc, prev_insn_pc,
+        ) {
+            let entry_ls = RefineEntry::new(
+                ok_ls.goal_root, ok_ls.sym.exprs, ok_ls.proof_bytes,
+                BCF_BUNDLE_KIND_UNREACHABLE,
+            );
+            if !env.bcf_proofs.iter().any(|e| e.cond_hash == entry_ls.cond_hash) {
+                info!(
+                    target: "app",
+                    "[bcf] path-unreachable (loop-suffix): cvc5 proof {} bytes (hash {:016x})",
+                    entry_ls.proof_bytes.len(), entry_ls.cond_hash
+                );
+                env.bcf_proofs.push(entry_ls);
+            }
         }
     }
 
