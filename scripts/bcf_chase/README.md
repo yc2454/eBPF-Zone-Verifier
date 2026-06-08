@@ -84,17 +84,26 @@ disasm pc897 `If R9==0` folds to `0x0==0x0` and skips the `&1024` block, so thos
 obligations lack the `(reg != 0x400)` conjunct that all of zovia's emitted variants
 carry). Same DFS-route-divergence class as calico_tc_main's 78171d.
 
-### Corpus survey (2026-06-08): the coverage wall is NARROW
-Per-prog empty-bundle triage across no_log objs (ll2_loader `--prog <fn> <obj> empty.bundle`):
-- **from_nat_no_log** is the only real obligation-coverage blocker: `accepted_entrypoint` 36/72 (50%);
-  `calico_tc_main` fails `err=-28` (ENOSPC, a kernel complexity limit + a re-missing cloned hash) — a *different*
-  failure mode, the "45KB monster", not clean coverage.
-- **from_nat_fib / from_tnl / from_tnl_fib / from_wep / from_l3 (_no_log)**: every function loads with an EMPTY
-  bundle (err=0) → zero per-prog obligation requirement.
+### Corpus survey (2026-06-08): the coverage wall is BROAD
+Per-prog empty-bundle triage across no_log objs (ll2_loader `--prog <fn> <obj> empty.bundle`), matching the
+authoritative final `bpf_object__load err=` line (⚠️ NOT `grep err | head -1` — that grabs a benign early
+`err=0` from open/map setup and gives the wrong answer; an earlier pass made exactly that mistake):
 
-⇒ The engine-shape obligation gap is concentrated in from_nat's proto-switch fan, **not** a uniform wall across
-the ~147 no_log failers. Most failers are not per-prog obligation-blocked — their failer status is likely
-zovia-side (generation OOM/timeout/FR) or whole-object, a separate problem from obligation under-generation.
+```
+                     tc_main  accepted   new_flow/icmp_inner_nat/send_icmp_replies/drop
+from_nat_no_log       -13      -13        all err=0
+from_nat_fib_no_log   -13      -13        all err=0
+from_tnl_no_log       -13      -13        all err=0
+from_tnl_fib_no_log   -13      -13        all err=0
+from_wep_no_log       -13      err=0      all err=0
+from_l3_no_log        -13      -13        all err=0
+```
+
+`calico_tc_main` needs obligations in all 6 objs; `accepted_entrypoint` in 5/6. Same source (proto-switch
+dead-path fan) compiled with different flags → the same two big functions reject everywhere. The 4 small
+entrypoints genuinely need no obligations. So the engine-shape obligation gap is **widespread** — fixing the
+route-reproduction mechanism would help broadly. (Measured real:engine ratio so far only for from_nat/accepted =
+36:36; `calico_tc_main` is a separate `err=-28` complexity-limit failure mode.)
 
 ## VM access
 
