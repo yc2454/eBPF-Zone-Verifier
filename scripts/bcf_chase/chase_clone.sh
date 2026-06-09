@@ -33,9 +33,11 @@ for iter in $(seq 1 "$ITERS"); do
       dmesg | grep -oE \"hash=0x[0-9a-f]+ off=0\" | sed -E \"s/hash=0x([0-9a-f]+).*/\\1/\"
     '
   " 2>&1)
-  ERR=$(echo "$OUT" | grep "err=")
+  # AUTHORITATIVE verdict = the final `bpf_object__load err=` line ONLY.
+  # Never `grep err | head -1` — open/map setup prints benign err=0 first.
+  ERR=$(echo "$OUT" | grep -E "bpf_object__load err=" | tail -1)
   MISS=$(echo "$OUT" | awk '/===HASHES===/{f=1;next} f' | tail -1)
-  if echo "$OUT" | grep -q "err=0"; then echo "[$iter] LOAD OK real=$(wc -l<$REAL) engine=$(wc -l<$FAKE)"; break; fi
+  if echo "$ERR" | grep -q "bpf_object__load err=0"; then echo "[$iter] LOAD OK real=$(wc -l<$REAL) engine=$(wc -l<$FAKE)"; break; fi
   if [ -z "$MISS" ]; then echo "[$iter] no-hash other-fail: $ERR — stop"; echo "$OUT"|grep -i "ZK summary"; break; fi
   if grep -qix "$MISS" "$ALL"; then echo "[$iter] STUCK on $MISS (already added) — stop"; break; fi
   echo "$MISS" >> "$ALL"
