@@ -407,6 +407,25 @@ pub fn collect_loop_back_edges(prog: &Program) -> Vec<(usize, usize)> {
     back_edges
 }
 
+/// Collect loop-EXIT branch PCs: for each real back-edge (src, tgt) the loop
+/// body spans [tgt, src]; a conditional `If` inside that span whose taken
+/// target lands OUTSIDE the span is the loop's exit/bound check (e.g. the
+/// `If R8 u>= R1 -> <after loop>` guard). These are the PCs the kernel's
+/// bcf_track anchors at on the zero-iteration route (loop ran 0 times).
+pub fn collect_loop_exit_branch_pcs(prog: &Program) -> std::collections::HashSet<usize> {
+    let mut out = std::collections::HashSet::new();
+    for (src, tgt) in collect_loop_back_edges(prog) {
+        for pc in tgt..=src {
+            if let Some(Instr::If { target, .. }) = prog.instrs.get(pc) {
+                if *target < tgt || *target > src {
+                    out.insert(pc);
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Check if any forward jump skips over a loop head to land at the loop's
 /// conditional check (back-edge source).
 ///

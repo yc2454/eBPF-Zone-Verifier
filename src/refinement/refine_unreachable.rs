@@ -40,7 +40,7 @@ pub fn try_prove_unreachable(
     base_pc: Option<usize>,
     prev_insn_pc: Option<usize>,
 ) -> Option<UnreachableOk> {
-    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, true, None, false, None)
+    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, true, None, false, None, None)
 }
 
 /// Loop-suffix-base variant: re-anchors the goal at the loop exit when the
@@ -53,7 +53,7 @@ pub fn try_prove_unreachable_loop_suffix(
     base_pc: Option<usize>,
     prev_insn_pc: Option<usize>,
 ) -> Option<UnreachableOk> {
-    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, false, None, true, None)
+    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, false, None, true, None, None)
 }
 
 /// Flag-skip-base variant: re-anchors the goal at the first foldable
@@ -69,7 +69,7 @@ pub fn try_prove_unreachable_flag_skip(
     base_pc: Option<usize>,
     prev_insn_pc: Option<usize>,
 ) -> Option<UnreachableOk> {
-    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, false, None, false, Some(usize::MAX))
+    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, false, None, false, Some(usize::MAX), None)
 }
 
 /// Multi-anchor flag-skip: emit one flag-skip obligation per DISTINCT
@@ -113,7 +113,38 @@ pub fn try_prove_unreachable_flag_skip_multi(
         .into_iter()
         .filter_map(|pc| {
             try_prove_unreachable_inner(
-                state, base_pc, prev_insn_pc, false, None, false, Some(pc),
+                state, base_pc, prev_insn_pc, false, None, false, Some(pc), None,
+            )
+        })
+        .collect()
+}
+
+/// Loop-entry-base multi-anchor: for each loop-header pc in `header_pcs` that
+/// is a recorded branch in this reject's trajectory, emit one obligation
+/// re-anchored at that header (the zero-iteration loop route — keeps the
+/// `0 u>= ...` bound check + proto suffix, no fold, no loop conds). Reproduces
+/// the kernel's `u>=`-anchored proto-switch obligations. ADDITIVE; caller
+/// dedups by cond_hash.
+pub fn try_prove_unreachable_loop_entry_multi(
+    state: &State,
+    base_pc: Option<usize>,
+    prev_insn_pc: Option<usize>,
+    header_pcs: &std::collections::HashSet<usize>,
+) -> Vec<UnreachableOk> {
+    let Some(bcf) = state.bcf.as_ref() else {
+        return Vec::new();
+    };
+    let mut anchors: Vec<usize> = (0..bcf.path_cond_pcs.len())
+        .filter(|&i| bcf.path_cond_is_branch[i] && header_pcs.contains(&bcf.path_cond_pcs[i]))
+        .map(|i| bcf.path_cond_pcs[i])
+        .collect();
+    anchors.sort_unstable();
+    anchors.dedup();
+    anchors
+        .into_iter()
+        .filter_map(|pc| {
+            try_prove_unreachable_inner(
+                state, base_pc, prev_insn_pc, false, None, false, None, Some(pc),
             )
         })
         .collect()
@@ -141,7 +172,7 @@ pub fn try_prove_unreachable_reg_filtered(
     state: &State,
     hops: usize,
 ) -> Option<UnreachableOk> {
-    try_prove_unreachable_inner(state, None, None, true, Some(hops), false, None)
+    try_prove_unreachable_inner(state, None, None, true, Some(hops), false, None, None)
 }
 
 /// Register-filtered discharge with the per-reg fresh-VAR rewrite
@@ -150,7 +181,7 @@ pub fn try_prove_unreachable_reg_filtered_no_rewrite(
     state: &State,
     hops: usize,
 ) -> Option<UnreachableOk> {
-    try_prove_unreachable_inner(state, None, None, false, Some(hops), false, None)
+    try_prove_unreachable_inner(state, None, None, false, Some(hops), false, None, None)
 }
 
 /// Like [`try_prove_unreachable`] but with the per-reg fresh-VAR rewrite
@@ -165,7 +196,7 @@ pub fn try_prove_unreachable_no_rewrite(
     base_pc: Option<usize>,
     prev_insn_pc: Option<usize>,
 ) -> Option<UnreachableOk> {
-    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, false, None, false, None)
+    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, false, None, false, None, None)
 }
 
 fn try_prove_unreachable_inner(
@@ -180,6 +211,10 @@ fn try_prove_unreachable_inner(
     // (used by the multi-anchor enumerator to emit one obligation per proto
     // arm's flag-clear route).
     flag_skip_anchor: Option<usize>,
+    // Loop-entry mode: Some(header_pc) = anchor at a loop-header branch on the
+    // ZERO-iteration route (loop ran 0 times), keep pc>=header + rematerialize,
+    // NO fold (keep the recorded `0 u>= ...` bound check the kernel keeps).
+    loop_entry_anchor: Option<usize>,
 ) -> Option<UnreachableOk> {
     let bcf_ref = state.bcf.as_ref()?;
     let mut sym: SymbolicState = (**bcf_ref).clone();
@@ -944,6 +979,75 @@ fn try_prove_unreachable_inner(
             eprintln!(
                 "[flag-skip-base] exit={} anchor_pc={} conds {}->{}",
                 exit, anchor_pc, n, kc.len()
+            );
+        }
+        sym.path_conds = kc;
+        sym.path_cond_pcs = kp;
+        sym.path_cond_is_branch = kb;
+        sym.path_cond_narrowed_const = kn;
+        sym.path_cond_lhs_meta = km;
+    }
+
+    // Loop-entry-base discharge variant (accepted_entrypoint proto-switch
+    // `u>=`-anchored family — the OTHER engine-shape half). Some routes reach
+    // the proto-switch reject via the ZERO-iteration loop route: the loop
+    // bound check `If R8 u>= R1` is true on the first eval (R8=0), so the loop
+    // body never runs and no back-edge cond is recorded. The kernel anchors
+    // bcf_track at that loop-header bound check — its obligation has the bound
+    // check (`0 u>= 0` if R1 const, or `0 u>= zext(R1)` if symbolic) + the
+    // proto suffix, and NO loop-iteration conds. zovia records the same bound
+    // check (lhs already const 0) but its base_pc discharges anchor pre-loop
+    // (including extra prefix) and its FAITHFUL_FOLD over-collapses the
+    // symbolic `0 u>= zext(R1)` to the trivially-true `1 != 0`. Re-anchor at
+    // the loop-header pc WITHOUT folding (keep the recorded bound check),
+    // dropping the pre-header prefix. ADDITIVE + deduped. None when the header
+    // pc isn't a recorded branch or the filter is a no-op.
+    if let Some(anchor_pc) = loop_entry_anchor {
+        // The header branch must be present as a recorded branch cond.
+        if !(0..sym.path_cond_pcs.len())
+            .any(|i| sym.path_cond_is_branch[i] && sym.path_cond_pcs[i] == anchor_pc)
+        {
+            return None;
+        }
+        let n = sym.path_conds.len();
+        let mut kept_branch_vars: std::collections::HashSet<u32> =
+            std::collections::HashSet::new();
+        for i in 0..n {
+            if sym.path_cond_is_branch[i] && sym.path_cond_pcs[i] >= anchor_pc {
+                for v in sym.collect_vars(sym.path_conds[i]) {
+                    kept_branch_vars.insert(v);
+                }
+            }
+        }
+        let mut kc = Vec::with_capacity(n);
+        let mut kp = Vec::with_capacity(n);
+        let mut kb = Vec::with_capacity(n);
+        let mut kn = Vec::with_capacity(n);
+        let mut km = Vec::with_capacity(n);
+        for i in 0..n {
+            let pc = sym.path_cond_pcs[i];
+            let is_branch = sym.path_cond_is_branch[i];
+            let keep = pc == 0
+                || pc >= anchor_pc
+                || (!is_branch && !kept_branch_vars.is_empty() && {
+                    let vs = sym.collect_vars(sym.path_conds[i]);
+                    !vs.is_empty() && vs.is_subset(&kept_branch_vars)
+                });
+            if keep {
+                kc.push(sym.path_conds[i]);
+                kp.push(pc);
+                kb.push(is_branch);
+                kn.push(sym.path_cond_narrowed_const[i]);
+                km.push(sym.path_cond_lhs_meta[i]);
+            }
+        }
+        if kc.is_empty() || kc.len() == n {
+            return None;
+        }
+        if std::env::var("ZOVIA_DUMP_DISCHARGE").ok().as_deref() == Some("1") {
+            eprintln!(
+                "[loop-entry-base] anchor_pc={} conds {}->{}",
+                anchor_pc, n, kc.len()
             );
         }
         sym.path_conds = kc;
