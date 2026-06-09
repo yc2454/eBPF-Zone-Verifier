@@ -105,6 +105,19 @@ entrypoints genuinely need no obligations. So the engine-shape obligation gap is
 route-reproduction mechanism would help broadly. (Measured real:engine ratio so far only for from_nat/accepted =
 36:36; `calico_tc_main` is a separate `err=-28` complexity-limit failure mode.)
 
+## flag-skip-base result (2026-06-09)
+
+`ZOVIA_EXP_FLAG_SKIP_BASE` (commit 9f052ec) reproduces **12 of accepted's 36 engine-shape obligations**
+byte-exact (the `==`-flag-clear routes, anchored at the proto-switch flag branch folded to `0==0`), real-36
+byte-stable. ⚠️ **Zero-pad hashes to 16 hex before comparing** (`awk '{printf "%016s\n",$0}'`) — `cond_hash`
+formatting strips leading zeros (`1c57aac05a1a745` == `01c57aac05a1a745`), which silently undercounts matches.
+
+The remaining 24 are anchored at a `u>=` branch (not `==`): 12 fold to `(0x0 u>= 0x0)`, 12 keep
+`(0x0 u>= ZEXT(v))` which zovia over-folds to `(0x1 != 0x0)`. Closing them needs a second anchor mechanism
+(`u>=` fold + an anti-fold). To diff fast: capture all kernel buffers in ONE VM load (`bundle_tool.py clone`
+the full hash set → load → `dmesg|grep bcf_canonical_hash`), then single-parse compare (NOT closest.py in a
+loop — it re-parses the whole emitted log each call).
+
 ## VM access
 
 Host `ssh <HOST>` → nested `ssh -i <VMKEY> -p 10023 root@localhost`.
