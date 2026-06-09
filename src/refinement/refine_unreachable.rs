@@ -40,7 +40,7 @@ pub fn try_prove_unreachable(
     base_pc: Option<usize>,
     prev_insn_pc: Option<usize>,
 ) -> Option<UnreachableOk> {
-    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, true, None, false, None, None)
+    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, true, None, false, None, None, false)
 }
 
 /// Loop-suffix-base variant: re-anchors the goal at the loop exit when the
@@ -53,7 +53,7 @@ pub fn try_prove_unreachable_loop_suffix(
     base_pc: Option<usize>,
     prev_insn_pc: Option<usize>,
 ) -> Option<UnreachableOk> {
-    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, false, None, true, None, None)
+    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, false, None, true, None, None, false)
 }
 
 /// Flag-skip-base variant: re-anchors the goal at the first foldable
@@ -69,7 +69,7 @@ pub fn try_prove_unreachable_flag_skip(
     base_pc: Option<usize>,
     prev_insn_pc: Option<usize>,
 ) -> Option<UnreachableOk> {
-    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, false, None, false, Some(usize::MAX), None)
+    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, false, None, false, Some(usize::MAX), None, false)
 }
 
 /// Multi-anchor flag-skip: emit one flag-skip obligation per DISTINCT
@@ -113,7 +113,7 @@ pub fn try_prove_unreachable_flag_skip_multi(
         .into_iter()
         .filter_map(|pc| {
             try_prove_unreachable_inner(
-                state, base_pc, prev_insn_pc, false, None, false, Some(pc), None,
+                state, base_pc, prev_insn_pc, false, None, false, Some(pc), None, false,
             )
         })
         .collect()
@@ -140,14 +140,23 @@ pub fn try_prove_unreachable_loop_entry_multi(
         .collect();
     anchors.sort_unstable();
     anchors.dedup();
-    anchors
-        .into_iter()
-        .filter_map(|pc| {
-            try_prove_unreachable_inner(
-                state, base_pc, prev_insn_pc, false, None, false, None, Some(pc),
-            )
-        })
-        .collect()
+    // Per anchor emit BOTH variants (ADDITIVE, caller dedups by cond_hash):
+    //  - no-fold  → keeps `0 u>= zext(R1)` (kernel's symbolic-bound family);
+    //  - fold     → `0 u>= 0` literal (kernel's const-bound family). cvc5 drops
+    //    the fold on symbolic routes (constraint removed → not unsat).
+    // A global do_fresh_var_rewrite=true would instead regress the no-fold
+    // group (re-materializes all suffix regs), so the fold is targeted here.
+    let mut out = Vec::new();
+    for pc in anchors {
+        for fold in [false, true] {
+            if let Some(ok) = try_prove_unreachable_inner(
+                state, base_pc, prev_insn_pc, false, None, false, None, Some(pc), fold,
+            ) {
+                out.push(ok);
+            }
+        }
+    }
+    out
 }
 
 /// Register-filtered discharge: like [`try_prove_unreachable`] but, after
@@ -172,7 +181,7 @@ pub fn try_prove_unreachable_reg_filtered(
     state: &State,
     hops: usize,
 ) -> Option<UnreachableOk> {
-    try_prove_unreachable_inner(state, None, None, true, Some(hops), false, None, None)
+    try_prove_unreachable_inner(state, None, None, true, Some(hops), false, None, None, false)
 }
 
 /// Register-filtered discharge with the per-reg fresh-VAR rewrite
@@ -181,7 +190,7 @@ pub fn try_prove_unreachable_reg_filtered_no_rewrite(
     state: &State,
     hops: usize,
 ) -> Option<UnreachableOk> {
-    try_prove_unreachable_inner(state, None, None, false, Some(hops), false, None, None)
+    try_prove_unreachable_inner(state, None, None, false, Some(hops), false, None, None, false)
 }
 
 /// Like [`try_prove_unreachable`] but with the per-reg fresh-VAR rewrite
@@ -196,7 +205,7 @@ pub fn try_prove_unreachable_no_rewrite(
     base_pc: Option<usize>,
     prev_insn_pc: Option<usize>,
 ) -> Option<UnreachableOk> {
-    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, false, None, false, None, None)
+    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, false, None, false, None, None, false)
 }
 
 fn try_prove_unreachable_inner(
@@ -215,6 +224,11 @@ fn try_prove_unreachable_inner(
     // ZERO-iteration route (loop ran 0 times), keep pc>=header + rematerialize,
     // NO fold (keep the recorded `0 u>= ...` bound check the kernel keeps).
     loop_entry_anchor: Option<usize>,
+    // When loop_entry: also fold the anchor bound-check to the literal `K op K`
+    // (using its LHS const), giving the kernel's const-bound `0 u>= 0` form.
+    // cvc5 self-validates: on a symbolic-bound route the fold drops the
+    // `X==0` constraint so the goal is no longer unsat → not emitted.
+    loop_entry_fold: bool,
 ) -> Option<UnreachableOk> {
     let bcf_ref = state.bcf.as_ref()?;
     let mut sym: SymbolicState = (**bcf_ref).clone();
@@ -1004,10 +1018,60 @@ fn try_prove_unreachable_inner(
     // pc isn't a recorded branch or the filter is a no-op.
     if let Some(anchor_pc) = loop_entry_anchor {
         // The header branch must be present as a recorded branch cond.
-        if !(0..sym.path_cond_pcs.len())
-            .any(|i| sym.path_cond_is_branch[i] && sym.path_cond_pcs[i] == anchor_pc)
+        let anchor_idx = match (0..sym.path_cond_pcs.len())
+            .find(|&i| sym.path_cond_is_branch[i] && sym.path_cond_pcs[i] == anchor_pc)
         {
-            return None;
+            Some(i) => i,
+            None => return None,
+        };
+        // Optionally fold the anchor bound-check `Klhs op X` to the literal
+        // `Klhs op Klhs` (the kernel's const-bound `0 u>= 0` form). Read the
+        // recorded pred's op + LHS const + width from the expr table; emit
+        // `add_val(lhs_k) op add_val(lhs_k)`. Done BEFORE kept_branch_vars so
+        // the now-orphaned RHS reg VAR's bound preds drop out. cvc5 validates:
+        // on a symbolic-bound route this removes the X-constraint → not unsat →
+        // dropped, so it only adds the genuine const-bound obligation.
+        if loop_entry_fold {
+            // slot -> expr index
+            let mut slot_to_idx: std::collections::HashMap<u32, usize> =
+                std::collections::HashMap::new();
+            {
+                let mut sl: u32 = 0;
+                for (i, e) in sym.exprs.iter().enumerate() {
+                    slot_to_idx.insert(sl, i);
+                    sl += e.slot_len();
+                }
+            }
+            let read_const = |slot: u32| -> Option<u64> {
+                let e = sym.exprs.get(*slot_to_idx.get(&slot)?)?;
+                // CONST: code & 0xf8 == 0x08
+                if e.code & 0xf8 == 0x08 {
+                    let lo = *e.args.first()? as u64;
+                    let hi = e.args.get(1).copied().unwrap_or(0) as u64;
+                    Some(if e.args.len() >= 2 { lo | (hi << 32) } else { lo })
+                } else {
+                    None
+                }
+            };
+            let acond = sym.path_conds[anchor_idx];
+            let folded = slot_to_idx.get(&acond).and_then(|&ei| {
+                let e = &sym.exprs[ei];
+                if e.args.len() != 2 {
+                    return None;
+                }
+                let op = e.code & 0xfe; // strip BCF_BV
+                let jmp32 = e.params == 32;
+                let lhs_k = read_const(e.args[0])?;
+                Some((op, lhs_k, jmp32))
+            });
+            match folded {
+                Some((op, lhs_k, jmp32)) => {
+                    let l = sym.add_val(lhs_k, jmp32);
+                    let r = sym.add_val(lhs_k, jmp32);
+                    sym.path_conds[anchor_idx] = sym.add_pred(op, l, r);
+                }
+                None => return None, // LHS not a const → can't form K op K
+            }
         }
         let n = sym.path_conds.len();
         let mut kept_branch_vars: std::collections::HashSet<u32> =
