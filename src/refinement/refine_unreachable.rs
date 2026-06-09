@@ -40,7 +40,7 @@ pub fn try_prove_unreachable(
     base_pc: Option<usize>,
     prev_insn_pc: Option<usize>,
 ) -> Option<UnreachableOk> {
-    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, true, None, false)
+    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, true, None, false, None)
 }
 
 /// Loop-suffix-base variant: re-anchors the goal at the loop exit when the
@@ -53,7 +53,70 @@ pub fn try_prove_unreachable_loop_suffix(
     base_pc: Option<usize>,
     prev_insn_pc: Option<usize>,
 ) -> Option<UnreachableOk> {
-    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, false, None, true)
+    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, false, None, true, None)
+}
+
+/// Flag-skip-base variant: re-anchors the goal at the first foldable
+/// (narrowed-const) branch AFTER an unrolled loop's exit — the calico
+/// proto-switch "flag" branch `If R1==0` on its flag-clear (`0==0`) side.
+/// Drops both the loop and the flag's `!=0x400` conjunct, reproducing the
+/// kernel's flag-bypass obligations (accepted_entrypoint 0x2f5796f3… family).
+/// Emitted ADDITIVELY by the caller (deduped); returns `None` when the path
+/// crossed no loop or has no post-loop foldable branch. See the filter in
+/// `try_prove_unreachable_inner`.
+pub fn try_prove_unreachable_flag_skip(
+    state: &State,
+    base_pc: Option<usize>,
+    prev_insn_pc: Option<usize>,
+) -> Option<UnreachableOk> {
+    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, false, None, false, Some(usize::MAX))
+}
+
+/// Multi-anchor flag-skip: emit one flag-skip obligation per DISTINCT
+/// post-loop foldable (narrowed-const) branch pc — each proto-switch arm's
+/// flag-clear route anchors at a different such branch, so the single-anchor
+/// [`try_prove_unreachable_flag_skip`] only reproduces the arm whose foldable
+/// branch comes first. Returns the cvc5-proven obligations (ADDITIVE, caller
+/// dedups by cond_hash). Empty when the path crossed no loop / has none.
+pub fn try_prove_unreachable_flag_skip_multi(
+    state: &State,
+    base_pc: Option<usize>,
+    prev_insn_pc: Option<usize>,
+) -> Vec<UnreachableOk> {
+    let Some(bcf) = state.bcf.as_ref() else {
+        return Vec::new();
+    };
+    // loop exit (same back-edge detection as the filter)
+    use std::collections::HashMap;
+    let mut cnt: HashMap<usize, usize> = HashMap::new();
+    for i in 0..bcf.path_cond_pcs.len() {
+        if bcf.path_cond_is_branch[i] {
+            *cnt.entry(bcf.path_cond_pcs[i]).or_insert(0) += 1;
+        }
+    }
+    let exit = match cnt.iter().filter(|&(_p, &c)| c > 1).map(|(&p, _)| p).max() {
+        Some(s) => s + 1,
+        None => return Vec::new(),
+    };
+    // distinct post-exit foldable branch pcs = the candidate anchors
+    let mut anchors: Vec<usize> = (0..bcf.path_cond_pcs.len())
+        .filter(|&i| {
+            bcf.path_cond_is_branch[i]
+                && bcf.path_cond_pcs[i] >= exit
+                && bcf.path_cond_narrowed_const[i].is_some()
+        })
+        .map(|i| bcf.path_cond_pcs[i])
+        .collect();
+    anchors.sort_unstable();
+    anchors.dedup();
+    anchors
+        .into_iter()
+        .filter_map(|pc| {
+            try_prove_unreachable_inner(
+                state, base_pc, prev_insn_pc, false, None, false, Some(pc),
+            )
+        })
+        .collect()
 }
 
 /// Register-filtered discharge: like [`try_prove_unreachable`] but, after
@@ -78,7 +141,7 @@ pub fn try_prove_unreachable_reg_filtered(
     state: &State,
     hops: usize,
 ) -> Option<UnreachableOk> {
-    try_prove_unreachable_inner(state, None, None, true, Some(hops), false)
+    try_prove_unreachable_inner(state, None, None, true, Some(hops), false, None)
 }
 
 /// Register-filtered discharge with the per-reg fresh-VAR rewrite
@@ -87,7 +150,7 @@ pub fn try_prove_unreachable_reg_filtered_no_rewrite(
     state: &State,
     hops: usize,
 ) -> Option<UnreachableOk> {
-    try_prove_unreachable_inner(state, None, None, false, Some(hops), false)
+    try_prove_unreachable_inner(state, None, None, false, Some(hops), false, None)
 }
 
 /// Like [`try_prove_unreachable`] but with the per-reg fresh-VAR rewrite
@@ -102,7 +165,7 @@ pub fn try_prove_unreachable_no_rewrite(
     base_pc: Option<usize>,
     prev_insn_pc: Option<usize>,
 ) -> Option<UnreachableOk> {
-    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, false, None, false)
+    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, false, None, false, None)
 }
 
 fn try_prove_unreachable_inner(
@@ -112,6 +175,11 @@ fn try_prove_unreachable_inner(
     do_fresh_var_rewrite: bool,
     reg_filter_hops: Option<usize>,
     loop_suffix: bool,
+    // Flag-skip mode: None = off. Some(usize::MAX) = auto (first post-loop
+    // foldable branch). Some(pc) = anchor at that specific foldable branch pc
+    // (used by the multi-anchor enumerator to emit one obligation per proto
+    // arm's flag-clear route).
+    flag_skip_anchor: Option<usize>,
 ) -> Option<UnreachableOk> {
     let bcf_ref = state.bcf.as_ref()?;
     let mut sym: SymbolicState = (**bcf_ref).clone();
@@ -768,6 +836,121 @@ fn try_prove_unreachable_inner(
                 sym.path_cond_lhs_meta = km;
             }
         }
+    }
+
+    // Flag-skip-base discharge variant (accepted_entrypoint 0x2f5796f3…
+    // family — the "engine-shape" half of the proto-switch reject fan).
+    // Like loop-suffix-base, but advance the anchor PAST the loop exit to the
+    // FIRST narrowed-const (foldable EQ-taken / NE-taken) branch after it.
+    // In the calico proto-switch this is the "flag" branch `If R1==0 -> ...`
+    // where R1 was just masked `R1 &= 1024` to {0,1024}: on the flag-CLEAR
+    // (==0) trajectory R1 pins to 0, so the existing K==K / faithful fold has
+    // already rewritten that cond to `0==0`. Re-anchoring there drops the loop
+    // AND the flag's `!=0x400` conjunct, leaving `0==0` + the proto-switch
+    // suffix — exactly the kernel's flag-bypass obligation that the loop-suffix
+    // (which keeps the flag as `!=0x400`) and pre-loop base_pc discharges miss.
+    // ADDITIVE + deduped by the caller; returns None when there's no loop or no
+    // post-loop foldable branch, so it never drops another reject's obligation.
+    if let Some(fs_anchor) = flag_skip_anchor {
+        use std::collections::HashMap;
+        let mut branch_pc_count: HashMap<usize, usize> = HashMap::new();
+        for i in 0..sym.path_cond_pcs.len() {
+            if sym.path_cond_is_branch[i] {
+                *branch_pc_count.entry(sym.path_cond_pcs[i]).or_insert(0) += 1;
+            }
+        }
+        // loop exit = max repeated branch source-pc + 1 (same back-edge
+        // detection as loop-suffix). No unrolled loop → nothing to add.
+        let exit = match branch_pc_count
+            .iter()
+            .filter(|&(_pc, &c)| c > 1)
+            .map(|(&pc, _)| pc)
+            .max()
+        {
+            None => return None,
+            Some(src) => src + 1,
+        };
+        // Pick the anchor: a post-exit branch carrying a narrowed-const fold
+        // (the `0==0` base on a flag-clear side). usize::MAX = auto (first
+        // such); otherwise anchor at exactly the requested pc (multi-anchor
+        // enumerator, one obligation per proto arm's flag-clear route).
+        let ai = match (0..sym.path_cond_pcs.len()).find(|&i| {
+            sym.path_cond_is_branch[i]
+                && sym.path_cond_pcs[i] >= exit
+                && sym.path_cond_narrowed_const[i].is_some()
+                && (fs_anchor == usize::MAX || sym.path_cond_pcs[i] == fs_anchor)
+        }) {
+            Some(i) => i,
+            None => return None,
+        };
+        let anchor_pc = sym.path_cond_pcs[ai];
+        // Fold the anchor branch to the literal `K op K` (e.g. `0 == 0` on the
+        // flag-clear side where R1 pinned to 0). The kernel's fresh bcf_track
+        // replay starting AT this branch sees the masked reg as tnum-const and
+        // emits `bcf_val(K)` directly (no cached VAR) — so its obligation has
+        // the folded literal, not `VAR op K`. zovia's FAITHFUL_FOLD keeps the
+        // reg cached (materialized at the mask insn just before), so we fold it
+        // here explicitly to match. Done BEFORE collecting kept_branch_vars so
+        // the now-orphaned reg VAR's bound preds drop out (kernel has none).
+        if let Some((k, op_byte, jmp32, _lhs_pc)) = sym.path_cond_narrowed_const[ai] {
+            let lhs = sym.add_val(k, jmp32);
+            let rhs = sym.add_val(k, jmp32);
+            sym.path_conds[ai] = sym.add_pred(op_byte, lhs, rhs);
+        }
+        let n = sym.path_conds.len();
+        // Vars referenced by the branch conds we will keep (pc >= anchor).
+        // The kernel re-materializes a kept branch's operand bound preds at
+        // the suffix base via bcf_reg_expr's lazy bcf_bound_reg, even when the
+        // bound pred was originally emitted before the anchor (e.g. a port
+        // field masked to <=0xffff at pc<anchor but compared in the proto
+        // body after it). Re-add those bound preds so the goal matches the
+        // kernel's re-materialized operand set.
+        let mut kept_branch_vars: std::collections::HashSet<u32> =
+            std::collections::HashSet::new();
+        for i in 0..n {
+            if sym.path_cond_is_branch[i] && sym.path_cond_pcs[i] >= anchor_pc {
+                for v in sym.collect_vars(sym.path_conds[i]) {
+                    kept_branch_vars.insert(v);
+                }
+            }
+        }
+        let mut kc = Vec::with_capacity(n);
+        let mut kp = Vec::with_capacity(n);
+        let mut kb = Vec::with_capacity(n);
+        let mut kn = Vec::with_capacity(n);
+        let mut km = Vec::with_capacity(n);
+        for i in 0..n {
+            let pc = sym.path_cond_pcs[i];
+            let is_branch = sym.path_cond_is_branch[i];
+            let keep = pc == 0
+                || pc >= anchor_pc
+                // Bound pred (is_branch=false) for a var a kept branch uses.
+                || (!is_branch && !kept_branch_vars.is_empty() && {
+                    let vs = sym.collect_vars(sym.path_conds[i]);
+                    !vs.is_empty() && vs.is_subset(&kept_branch_vars)
+                });
+            if keep {
+                kc.push(sym.path_conds[i]);
+                kp.push(pc);
+                kb.push(is_branch);
+                kn.push(sym.path_cond_narrowed_const[i]);
+                km.push(sym.path_cond_lhs_meta[i]);
+            }
+        }
+        if kc.is_empty() || kc.len() == n {
+            return None; // filter changed nothing → no distinct variant
+        }
+        if std::env::var("ZOVIA_DUMP_DISCHARGE").ok().as_deref() == Some("1") {
+            eprintln!(
+                "[flag-skip-base] exit={} anchor_pc={} conds {}->{}",
+                exit, anchor_pc, n, kc.len()
+            );
+        }
+        sym.path_conds = kc;
+        sym.path_cond_pcs = kp;
+        sym.path_cond_is_branch = kb;
+        sym.path_cond_narrowed_const = kn;
+        sym.path_cond_lhs_meta = km;
     }
 
     // Build the goal root: for path-unreachable the goal is the path_cond

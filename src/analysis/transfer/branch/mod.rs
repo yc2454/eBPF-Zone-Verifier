@@ -690,6 +690,8 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     let base_pc = unreachable_base_pc(env, state);
     let loop_suffix_on =
         std::env::var("ZOVIA_EXP_LOOP_SUFFIX_BASE").ok().as_deref() == Some("1");
+    let flag_skip_on =
+        std::env::var("ZOVIA_EXP_FLAG_SKIP_BASE").ok().as_deref() == Some("1");
     // Mirror kernel's `vstate->last_insn_idx` retrieval at bcf_track
     // replay start: look up the prev_insn PC of the cached state AT
     // base_pc (the cache the suffix walk landed on, not the immediate
@@ -876,6 +878,31 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
                     entry_ls.proof_bytes.len(), entry_ls.cond_hash
                 );
                 env.bcf_proofs.push(entry_ls);
+            }
+        }
+    }
+
+    // Flag-skip-base discharge (additive). Re-anchors past the loop exit at
+    // the proto-switch "flag" branch's flag-clear (`0==0`) side, dropping the
+    // loop and the flag's `!=0x400` conjunct — produces the kernel's
+    // flag-bypass obligations (accepted_entrypoint 0x2f5796f3… family) that
+    // the loop-suffix + pre-loop discharges miss. ADDITIVE + deduped: returns
+    // None when the path crossed no loop / has no post-loop foldable branch.
+    if flag_skip_on {
+        for ok_fs in crate::refinement::refine_unreachable::try_prove_unreachable_flag_skip_multi(
+            state, base_pc, prev_insn_pc,
+        ) {
+            let entry_fs = RefineEntry::new(
+                ok_fs.goal_root, ok_fs.sym.exprs, ok_fs.proof_bytes,
+                BCF_BUNDLE_KIND_UNREACHABLE,
+            );
+            if !env.bcf_proofs.iter().any(|e| e.cond_hash == entry_fs.cond_hash) {
+                info!(
+                    target: "app",
+                    "[bcf] path-unreachable (flag-skip): cvc5 proof {} bytes (hash {:016x})",
+                    entry_fs.proof_bytes.len(), entry_fs.cond_hash
+                );
+                env.bcf_proofs.push(entry_fs);
             }
         }
     }
