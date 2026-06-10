@@ -241,8 +241,24 @@ pub(crate) fn transfer_alu(
     if state.types.get(dst) == crate::analysis::machine::reg_types::RegType::ScalarValue {
         match (op, &src) {
             (AluOp::Mov, Operand::Reg(r)) if width == crate::ast::Width::W64 => {
-                // 64-bit reg→reg copy: dst shares src's scalar id.
-                state.link_scalar_id(dst, *r);
+                // 64-bit reg→reg copy: dst shares src's scalar id. Kernel
+                // `assign_scalar_id_before_mov` (verifier.c L4919) allocates a
+                // NEW id for src only when `!tnum_is_const(src->var_off)`: a
+                // constant copy carries no identity (equality of constants is
+                // by value, and linking them lets the backward
+                // `bt_sync_linked_regs` spread precision onto loop-constant
+                // copy chains — get_branch_snapshot's `r9 = r5(=i)` minted a
+                // fresh {r5,r9} class per iteration, recorded on every cond
+                // jump in the loop body, and the synced precision defeated
+                // iteration subsumption: 208k prunes at pc 53, 1M-step
+                // exhaustion where the kernel needs ~381k). An id src ALREADY
+                // has (linked while unknown, later narrowed const) is copied
+                // regardless, exactly like the kernel.
+                if state.scalar_id(*r).is_none() && state.get_tnum(*r).mask == 0 {
+                    state.clear_scalar_id(dst);
+                } else {
+                    state.link_scalar_id(dst, *r);
+                }
             }
             (AluOp::Add, Operand::Imm(k))
                 if width == crate::ast::Width::W64
@@ -289,7 +305,13 @@ pub(crate) fn transfer_alu(
                     tnum_zero || bounds_zero
                 } =>
             {
-                state.link_scalar_id(dst, *r);
+                // Same kernel const exclusion as the W64 arm (the kernel
+                // funnels both widths through `assign_scalar_id_before_mov`).
+                if state.scalar_id(*r).is_none() && state.get_tnum(*r).mask == 0 {
+                    state.clear_scalar_id(dst);
+                } else {
+                    state.link_scalar_id(dst, *r);
+                }
             }
             _ => {
                 // 32-bit MOV (zero-extends) of a value whose upper bits aren't
