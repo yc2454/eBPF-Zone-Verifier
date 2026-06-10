@@ -280,24 +280,13 @@ fn run_analyze_all_thorough(path: &str, _config: VerifierConfig) {
         "ZOVIA_BCF_REPLAY",
         "ZOVIA_BCF_ANCESTOR_DEPTH",
     ];
-    let variations: &[(&str, &[(&str, &str)])] = &[
+    // Full 4-pass set. variant b = plain-KE; variant c re-anchors the REPLAY
+    // at each chain ancestor (depth-16 saturation = the pc-735 proto-switch
+    // fan; depth capped at 16 not 64 only to bound wall-time, coverage equal).
+    const ALL_VARIATIONS: &[(&str, &[(&str, &str)])] = &[
         ("baseline",  &[]),
         ("variant a", &[("ZOVIA_KERNEL_ENGINE", "1"), ("ZOVIA_KERNEL_ENGINE_AND", "1")]),
         ("variant b", &[("ZOVIA_KERNEL_ENGINE", "1")]),
-        // variant c re-anchors the REPLAY at each chain ancestor. The
-        // kernel does ONE re-execution per refine site; we shotgun the
-        // ancestors because we can't predict which base the kernel used.
-        // But each anchor yields a DISTINCT obligation (distinct base →
-        // distinct reconstructed cond → distinct hash), so the default
-        // depth-64 walk emits ~244k entries/func (7.9 MB) — a build-time
-        // and bundle-size blow-up. But depth must be high enough to
-        // capture the kernel's ACTUAL obligation: on from_nat the real
-        // whole-object load queries a CONJ-17 pc-735 hash 0x9b9b7853..
-        // that first appears at depth 4 (depth 2 gets the 4 "named"
-        // hashes but NOT the one the kernel computes). Depth 16 is the
-        // saturation point for this function (== default 64) — it covers
-        // the full pc-735 proto-switch fan the kernel walks. We cap at 16
-        // rather than 64 only to bound wall-time; coverage is identical.
         ("variant c", &[
             ("ZOVIA_KERNEL_ENGINE", "1"),
             ("ZOVIA_BCF_FAITHFUL_FOLD", "1"),
@@ -306,6 +295,23 @@ fn run_analyze_all_thorough(path: &str, _config: VerifierConfig) {
             ("ZOVIA_BCF_ANCESTOR_DEPTH", "16"),
         ]),
     ];
+    // DEFAULT = the measured-minimal 2-pass config `baseline + variant a`.
+    // Q2 min-cover (2026-06-09, scripts/bcf_chase/results_2026-06-09_repr19_
+    // mincover.txt): across repr-19 every kernel-QUERIED hash is covered by
+    // {baseline ∪ a}; pass a is MANDATORY (1 uniquely-needed hash on
+    // to_hep_debug_co-re_v6), baseline is the cheapest valid partner, and
+    // variants b/c are uniquely needed NOWHERE on the gate set — so dropping
+    // them ~halves thorough build time + bundle size with no whole-object
+    // load regression. (b/c close some no_log FUNCTION-level engine-shape
+    // obligations from the chase arc, but no whole-object gate load depends
+    // on them.) Set ZOVIA_BCF_ALL_PASSES=1 to restore the full 4-pass set
+    // for that chase work.
+    let variations: &[(&str, &[(&str, &str)])] =
+        if std::env::var("ZOVIA_BCF_ALL_PASSES").ok().as_deref() == Some("1") {
+            ALL_VARIATIONS
+        } else {
+            &ALL_VARIATIONS[..2] // baseline + variant a
+        };
 
     for (label, toggles) in variations {
         println!("--- pass: {} ---", label);
