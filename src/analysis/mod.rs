@@ -1300,6 +1300,16 @@ fn run_worklist(
 
         // H. Push Successors
         // Prioritize exit-path successors over loop-back successors.
+        // ZOVIA_KERNEL_PUSH_ORDER=1 (experiment, 2026-06-10): disable the
+        // partition — the kernel's push_stack has NO loop-back deferral;
+        // uniform LIFO gives sibling arms anchor recency-locality at loop
+        // heads (see get_branch_snapshot triage: the deferral lets every
+        // arm-variant of an iteration seed its own forward re-exploration
+        // before any back-edge pops → quadratic redundant paths).
+        let kernel_push_order = std::env::var("ZOVIA_KERNEL_PUSH_ORDER")
+            .ok()
+            .as_deref()
+            == Some("1");
         let mut loop_back = Vec::new();
         let mut other = Vec::new();
         let succ_count = successors.len();
@@ -1311,9 +1321,10 @@ fn run_worklist(
             // below.
             succ.dfs_depth = cur_dfs_depth.saturating_add(1);
             succ.branches = 1;
-            let is_loop_back = current_step_idx
-                .map(|idx| env.history.is_back_edge(idx, succ.pc, succ.num_frames()))
-                .unwrap_or(false);
+            let is_loop_back = !kernel_push_order
+                && current_step_idx
+                    .map(|idx| env.history.is_back_edge(idx, succ.pc, succ.num_frames()))
+                    .unwrap_or(false);
             if is_loop_back {
                 loop_back.push(succ);
             } else {

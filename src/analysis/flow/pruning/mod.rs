@@ -207,6 +207,12 @@ fn handle_loop_pruning(
                 prev.cache_id.is_none_or(|cid| anc.contains(&cid))
             };
             if skip_active {
+                if crate::analysis::trace_pc_in_range(pc) {
+                    eprintln!(
+                        "[SUBSUM_SKIP_ACTIVE] pc={} prev_idx={} prev.dfs_paths={} cache_id={:?}",
+                        pc, i, prev.dfs_paths, prev.cache_id,
+                    );
+                }
                 // Record as a miss so the kernel-faithful eviction
                 // (record_pruning_misses, n=3 at plain back-edges) keeps the
                 // per-pc cache small. Without this the FIFO cap (64) fills
