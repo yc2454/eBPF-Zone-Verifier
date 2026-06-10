@@ -295,22 +295,33 @@ fn run_analyze_all_thorough(path: &str, _config: VerifierConfig) {
             ("ZOVIA_BCF_ANCESTOR_DEPTH", "16"),
         ]),
     ];
-    // DEFAULT = the measured-minimal 2-pass config `baseline + variant a`.
-    // Q2 min-cover (2026-06-09, scripts/bcf_chase/results_2026-06-09_repr19_
-    // mincover.txt): across repr-19 every kernel-QUERIED hash is covered by
-    // {baseline ∪ a}; pass a is MANDATORY (1 uniquely-needed hash on
-    // to_hep_debug_co-re_v6), baseline is the cheapest valid partner, and
-    // variants b/c are uniquely needed NOWHERE on the gate set — so dropping
-    // them ~halves thorough build time + bundle size with no whole-object
-    // load regression. (b/c close some no_log FUNCTION-level engine-shape
-    // obligations from the chase arc, but no whole-object gate load depends
-    // on them.) Set ZOVIA_BCF_ALL_PASSES=1 to restore the full 4-pass set
-    // for that chase work.
+    // DEFAULT = 3-pass `baseline + variant a + variant b`.
+    //
+    // History: 9bb9135 set a 2-pass default {baseline, a} from the q2
+    // min-cover over kernel-QUERIED hash sets (results_2026-06-09_repr19_
+    // mincover.txt). That method is UNSOUND (proven 2026-06-10 on
+    // from_wep_fib_dsr_debug): the kernel's queried set is BUNDLE-DEPENDENT
+    // — bcf_track refines exploration with whatever entries the bundle
+    // offers (refine_cond / path_cond fallback), so different entry sets
+    // steer different verifier trajectories and hence different query
+    // sequences. Concretely: under the 2-pass bundle the kernel reaches a
+    // reject site needing 034f376909db9ac8 — emitted ONLY by variant b
+    // (the from_wep K==K reconstruction documented above) — while under
+    // the 4-pass bundle that site is never visited at all. Covering the
+    // 4-pass queried set therefore guarantees nothing about a smaller
+    // config's load.
+    //
+    // The only sound validation for ANY pass set is a fresh NATIVE build of
+    // that exact set + whole-object VM load of the gate list
+    // (--no-cache-bundles). The 3-pass default passed that gate 19/19;
+    // variant c remains excluded (covered: 19/19 without it) — it exists
+    // for the no_log FUNCTION-level chase work. Set ZOVIA_BCF_ALL_PASSES=1
+    // to restore the full 4-pass set.
     let variations: &[(&str, &[(&str, &str)])] =
         if std::env::var("ZOVIA_BCF_ALL_PASSES").ok().as_deref() == Some("1") {
             ALL_VARIATIONS
         } else {
-            &ALL_VARIATIONS[..2] // baseline + variant a
+            &ALL_VARIATIONS[..3] // baseline + variant a + variant b
         };
 
     for (label, toggles) in variations {
