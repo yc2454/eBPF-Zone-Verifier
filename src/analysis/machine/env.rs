@@ -218,6 +218,15 @@ pub struct VerifierEnv<'a> {
     /// `should_prune` and dumped alongside the miss histogram.
     pub pruning_stats: PruningStats,
     pub insn_aux_data: Vec<InsnAuxData>,
+    /// Loop-header pcs (targets of real back-edges, static CFG). Used by
+    /// `mark_path_children_unsafe` to optionally protect loop-convergence
+    /// subsumers from BCF-discharge invalidation (the kernel rebuilds
+    /// them per-retry; zovia's one-shot cascade would otherwise kill the
+    /// fan's only wide subsumer — accepted_entrypoint pc-170 OOM).
+    pub loop_header_pcs: HashSet<usize>,
+    /// Loop EXIT/bound-check branch PCs (e.g. `If R8 u>= R1 -> after_loop`) —
+    /// the kernel's bcf_track anchor for the zero-iteration proto-switch route.
+    pub loop_exit_branch_pcs: HashSet<usize>,
     pub invalid_pc_set: HashSet<usize>,
     pub addr_space_cast_to_arena_pcs: HashSet<usize>,
     /// Subprog entry-PCs whose body contains a kfunc / helper that the
@@ -393,6 +402,11 @@ impl<'a> VerifierEnv<'a> {
             subsumption_misses: HashMap::new(),
             pruning_stats: PruningStats::default(),
             insn_aux_data: vec![InsnAuxData::default(); prog.instrs.len()],
+            loop_header_pcs: crate::analysis::flow::cfg::collect_loop_back_edges(prog)
+                .into_iter()
+                .map(|(_src, tgt)| tgt)
+                .collect(),
+            loop_exit_branch_pcs: crate::analysis::flow::cfg::collect_loop_exit_branch_pcs(prog),
             invalid_pc_set: prog.invalid_pc_set.clone(),
             addr_space_cast_to_arena_pcs: prog.addr_space_cast_to_arena_pcs.clone(),
             tainted_cb_subprogs: crate::analysis::flow::callback_analysis::compute_tainted_cb_subprogs(prog, &ctx.btf),

@@ -216,6 +216,16 @@ pub fn mark_path_children_unsafe(env: &mut VerifierEnv, cur: &State, base_pc: Op
     let mut id = cur.parent_cache_id;
     let mut budget: usize = 16_384;
     let dump = std::env::var("ZOVIA_DUMP_DISCHARGE").ok().as_deref() == Some("1");
+    // EXPERIMENT (structural distinguisher): do not mark loop-header
+    // states children_unsafe. A loop header is a back-edge target — the
+    // state cached there is the loop's wide convergence subsumer. The
+    // kernel rebuilds it on each BCF retry; zovia's one-shot cascade
+    // would permanently invalidate it, collapsing the only state that
+    // subsumes the loop's R1×R8×R9 fan (accepted_entrypoint pc-170 OOM).
+    // calico_tc_main marks the same loop region but doesn't depend on it
+    // for coverage (its route obligations are straight-line, high-pc).
+    let skip_loop_hdr =
+        std::env::var("ZOVIA_EXP_SKIP_LOOP_HEADER_UNSAFE").ok().as_deref() == Some("1");
     let mut marked = 0usize;
     let mut first_pc: Option<usize> = None;
     let mut last_pc: Option<usize> = None;
@@ -246,6 +256,12 @@ pub fn mark_path_children_unsafe(env: &mut VerifierEnv, cur: &State, base_pc: Op
             // marked by an earlier path-unreachable on the same
             // lineage — stop, the rest is already done.
             break;
+        }
+        if skip_loop_hdr && env.loop_header_pcs.contains(&pc) {
+            // EXPERIMENT: protect the loop-convergence subsumer; keep
+            // walking ancestors (the suffix continues past it).
+            id = s.parent_cache_id;
+            continue;
         }
         s.children_unsafe = true;
         marked += 1;

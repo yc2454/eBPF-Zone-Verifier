@@ -1122,8 +1122,36 @@ fn run_worklist(
 
         // C. Heartbeat Logging (Level 1+)
         if config.verbosity >= 1 && env.insn_processed.is_multiple_of(config.log_interval) {
-            info!(target: "app", "[Verifier] Processed {} instructions (pruned {}). Worklist size: {}", 
+            info!(target: "app", "[Verifier] Processed {} instructions (pruned {}). Worklist size: {}",
                      env.insn_processed, prune_count, worklist.len());
+        }
+
+        // C'. Subsumption-miss dump (diagnostic, env-gated, verbosity-independent).
+        // Shows WHICH pcs accumulate subsumption misses and WHY — pinpoints
+        // a non-converging loop header and the reason its states won't merge.
+        if std::env::var("ZOVIA_DUMP_PRUNE_MISSES").is_ok()
+            && env.insn_processed.is_multiple_of(config.log_interval)
+        {
+            use crate::analysis::machine::env::SubsumptionMissReason;
+            let mut rows: Vec<(usize, [u64; 9], u64)> = env
+                .subsumption_misses
+                .iter()
+                .map(|(&pc, &counts)| (pc, counts, counts.iter().sum()))
+                .collect();
+            rows.sort_by(|a, b| b.2.cmp(&a.2));
+            eprintln!(
+                "[PRUNE-MISS] insn={} worklist={} top miss pcs:",
+                env.insn_processed,
+                worklist.len()
+            );
+            for (pc, counts, total) in rows.iter().take(8) {
+                let breakdown: Vec<String> = SubsumptionMissReason::ALL
+                    .iter()
+                    .filter(|r| counts[r.idx()] > 0)
+                    .map(|r| format!("{}={}", r.label(), counts[r.idx()]))
+                    .collect();
+                eprintln!("    pc={} misses={} [{}]", pc, total, breakdown.join(" "));
+            }
         }
 
         // D. Instruction Fetch

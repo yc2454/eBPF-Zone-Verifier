@@ -463,8 +463,19 @@ impl SymbolicState {
     pub fn collect_vars(&self, root: u32) -> std::collections::HashSet<u32> {
         use crate::refinement::bcf::{BCF_OP_MASK, BCF_VAR};
         let mut vars = std::collections::HashSet::new();
+        // The expr table is a DAG with shared subexpressions (the fold reuses
+        // VARs; add_alu/add_pred/add_extend reference existing slots), so a
+        // plain DFS re-traverses shared nodes EXPONENTIALLY — the stack grows
+        // without bound and the walk never terminates on a large fold DAG.
+        // (from_nat calico_tc_skb_accepted_entrypoint's depth-16 replay DAG
+        // OOM'd into swap right here.) Memoize with a visited-set so each node
+        // is expanded once: exponential → linear in DAG size.
+        let mut visited = std::collections::HashSet::new();
         let mut stack = vec![root];
         while let Some(idx) = stack.pop() {
+            if !visited.insert(idx) {
+                continue;
+            }
             let Some(e) = self.expr_at(idx) else { continue };
             if (e.code & BCF_OP_MASK) == BCF_VAR {
                 vars.insert(idx);

@@ -688,6 +688,12 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
         return false;
     }
     let base_pc = unreachable_base_pc(env, state);
+    let loop_suffix_on =
+        std::env::var("ZOVIA_EXP_LOOP_SUFFIX_BASE").ok().as_deref() == Some("1");
+    let flag_skip_on =
+        std::env::var("ZOVIA_EXP_FLAG_SKIP_BASE").ok().as_deref() == Some("1");
+    let loop_entry_on =
+        std::env::var("ZOVIA_EXP_LOOP_ENTRY_BASE").ok().as_deref() == Some("1");
     // Mirror kernel's `vstate->last_insn_idx` retrieval at bcf_track
     // replay start: look up the prev_insn PC of the cached state AT
     // base_pc (the cache the suffix walk landed on, not the immediate
@@ -849,6 +855,82 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
                 entry_no_rw.cond_hash
             );
             env.bcf_proofs.push(entry_no_rw);
+        }
+    }
+
+    // Loop-suffix-base discharge (additive). When the reject's recorded path
+    // crossed an unrolled bounded loop, re-anchor the goal at the loop exit
+    // (the kernel's bcf_track base) so only the exit branch + post-loop suffix
+    // survive — produces the kernel's post-loop obligation (accepted_entrypoint
+    // 0x11cc) that the pre-loop-anchored discharges above miss. ADDITIVE +
+    // deduped: returns None when the path crossed no loop, so it never drops
+    // another reject's obligation.
+    if loop_suffix_on {
+        if let Some(ok_ls) = crate::refinement::refine_unreachable::try_prove_unreachable_loop_suffix(
+            state, base_pc, prev_insn_pc,
+        ) {
+            let entry_ls = RefineEntry::new(
+                ok_ls.goal_root, ok_ls.sym.exprs, ok_ls.proof_bytes,
+                BCF_BUNDLE_KIND_UNREACHABLE,
+            );
+            if !env.bcf_proofs.iter().any(|e| e.cond_hash == entry_ls.cond_hash) {
+                info!(
+                    target: "app",
+                    "[bcf] path-unreachable (loop-suffix): cvc5 proof {} bytes (hash {:016x})",
+                    entry_ls.proof_bytes.len(), entry_ls.cond_hash
+                );
+                env.bcf_proofs.push(entry_ls);
+            }
+        }
+    }
+
+    // Flag-skip-base discharge (additive). Re-anchors past the loop exit at
+    // the proto-switch "flag" branch's flag-clear (`0==0`) side, dropping the
+    // loop and the flag's `!=0x400` conjunct — produces the kernel's
+    // flag-bypass obligations (accepted_entrypoint 0x2f5796f3… family) that
+    // the loop-suffix + pre-loop discharges miss. ADDITIVE + deduped: returns
+    // None when the path crossed no loop / has no post-loop foldable branch.
+    if flag_skip_on {
+        for ok_fs in crate::refinement::refine_unreachable::try_prove_unreachable_flag_skip_multi(
+            state, base_pc, prev_insn_pc,
+        ) {
+            let entry_fs = RefineEntry::new(
+                ok_fs.goal_root, ok_fs.sym.exprs, ok_fs.proof_bytes,
+                BCF_BUNDLE_KIND_UNREACHABLE,
+            );
+            if !env.bcf_proofs.iter().any(|e| e.cond_hash == entry_fs.cond_hash) {
+                info!(
+                    target: "app",
+                    "[bcf] path-unreachable (flag-skip): cvc5 proof {} bytes (hash {:016x})",
+                    entry_fs.proof_bytes.len(), entry_fs.cond_hash
+                );
+                env.bcf_proofs.push(entry_fs);
+            }
+        }
+    }
+
+    // Loop-entry-base discharge (additive). Re-anchors at a loop-header bound
+    // check on the zero-iteration route, reproducing the kernel's `u>=`-anchored
+    // proto-switch obligations (the second engine-shape family) that flag-skip
+    // (== anchors) and the loop-suffix/pre-loop discharges miss. ADDITIVE +
+    // deduped.
+    if loop_entry_on && !env.loop_exit_branch_pcs.is_empty() {
+        let headers = env.loop_exit_branch_pcs.clone();
+        for ok_le in crate::refinement::refine_unreachable::try_prove_unreachable_loop_entry_multi(
+            state, base_pc, prev_insn_pc, &headers,
+        ) {
+            let entry_le = RefineEntry::new(
+                ok_le.goal_root, ok_le.sym.exprs, ok_le.proof_bytes,
+                BCF_BUNDLE_KIND_UNREACHABLE,
+            );
+            if !env.bcf_proofs.iter().any(|e| e.cond_hash == entry_le.cond_hash) {
+                info!(
+                    target: "app",
+                    "[bcf] path-unreachable (loop-entry): cvc5 proof {} bytes (hash {:016x})",
+                    entry_le.proof_bytes.len(), entry_le.cond_hash
+                );
+                env.bcf_proofs.push(entry_le);
+            }
         }
     }
 
