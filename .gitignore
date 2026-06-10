@@ -10,6 +10,9 @@ docs/
 track.patch
 .DS_Store
 vendor/
+scripts/bcf*
+CHANGES_v6.15.md
+linux-deltas/
 
 # Python bytecode caches
 __pycache__/
