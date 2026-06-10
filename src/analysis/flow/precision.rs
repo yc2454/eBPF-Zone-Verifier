@@ -209,22 +209,31 @@ pub fn mark_chain_precision_backward(
             // frontier reg into the stack frontier; stopping there would
             // abandon the spilled-slot lineage before its matching SPILL.
             //
-            // This was formerly gated to base mode (`if env.bcf_enabled {
-            // frontier.is_empty() }`) — BCF mode used the pre-fix
-            // reg-frontier-only termination to avoid growing the no_log
-            // bundle, on the belief (memory 2026-06-02) that the extra
-            // precision pushed to_l3_no_log past an E2BIG limit. That belief
-            // was FALSE on both counts (2026-06-03 re-validation): the kernel
-            // limit is 64MB (bcf_bundle.c:92) and the faithful no_log bundle
-            // is 35.6MB (loads fine); and to_l3_no_log loads an IDENTICAL 5/7
-            // with and without the precision. Full calico-19 VM gate confirmed
-            // 0 load regressions (19/19 objects, per-object loaded=N/M
-            // identical gated-vs-faithful; 5 objects provably safe by bundle
-            // hash-superset, 14 VM-confirmed). The precision is also FA-safe
-            // by direction (more conservative) and the kernel re-checks every
-            // bundle by canonical hash (fail-closed). So base and BCF now
-            // share this one faithful rule.
-            let terminate = frontier.is_empty() && stack_frontier.is_empty();
+            // BCF-mode GATE (restored 2026-06-09, bisect-proven): in BCF mode
+            // default to the reg-frontier-only termination. History: the gate
+            // was removed 2026-06-03 (3c48b4e) on a re-validation claiming
+            // calico-19 "0 load regressions" — but that run loaded STALE
+            // cached bundles (bench --cache-bundles default). A clean bisect
+            // (fresh serial builds, whole-object test_loader, same VM/day)
+            // shows to_l3_no_log_co-re_v6 whole-object load: PASS at 92ebca4,
+            // FAIL at 3c48b4e — the faithful stack-frontier precision changes
+            // BCF-mode exploration enough that a kernel-queried hash is no
+            // longer emitted (the 2026-06-02 isolated study saw the same 0/1).
+            // Soundness is unaffected either way: base mode (selftest FA=0
+            // floor) always uses the faithful rule, and BCF bundles are
+            // fail-closed (kernel re-checks every entry by canonical hash).
+            // This is an EMISSION-PROFILE choice, not a soundness gate.
+            // Opt back into the faithful rule for BCF mode with
+            // ZOVIA_BCF_PRECISION_FAITHFUL=1 (e.g. for engine-shape studies).
+            let bcf_faithful_precision = std::env::var("ZOVIA_BCF_PRECISION_FAITHFUL")
+                .ok()
+                .as_deref()
+                == Some("1");
+            let terminate = if env.bcf_enabled && !bcf_faithful_precision {
+                frontier.is_empty()
+            } else {
+                frontier.is_empty() && stack_frontier.is_empty()
+            };
             if terminate {
                 break 'outer;
             }
