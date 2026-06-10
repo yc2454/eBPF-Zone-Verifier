@@ -29,7 +29,9 @@ run_pass() {
           ZOVIA_EXP_FLAG_SKIP_BASE ZOVIA_EXP_LOOP_ENTRY_BASE \
           ZOVIA_EXP_SKIP_LOOP_HEADER_UNSAFE ZOVIA_EXP_LOOP_SUFFIX_BASE
     export ZOVIA_BCF_THOROUGH_PASS=1
-    for kv in "${envs[@]}"; do export "$kv"; done
+    # ${envs[@]+...} guards the empty-array expansion (baseline pass) against
+    # set -u on bash 3.2 (macOS /bin/bash), which errors on "${envs[@]}".
+    for kv in ${envs[@]+"${envs[@]}"}; do export "$kv"; done
     timeout "$TMO" "$ZOVIA" -q --bcf --kernel-mode --no-bcf-thorough verify "$OBJ" \
       > "$OUTDIR/$BASE.pass_$name.log" 2>&1
     echo "rc=$?" >> "$OUTDIR/$BASE.pass_$name.log"
@@ -38,6 +40,10 @@ run_pass() {
     python3 "$HERE/bundle_tool.py" hashes "$OBJ.bcf-bundle" \
       | awk '{printf "%016s\n",$0}' | sort -u > "$OUTDIR/$BASE.pass_$name.hashes"
     echo "[$name] $(wc -l < "$OUTDIR/$BASE.pass_$name.hashes" | tr -d ' ') hashes, $(ls -la "$OBJ.bcf-bundle" | awk '{print $5}') bytes"
+    # Keep the per-pass bundle: the caller merges the 4 singles into the
+    # full-config bundle (identical hash set to a thorough build — passes are
+    # merged+deduped by cond_hash there too), saving a redundant 4-pass build.
+    mv "$OBJ.bcf-bundle" "$OUTDIR/$BASE.pass_$name.bundle"
   else
     : > "$OUTDIR/$BASE.pass_$name.hashes"
     echo "[$name] NO BUNDLE (rc=$(tail -1 "$OUTDIR/$BASE.pass_$name.log"))"

@@ -18,7 +18,10 @@ BUNDLE="$OBJ.bcf-bundle"
 [ -s "$BUNDLE" ] || { echo "no bundle: $BUNDLE" >&2; exit 1; }
 
 scp $SSHO "$BUNDLE" "$HOST":/tmp/cq.bundle >/dev/null 2>&1
-timeout 200 ssh $SSHO "$HOST" "
+# 600s outer budget: two-hop scp of a 20-30MB no_log bundle + the 300s
+# per-load inner timeout must BOTH fit (200s silently truncated the big
+# objects -> empty capture, masquerading as "queried=0").
+timeout 600 ssh $SSHO "$HOST" "
   scp -o StrictHostKeyChecking=no -i $VMKEY -P 10023 /tmp/cq.bundle root@localhost:/root/bcf/sweep/cq.bundle >/dev/null 2>&1
   ssh -o StrictHostKeyChecking=no -i $VMKEY -p 10023 root@localhost '
     dmesg -C >/dev/null 2>&1

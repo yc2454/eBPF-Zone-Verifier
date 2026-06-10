@@ -1,0 +1,28 @@
+
+=== LOAD VALIDATION (default config, fresh bundles) ===
+PASS (19): clang-15_-O1_felix_bin_bpf_from_hep_debug clang-15_-O1_felix_bin_bpf_from_hep_debug_co-re_v6 clang-15_-O1_felix_bin_bpf_from_nat_fib_debug_co-re clang-15_-O1_felix_bin_bpf_from_nat_fib_debug_co-re_v6 clang-15_-O1_felix_bin_bpf_from_l3_debug clang-15_-O1_felix_bin_bpf_from_l3_debug_co-re_v6 clang-15_-O1_felix_bin_bpf_from_tnl_debug clang-15_-O1_felix_bin_bpf_from_wep_fib_dsr_debug clang-15_-O1_felix_bin_bpf_to_hep_debug_co-re clang-15_-O1_felix_bin_bpf_to_hep_debug_v6 clang-15_-O1_felix_bin_bpf_to_l3_debug_v6 clang-15_-O1_felix_bin_bpf_to_l3_no_log_co-re_v6 clang-15_-O1_felix_bin_bpf_to_lo_debug_co-re_v6 clang-15_-O1_felix_bin_bpf_to_lo_fib_debug clang-15_-O1_felix_bin_bpf_to_wep_debug clang-15_-O1_felix_bin_bpf_to_nat_debug_v6 clang-15_-O1_felix_bin_bpf_to_hep_dsr_no_log_co-re_v6 clang-15_-O1_felix_bin_bpf_to_hep_debug_co-re_v6 clang-15_-O1_felix_bin_bpf_to_hep_fib_debug_co-re_v6
+FAIL (0): 
+
+=== MIN-COVER ===
+clang-15_-O1_felix_bin_bpf_from_hep_debug: queried=16  minimal=['a', 'baseline', 'c']  uniquely-needed-per-pass={'baseline': 0, 'a': 0, 'b': 0, 'c': 0}
+clang-15_-O1_felix_bin_bpf_from_hep_debug_co-re_v6: queried=3  minimal=['a', 'b', 'baseline']  uniquely-needed-per-pass={'baseline': 0, 'a': 0, 'b': 0, 'c': 0}
+clang-15_-O1_felix_bin_bpf_from_nat_fib_debug_co-re: queried=3  minimal=['a', 'b', 'baseline', 'c']  uniquely-needed-per-pass={'baseline': 0, 'a': 0, 'b': 0, 'c': 0}
+clang-15_-O1_felix_bin_bpf_from_nat_fib_debug_co-re_v6: queried=3  minimal=['a', 'b', 'baseline']  uniquely-needed-per-pass={'baseline': 0, 'a': 0, 'b': 0, 'c': 0}
+clang-15_-O1_felix_bin_bpf_from_l3_debug: queried=4  minimal=['a', 'b', 'baseline', 'c']  uniquely-needed-per-pass={'baseline': 0, 'a': 0, 'b': 0, 'c': 0}
+clang-15_-O1_felix_bin_bpf_from_l3_debug_co-re_v6: queried=3  minimal=['a', 'b']  uniquely-needed-per-pass={'baseline': 0, 'a': 0, 'b': 0, 'c': 0}
+clang-15_-O1_felix_bin_bpf_from_tnl_debug: queried=4  minimal=['a', 'b', 'baseline', 'c']  uniquely-needed-per-pass={'baseline': 0, 'a': 0, 'b': 0, 'c': 0}
+clang-15_-O1_felix_bin_bpf_from_wep_fib_dsr_debug: queried=14  minimal=['a', 'b', 'baseline', 'c']  uniquely-needed-per-pass={'baseline': 0, 'a': 0, 'b': 0, 'c': 0}
+clang-15_-O1_felix_bin_bpf_to_hep_debug_co-re: queried=3  minimal=['b', 'baseline', 'c']  uniquely-needed-per-pass={'baseline': 0, 'a': 0, 'b': 0, 'c': 0}
+clang-15_-O1_felix_bin_bpf_to_hep_debug_v6: queried=3  minimal=['a', 'baseline']  uniquely-needed-per-pass={'baseline': 0, 'a': 0, 'b': 0, 'c': 0}
+clang-15_-O1_felix_bin_bpf_to_l3_debug_v6: queried=1  minimal=['a', 'baseline', 'c']  uniquely-needed-per-pass={'baseline': 0, 'a': 0, 'b': 0, 'c': 0}
+clang-15_-O1_felix_bin_bpf_to_l3_no_log_co-re_v6: queried=4  minimal=['a', 'b', 'baseline', 'c']  uniquely-needed-per-pass={'baseline': 0, 'a': 0, 'b': 0, 'c': 0}
+clang-15_-O1_felix_bin_bpf_to_lo_debug_co-re_v6: queried=3  minimal=['a', 'baseline']  uniquely-needed-per-pass={'baseline': 0, 'a': 0, 'b': 0, 'c': 0}
+clang-15_-O1_felix_bin_bpf_to_lo_fib_debug: queried=4  minimal=['a', 'b', 'baseline', 'c']  uniquely-needed-per-pass={'baseline': 0, 'a': 0, 'b': 0, 'c': 0}
+clang-15_-O1_felix_bin_bpf_to_wep_debug: queried=12  minimal=['a', 'c']  uniquely-needed-per-pass={'baseline': 0, 'a': 0, 'b': 0, 'c': 0}
+clang-15_-O1_felix_bin_bpf_to_nat_debug_v6: queried=1  minimal=['a', 'b', 'baseline', 'c']  uniquely-needed-per-pass={'baseline': 0, 'a': 0, 'b': 0, 'c': 0}
+clang-15_-O1_felix_bin_bpf_to_hep_dsr_no_log_co-re_v6: queried=4  minimal=['a', 'b', 'baseline', 'c']  uniquely-needed-per-pass={'baseline': 0, 'a': 0, 'b': 0, 'c': 0}
+clang-15_-O1_felix_bin_bpf_to_hep_debug_co-re_v6: queried=4  minimal=['a']  uniquely-needed-per-pass={'baseline': 0, 'a': 1, 'b': 0, 'c': 0}
+clang-15_-O1_felix_bin_bpf_to_hep_fib_debug_co-re_v6: queried=3  minimal=['a', 'b', 'c']  uniquely-needed-per-pass={'baseline': 0, 'a': 0, 'b': 0, 'c': 0}
+
+CORPUS-WIDE viable configs: ['a+c', 'a+b', 'a+b+c', 'a+baseline', 'a+baseline+c', 'a+b+baseline', 'a+b+baseline+c']
+CORPUS-WIDE minimal: ['a+b', 'a+baseline', 'a+c']

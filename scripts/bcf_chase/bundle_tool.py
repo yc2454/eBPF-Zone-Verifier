@@ -40,6 +40,16 @@ if __name__=='__main__':
         open(sys.argv[4],'wb').write(build(ents))
         import os
         print('cloned',len(ents),'entries bytes',os.path.getsize(sys.argv[4]))
+    elif cmd=='mergeall':  # mergeall out in1 in2 ... -> union of bundles, dedup by cond_hash (first wins)
+        out=sys.argv[2]; seen=set(); ents=[]
+        for fn in sys.argv[3:]:
+            try: cur=parse(fn)
+            except Exception: continue
+            for h,k,g,p in cur:
+                if h not in seen: seen.add(h); ents.append((h,k,g,p))
+        open(out,'wb').write(build(ents))
+        import os
+        print('merged',len(ents),'entries from',len(sys.argv)-3,'bundles bytes',os.path.getsize(out))
     elif cmd=='pickx':  # pickx superset wantfile fakefile out -> real picks + cloned fakes (cond_hash overridden)
         sup=parse(sys.argv[2])
         want=[l.strip() for l in open(sys.argv[3]) if l.strip()]
