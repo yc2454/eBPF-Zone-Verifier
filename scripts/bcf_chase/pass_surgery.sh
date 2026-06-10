@@ -1,0 +1,53 @@
+#!/bin/bash
+# Per-pass bundle surgery: build ONE object's bundle under each thorough pass
+# IN ISOLATION and save the per-pass cond_hash sets (zero-padded 16-hex).
+#
+# Mirrors main.rs thorough-mode children exactly: each pass clears ALL toggle
+# keys, sets only its own, and runs --no-bcf-thorough with the
+# ZOVIA_BCF_THOROUGH_PASS=1 marker (reg-filter discharge keys on it — without
+# the marker the "baseline" single-pass is NOT the thorough baseline child).
+#
+# Usage: pass_surgery.sh <obj> <outdir> [timeout_s=1800]
+# Output: <outdir>/<objbase>.pass_{baseline,a,b,c}.hashes  (+ .log per pass)
+set -u
+OBJ="$1"; OUTDIR="$2"; TMO="${3:-1800}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$HERE/../.." && pwd)"
+ZOVIA="$ROOT/target/release/zovia"
+BASE="$(basename "$OBJ" .o)"
+mkdir -p "$OUTDIR"
+
+run_pass() {
+  local name="$1"; shift
+  local envs=("$@")
+  rm -f "$OBJ.bcf-bundle"
+  # env -i would lose PATH etc; instead explicitly unset all toggle keys, then
+  # set the pass's own. Env vars are set INLINE on the command (never $ENV).
+  (
+    unset ZOVIA_KERNEL_ENGINE ZOVIA_KERNEL_ENGINE_AND ZOVIA_BCF_FAITHFUL_FOLD \
+          ZOVIA_BCF_FOLD_PRENARROW ZOVIA_BCF_REPLAY ZOVIA_BCF_ANCESTOR_DEPTH \
+          ZOVIA_EXP_FLAG_SKIP_BASE ZOVIA_EXP_LOOP_ENTRY_BASE \
+          ZOVIA_EXP_SKIP_LOOP_HEADER_UNSAFE ZOVIA_EXP_LOOP_SUFFIX_BASE
+    export ZOVIA_BCF_THOROUGH_PASS=1
+    for kv in "${envs[@]}"; do export "$kv"; done
+    timeout "$TMO" "$ZOVIA" -q --bcf --kernel-mode --no-bcf-thorough verify "$OBJ" \
+      > "$OUTDIR/$BASE.pass_$name.log" 2>&1
+    echo "rc=$?" >> "$OUTDIR/$BASE.pass_$name.log"
+  )
+  if [ -s "$OBJ.bcf-bundle" ]; then
+    python3 "$HERE/bundle_tool.py" hashes "$OBJ.bcf-bundle" \
+      | awk '{printf "%016s\n",$0}' | sort -u > "$OUTDIR/$BASE.pass_$name.hashes"
+    echo "[$name] $(wc -l < "$OUTDIR/$BASE.pass_$name.hashes" | tr -d ' ') hashes, $(ls -la "$OBJ.bcf-bundle" | awk '{print $5}') bytes"
+  else
+    : > "$OUTDIR/$BASE.pass_$name.hashes"
+    echo "[$name] NO BUNDLE (rc=$(tail -1 "$OUTDIR/$BASE.pass_$name.log"))"
+  fi
+}
+
+# Pass definitions == main.rs `variations` (keep in sync).
+run_pass baseline
+run_pass a ZOVIA_KERNEL_ENGINE=1 ZOVIA_KERNEL_ENGINE_AND=1
+run_pass b ZOVIA_KERNEL_ENGINE=1
+run_pass c ZOVIA_KERNEL_ENGINE=1 ZOVIA_BCF_FAITHFUL_FOLD=1 \
+           ZOVIA_BCF_FOLD_PRENARROW=1 ZOVIA_BCF_REPLAY=1 ZOVIA_BCF_ANCESTOR_DEPTH=16
+rm -f "$OBJ.bcf-bundle"   # leave no partial sidecar for --cache-bundles to pick up
