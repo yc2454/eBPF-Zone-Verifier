@@ -82,7 +82,7 @@ pub const PER_FILE_OVERRIDES: &[(&str, PerFileOverride)] = &[
         "get_branch_snapshot.c",
         PerFileOverride {
             max_insn: Some(1_000_000),
-            max_states_per_pc: Some(64),
+            max_states_per_pc: None,
             domain_mode: None,
         },
     ),
@@ -130,7 +130,7 @@ pub const PER_FILE_OVERRIDES: &[(&str, PerFileOverride)] = &[
         "loop1.c",
         PerFileOverride {
             max_insn: Some(1_000_000),
-            max_states_per_pc: Some(64),
+            max_states_per_pc: None,
             domain_mode: None,
         },
     ),
@@ -157,7 +157,7 @@ pub const PER_FILE_OVERRIDES: &[(&str, PerFileOverride)] = &[
         "loop4.c",
         PerFileOverride {
             max_insn: None,
-            max_states_per_pc: Some(64),
+            max_states_per_pc: None,
             domain_mode: None,
         },
     ),
@@ -165,7 +165,7 @@ pub const PER_FILE_OVERRIDES: &[(&str, PerFileOverride)] = &[
         "test_parse_tcp_hdr_opt.c",
         PerFileOverride {
             max_insn: Some(1_000_000),
-            max_states_per_pc: Some(64),
+            max_states_per_pc: None,
             domain_mode: None,
         },
     ),
@@ -173,7 +173,7 @@ pub const PER_FILE_OVERRIDES: &[(&str, PerFileOverride)] = &[
         "test_parse_tcp_hdr_opt_dynptr.c",
         PerFileOverride {
             max_insn: Some(1_000_000),
-            max_states_per_pc: Some(64),
+            max_states_per_pc: None,
             domain_mode: None,
         },
     ),

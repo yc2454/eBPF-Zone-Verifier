@@ -858,6 +858,117 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
         }
     }
 
+    // EXPERIMENT both-folds (ZOVIA_BCF_BOTH_FOLDS=1, all-faithful mirror
+    // 2026-06-11): when FAITHFUL_FOLD is on, ALSO emit the legacy-fold form of
+    // the same obligation. The kernel folds per-site based on ITS state; one
+    // of the two forms hash-matches (from_nat 5edc48ab = legacy n=5 form;
+    // faithful emits the n=4 fold). ADDITIVE + deduped.
+    if std::env::var("ZOVIA_BCF_BOTH_FOLDS").ok().as_deref() == Some("1") {
+        if let Some(ok_lf) = crate::refinement::refine_unreachable::try_prove_unreachable_fold_legacy(
+            state, base_pc, prev_insn_pc,
+        ) {
+            let entry_lf = RefineEntry::new(
+                ok_lf.goal_root, ok_lf.sym.exprs, ok_lf.proof_bytes,
+                BCF_BUNDLE_KIND_UNREACHABLE,
+            );
+            if !env.bcf_proofs.iter().any(|e| e.cond_hash == entry_lf.cond_hash) {
+                info!(
+                    target: "app",
+                    "[bcf] path-unreachable (legacy-fold): cvc5 proof {} bytes (hash {:016x})",
+                    entry_lf.proof_bytes.len(), entry_lf.cond_hash
+                );
+                env.bcf_proofs.push(entry_lf);
+            }
+        }
+    }
+
+    // EXPERIMENT anchor-union (ZOVIA_BCF_ANCHOR_UNION=1, all-faithful mirror
+    // 2026-06-11): the kernel's bcf_track base can sit at a LATER checkpoint
+    // than this discharge's base_pc, yielding a leaner suffix-only cond
+    // (from_hep 415f43/a46620/600a50/09b8c4: kernel forms lack the early
+    // port-compare conjuncts). Re-emit the obligation anchored at each later
+    // narrowed-const branch pc on the path (the foldable-branch candidates,
+    // same filter as flag_skip_multi), in BOTH fold modes. ADDITIVE + deduped.
+    if std::env::var("ZOVIA_BCF_ANCHOR_UNION").ok().as_deref() == Some("1") {
+        if let Some(bcfst) = state.bcf.as_ref() {
+            // Candidates = EVERY distinct path-cond pc later than the current
+            // base (not just narrowed-const branches): the kernel's bcf_track
+            // base can sit at any checkpoint, including jump-edge targets
+            // whose surrounding cond stretch (e.g. from_hep 2586-2597 port
+            // bounds) is exactly what narrower anchor sets exclude.
+            let mut anchors: Vec<usize> = (0..bcfst.path_cond_pcs.len())
+                .filter(|&i| base_pc.is_none_or(|bp| bcfst.path_cond_pcs[i] > bp))
+                .map(|i| bcfst.path_cond_pcs[i])
+                .collect();
+            anchors.sort_unstable();
+            anchors.dedup();
+            for p in anchors {
+                // prev for a re-anchored replay = the last path-cond pc below
+                // the anchor (the actual preceding cond on the path — mirrors
+                // record_path_cond at bcf_track replay start; for a jump-edge
+                // anchor this is the jump source, e.g. 2586's prev = 1484).
+                let prev_for_p = bcfst
+                    .path_cond_pcs
+                    .iter()
+                    .filter(|&&q| q < p)
+                    .copied()
+                    .max();
+                // mode: 0 = current fold (faithful when env set), 1 = legacy
+                // fold, 2 = NO-REWRITE (aliased-VAR form — the Class-A loop
+                // emits rw=false per anchor and the kernel queries it, e.g.
+                // 673434f3 on the to_hep/to_lo co-re_v6 pair).
+                // prev=p-1 mirrors the kernel's vstate->last_insn_idx: the
+                // replay-start prev is the INSN preceding the base, which need
+                // not be a recorded cond pc (prev-push then SYNTHESIZES that
+                // branch's cond — e.g. the (0x0 != 0x2)-prefixed forms).
+                let prev_insn = p.checked_sub(1);
+                for (mode, prev_v) in [
+                    (0, prev_for_p),
+                    (1, prev_for_p),
+                    (2, prev_for_p),
+                    (0, prev_insn),
+                    (1, prev_insn),
+                    (2, prev_insn),
+                    // prev=None variants: some kernel bases push NO prev
+                    // branch cond at replay start.
+                    (0, None),
+                    (1, None),
+                    (2, None),
+                ] {
+                    if prev_v.is_none() && prev_for_p.is_none() && mode != 0 {
+                        continue; // avoid exact duplicates of the Some-prev rows
+                    }
+                    if prev_v == prev_insn && prev_insn == prev_for_p && mode != 0 {
+                        continue; // p-1 row duplicates the computed-prev row
+                    }
+                    let okv = match mode {
+                        1 => crate::refinement::refine_unreachable::try_prove_unreachable_fold_legacy(
+                            state, Some(p), prev_v,
+                        ),
+                        2 => crate::refinement::refine_unreachable::try_prove_unreachable_no_rewrite(
+                            state, Some(p), prev_v,
+                        ),
+                        _ => try_prove_unreachable(state, Some(p), prev_v),
+                    };
+                    if let Some(ok_au) = okv {
+                        let entry_au = RefineEntry::new(
+                            ok_au.goal_root, ok_au.sym.exprs, ok_au.proof_bytes,
+                            BCF_BUNDLE_KIND_UNREACHABLE,
+                        );
+                        if !env.bcf_proofs.iter().any(|e| e.cond_hash == entry_au.cond_hash) {
+                            info!(
+                                target: "app",
+                                "[bcf] path-unreachable (anchor-union@{} mode={}): cvc5 proof {} bytes (hash {:016x})",
+                                p, mode, entry_au.proof_bytes.len(), entry_au.cond_hash
+                            );
+                            env.bcf_proofs.push(entry_au);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Loop-suffix-base discharge (additive). When the reject's recorded path
     // crossed an unrolled bounded loop, re-anchor the goal at the loop exit
     // (the kernel's bcf_track base) so only the exit branch + post-loop suffix

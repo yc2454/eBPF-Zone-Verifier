@@ -43,6 +43,33 @@ pub fn try_prove_unreachable(
     try_prove_unreachable_inner(state, base_pc, prev_insn_pc, true, None, false, None, None, false)
 }
 
+// EXPERIMENT (all-faithful single-pass mirror, 2026-06-11): per-call fold-mode
+// override so a caller can emit BOTH fold forms of the same obligation. The
+// kernel folds a reg iff ITS state knows the const at the site; whichever form
+// it computes, one of our two variants hash-matches (from_nat 5edc48ab: the
+// kernel keeps the trivially-true `(v0!=6)` conjunct that FAITHFUL_FOLD elides).
+thread_local! {
+    static FOLD_OVERRIDE: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Legacy-fold variant of [`try_prove_unreachable`]: forces the pre-
+/// FAITHFUL_FOLD pipeline (K==K rewrite + per-reg fresh-VAR Class-B) for this
+/// one emission regardless of `ZOVIA_BCF_FAITHFUL_FOLD`. ADDITIVE; caller
+/// dedups by cond_hash.
+pub fn try_prove_unreachable_fold_legacy(
+    state: &State,
+    base_pc: Option<usize>,
+    prev_insn_pc: Option<usize>,
+) -> Option<UnreachableOk> {
+    FOLD_OVERRIDE.with(|c| c.set(Some(false)));
+    let r = try_prove_unreachable_inner(
+        state, base_pc, prev_insn_pc, true, None, false, None, None, false,
+    );
+    FOLD_OVERRIDE.with(|c| c.set(None));
+    r
+}
+
 /// Loop-suffix-base variant: re-anchors the goal at the loop exit when the
 /// reject's recorded path crossed an unrolled bounded loop (see the filter in
 /// `try_prove_unreachable_inner`). Emitted ADDITIVELY by the caller (deduped),
@@ -233,6 +260,29 @@ fn try_prove_unreachable_inner(
     let bcf_ref = state.bcf.as_ref()?;
     let mut sym: SymbolicState = (**bcf_ref).clone();
 
+    // EXPERIMENT dump (ZOVIA_DUMP_PRETRIM=1): full PRE-trim recorded cond
+    // list at this reject — (pc, is_branch, narrowed (k,op)) per cond — to
+    // diff zovia's recording against a kernel form (673434f3 chase).
+    if std::env::var("ZOVIA_DUMP_PRETRIM").ok().as_deref() == Some("1") {
+        let mut s = String::new();
+        for i in 0..sym.path_conds.len() {
+            let n = match sym.path_cond_narrowed_const.get(i).and_then(|x| *x) {
+                Some((k, op, _, _)) => format!("K{:x}op{:02x}", k, op),
+                None => "-".into(),
+            };
+            s.push_str(&format!(
+                "({},{},{}) ",
+                sym.path_cond_pcs[i],
+                if sym.path_cond_is_branch[i] { "B" } else { "b" },
+                n
+            ));
+        }
+        eprintln!(
+            "[pretrim] reject_pc={} base={:?} prev={:?} n={} conds: {}",
+            state.pc, base_pc, prev_insn_pc, sym.path_conds.len(), s
+        );
+    }
+
     // Mirror bcf_track's suffix-only emission: drop path_conds emitted
     // strictly before the suffix base. `prev_insn_pc` enables the
     // kernel's `record_path_cond`-at-replay-start mechanism: if the
@@ -309,7 +359,9 @@ fn try_prove_unreachable_inner(
     //       folded to the literal `0x0`.
     // Default-OFF: env-gated so the 21 to_hep reg-filter wins stay
     // byte-identical until VM-gated. See project_no_log_subsumption_arc.md.
-    let faithful_fold = std::env::var("ZOVIA_BCF_FAITHFUL_FOLD").ok().as_deref() == Some("1");
+    let faithful_fold = FOLD_OVERRIDE.with(|c| c.get()).unwrap_or_else(|| {
+        std::env::var("ZOVIA_BCF_FAITHFUL_FOLD").ok().as_deref() == Some("1")
+    });
     let mut orphaned_vars: std::collections::HashSet<u32> = std::collections::HashSet::new();
     for i in 0..sym.path_conds.len() {
         if faithful_fold {
