@@ -607,6 +607,71 @@ impl SymbolicState {
         self.path_cond_lhs_meta = kept_lhs_meta;
     }
 
+    /// TRAJECTORY-suffix window filter (all-faithful mirror 2026-06-12).
+    /// Like [`filter_path_conds_from_pc`] but the window is the maximal
+    /// TRAILING run of recorded conds with pc >= base_pc, not every entry
+    /// numerically >= base_pc. The kernel's bcf_track replay is a linear
+    /// re-execution base→reject of ITS trajectory suffix; when zovia's
+    /// path crossed higher-pc code BEFORE the base (subprog call, e.g.
+    /// from_l3_co-re_v6 reject 1522: proto-check conds at 5807-5815
+    /// recorded mid-trajectory, base 1457), the numeric filter wrongly
+    /// keeps those carried conds and every emitted form is polluted
+    /// (kernel queries the clean 3-cond fe23e6259df46b7e). Retention of
+    /// L (prev-push) + its bound preds mirrors the numeric filter.
+    pub fn filter_path_conds_traj_suffix(
+        &mut self,
+        base_pc: usize,
+        prev_insn_pc: Option<usize>,
+    ) {
+        if base_pc == 0 {
+            return;
+        }
+        let n = self.path_conds.len();
+        let mut start = n;
+        while start > 0 && self.path_cond_pcs[start - 1] >= base_pc {
+            start -= 1;
+        }
+        let l_idx_opt = prev_insn_pc.and_then(|pp| {
+            self.path_cond_pcs.iter().enumerate()
+                .find(|&(idx, &pc)| pc == pp && self.path_cond_is_branch[idx])
+                .map(|(idx, _)| idx)
+        });
+        let l_vars: std::collections::HashSet<u32> = match l_idx_opt {
+            Some(idx) => self.collect_vars(self.path_conds[idx]),
+            None => std::collections::HashSet::new(),
+        };
+        let mut kept_exprs = Vec::with_capacity(n);
+        let mut kept_pcs = Vec::with_capacity(n);
+        let mut kept_is_branch = Vec::with_capacity(n);
+        let mut kept_narrowed = Vec::with_capacity(n);
+        let mut kept_lhs_meta = Vec::with_capacity(n);
+        for (idx, &pc) in self.path_cond_pcs.iter().enumerate() {
+            let is_branch = self.path_cond_is_branch[idx];
+            let keep = idx >= start
+                || pc == 0
+                || Some(pc) == prev_insn_pc
+                || (!is_branch && !l_vars.is_empty() && {
+                    let cond_vars = self.collect_vars(self.path_conds[idx]);
+                    !cond_vars.is_empty() && cond_vars.is_subset(&l_vars)
+                });
+            if keep {
+                kept_exprs.push(self.path_conds[idx]);
+                kept_pcs.push(pc);
+                kept_is_branch.push(is_branch);
+                kept_narrowed.push(self.path_cond_narrowed_const[idx]);
+                kept_lhs_meta.push(self.path_cond_lhs_meta[idx]);
+            }
+        }
+        if kept_exprs.is_empty() && !self.path_conds.is_empty() {
+            return;
+        }
+        self.path_conds = kept_exprs;
+        self.path_cond_pcs = kept_pcs;
+        self.path_cond_is_branch = kept_is_branch;
+        self.path_cond_narrowed_const = kept_narrowed;
+        self.path_cond_lhs_meta = kept_lhs_meta;
+    }
+
     /// Register-filtered path_cond selection — mirrors the kernel's
     /// `bcf_reg_expr` data-dependency closure (verifier.c:882). Where
     /// [`filter_path_conds_from_pc`] selects by *source PC* (the suffix

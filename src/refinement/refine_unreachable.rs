@@ -51,6 +51,57 @@ pub fn try_prove_unreachable(
 thread_local! {
     static FOLD_OVERRIDE: std::cell::Cell<Option<bool>> =
         const { std::cell::Cell::new(None) };
+    // EXPERIMENT (all-faithful mirror 2026-06-12): when set, the window
+    // filter is the TRAJECTORY-suffix rule (filter_path_conds_traj_suffix)
+    // instead of the numeric pc rule — mirrors the kernel's linear
+    // base→reject replay when zovia's path crossed higher-pc code before
+    // the base (from_l3_co-re_v6 fe23e625). ADDITIVE via union modes.
+    static TRAJ_SUFFIX: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Trajectory-suffix window variants of [`try_prove_unreachable`] — same
+/// fold modes as the plain calls, but the base window is the TRAILING run
+/// of recorded conds (kernel replay order), not the numeric pc filter.
+/// ADDITIVE; caller dedups by cond_hash.
+pub fn try_prove_unreachable_traj(
+    state: &State,
+    base_pc: Option<usize>,
+    prev_insn_pc: Option<usize>,
+) -> Option<UnreachableOk> {
+    TRAJ_SUFFIX.with(|c| c.set(true));
+    let r = try_prove_unreachable_inner(
+        state, base_pc, prev_insn_pc, true, None, false, None, None, false,
+    );
+    TRAJ_SUFFIX.with(|c| c.set(false));
+    r
+}
+
+pub fn try_prove_unreachable_traj_fold_legacy(
+    state: &State,
+    base_pc: Option<usize>,
+    prev_insn_pc: Option<usize>,
+) -> Option<UnreachableOk> {
+    TRAJ_SUFFIX.with(|c| c.set(true));
+    FOLD_OVERRIDE.with(|c| c.set(Some(false)));
+    let r = try_prove_unreachable_inner(
+        state, base_pc, prev_insn_pc, true, None, false, None, None, false,
+    );
+    FOLD_OVERRIDE.with(|c| c.set(None));
+    TRAJ_SUFFIX.with(|c| c.set(false));
+    r
+}
+
+pub fn try_prove_unreachable_traj_no_rewrite(
+    state: &State,
+    base_pc: Option<usize>,
+    prev_insn_pc: Option<usize>,
+) -> Option<UnreachableOk> {
+    TRAJ_SUFFIX.with(|c| c.set(true));
+    let r = try_prove_unreachable_inner(
+        state, base_pc, prev_insn_pc, false, None, false, None, None, false,
+    );
+    TRAJ_SUFFIX.with(|c| c.set(false));
+    r
 }
 
 /// Legacy-fold variant of [`try_prove_unreachable`]: forces the pre-
@@ -299,7 +350,11 @@ fn try_prove_unreachable_inner(
     match reg_filter_hops {
         None => {
             if let Some(bp) = base_pc {
-                sym.filter_path_conds_from_pc(bp, prev_insn_pc);
+                if TRAJ_SUFFIX.with(|c| c.get()) {
+                    sym.filter_path_conds_traj_suffix(bp, prev_insn_pc);
+                } else {
+                    sym.filter_path_conds_from_pc(bp, prev_insn_pc);
+                }
             }
         }
         Some(hops) => {

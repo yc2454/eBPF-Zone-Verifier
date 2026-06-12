@@ -882,6 +882,39 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
         }
     }
 
+    // EXPERIMENT trajectory-suffix twins of the NATURAL discharge (additive,
+    // gated by BOTH_FOLDS like the legacy twin): the natural base may not be
+    // a path-cond pc, so the anchor-union below never re-anchors exactly
+    // there — emit the traj-window forms at (base_pc, prev_insn_pc) too.
+    if std::env::var("ZOVIA_BCF_BOTH_FOLDS").ok().as_deref() == Some("1") && base_pc.is_some() {
+        for okv in [
+            crate::refinement::refine_unreachable::try_prove_unreachable_traj(
+                state, base_pc, prev_insn_pc,
+            ),
+            crate::refinement::refine_unreachable::try_prove_unreachable_traj_fold_legacy(
+                state, base_pc, prev_insn_pc,
+            ),
+            crate::refinement::refine_unreachable::try_prove_unreachable_traj_no_rewrite(
+                state, base_pc, prev_insn_pc,
+            ),
+        ] {
+            if let Some(ok_t) = okv {
+                let entry_t = RefineEntry::new(
+                    ok_t.goal_root, ok_t.sym.exprs, ok_t.proof_bytes,
+                    BCF_BUNDLE_KIND_UNREACHABLE,
+                );
+                if !env.bcf_proofs.iter().any(|e| e.cond_hash == entry_t.cond_hash) {
+                    info!(
+                        target: "app",
+                        "[bcf] path-unreachable (traj-natural): cvc5 proof {} bytes (hash {:016x})",
+                        entry_t.proof_bytes.len(), entry_t.cond_hash
+                    );
+                    env.bcf_proofs.push(entry_t);
+                }
+            }
+        }
+    }
+
     // EXPERIMENT anchor-union (ZOVIA_BCF_ANCHOR_UNION=1, all-faithful mirror
     // 2026-06-11): the kernel's bcf_track base can sit at a LATER checkpoint
     // than this discharge's base_pc, yielding a leaner suffix-only cond
@@ -896,12 +929,27 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
             // base can sit at any checkpoint, including jump-edge targets
             // whose surrounding cond stretch (e.g. from_hep 2586-2597 port
             // bounds) is exactly what narrower anchor sets exclude.
-            let mut anchors: Vec<usize> = (0..bcfst.path_cond_pcs.len())
-                .filter(|&i| base_pc.is_none_or(|bp| bcfst.path_cond_pcs[i] > bp))
-                .map(|i| bcfst.path_cond_pcs[i])
-                .collect();
-            anchors.sort_unstable();
-            anchors.dedup();
+            //
+            // PLUS a bounded LOOKBACK of path-cond pcs at/below the natural
+            // base: the kernel's checkpoint can also sit EARLIER than zovia's
+            // cached base (to_wep reject 1783: zovia base=1633, kernel
+            // base=1599 → window [1602..] = the c70002dc/588b0338/5bc713f6/
+            // 86ac8cbf quartet, 2 path-cond pcs before zovia's base). Earlier
+            // anchors give superset windows — still cvc5-proven, additive.
+            let mut all_pcs: Vec<usize> = bcfst.path_cond_pcs.clone();
+            all_pcs.sort_unstable();
+            all_pcs.dedup();
+            let lookback: usize = std::env::var("ZOVIA_BCF_ANCHOR_LOOKBACK")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(8);
+            let anchors: Vec<usize> = match base_pc {
+                None => all_pcs,
+                Some(bp) => {
+                    let idx = all_pcs.partition_point(|&q| q <= bp);
+                    all_pcs[idx.saturating_sub(lookback)..].to_vec()
+                }
+            };
             for p in anchors {
                 // prev for a re-anchored replay = the last path-cond pc below
                 // the anchor (the actual preceding cond on the path — mirrors
@@ -934,6 +982,21 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
                     (0, None),
                     (1, None),
                     (2, None),
+                    // TRAJECTORY-suffix window modes (3 = env fold, 4 =
+                    // legacy fold, 5 = no-rewrite): kernel replay is a
+                    // linear trajectory suffix; when the path crossed
+                    // higher-pc code before the base the numeric window
+                    // keeps carried conds the kernel never replays
+                    // (from_l3_co-re_v6 fe23e625).
+                    (3, prev_for_p),
+                    (4, prev_for_p),
+                    (5, prev_for_p),
+                    (3, prev_insn),
+                    (4, prev_insn),
+                    (5, prev_insn),
+                    (3, None),
+                    (4, None),
+                    (5, None),
                 ] {
                     if prev_v.is_none() && prev_for_p.is_none() && mode != 0 {
                         continue; // avoid exact duplicates of the Some-prev rows
@@ -946,6 +1009,15 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
                             state, Some(p), prev_v,
                         ),
                         2 => crate::refinement::refine_unreachable::try_prove_unreachable_no_rewrite(
+                            state, Some(p), prev_v,
+                        ),
+                        3 => crate::refinement::refine_unreachable::try_prove_unreachable_traj(
+                            state, Some(p), prev_v,
+                        ),
+                        4 => crate::refinement::refine_unreachable::try_prove_unreachable_traj_fold_legacy(
+                            state, Some(p), prev_v,
+                        ),
+                        5 => crate::refinement::refine_unreachable::try_prove_unreachable_traj_no_rewrite(
                             state, Some(p), prev_v,
                         ),
                         _ => try_prove_unreachable(state, Some(p), prev_v),
