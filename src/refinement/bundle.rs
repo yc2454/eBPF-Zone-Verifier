@@ -158,16 +158,51 @@ pub fn write_bundle(path: &Path, entries: &[RefineEntry]) -> io::Result<usize> {
         .collect();
     let mut seen: std::collections::HashSet<u64> =
         serialized.iter().map(|s| s.cond_hash).collect();
+    // OVERSIZED-GOAL GUARD (cilium clang-14 bpf_host, 2026-06-12): the
+    // kernel's proof checker caps clause width at U8_MAX literals
+    // (bcf_checker.c:434, resolvent `dst->vlen + src->vlen > U8_MAX` →
+    // -EINVAL). cvc5 proofs over very large goals (clang-14 emitted 186
+    // entries with ~33KB goals / ~3600 exprs / vlen up to 197; healthy
+    // entries are ≤8KB) produce resolvents past that cap, so
+    // bcf_bundle_prevalidate rejects the entry — and a single rejected
+    // entry fails prevalidate for the WHOLE bundle, bricking every
+    // program load in the object (-EINVAL on prog 0, no verifier log;
+    // first seen as entry[1737] hash 563d3189a0196b13). An entry the
+    // kernel can never check is pure poison — drop it. Stripping the
+    // 186 left clang-14's bundle identical in entry count (1737) to
+    // every other variant — and it then LOADED 32/32.
+    // Threshold 24KB: the largest KERNEL-ACCEPTED goal observed is
+    // 19,208B (calico from_hep_co-re_v6, loads fine), the smallest
+    // rejected monster ≥24.5KB — 24KB sits in the empty gap, so the
+    // guard is a provable no-op on every gated calico bundle.
+    // TODO(principled): replicate the checker's exact resolvent-width
+    // rule over the proof steps instead of the size heuristic.
+    const MAX_GOAL_BYTES: usize = 24 * 1024;
+    let mut dropped_oversized = 0usize;
     for e in entries {
         if !seen.insert(e.cond_hash) {
             continue; // already have this exact goal — skip duplicate
         }
+        let goal = serialize_goal(e.goal_root, &e.goal_exprs);
+        if goal.len() > MAX_GOAL_BYTES {
+            dropped_oversized += 1;
+            seen.remove(&e.cond_hash);
+            continue;
+        }
         serialized.push(Serialized {
             cond_hash: e.cond_hash,
             kind: e.kind,
-            goal: serialize_goal(e.goal_root, &e.goal_exprs),
+            goal,
             proof: e.proof_bytes.clone(),
         });
+    }
+    if dropped_oversized > 0 {
+        log::warn!(
+            target: "app",
+            "[bcf] write_bundle: dropped {} oversized-goal entr{} (>24KB; kernel prevalidate would reject the proof and brick the bundle)",
+            dropped_oversized,
+            if dropped_oversized == 1 { "y" } else { "ies" }
+        );
     }
     let entries_len = serialized.len();
 
