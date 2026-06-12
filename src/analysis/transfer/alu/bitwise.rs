@@ -266,18 +266,20 @@ pub(crate) fn handle_and(state: &mut State, width: Width, dst: Reg, src: &Operan
         state.domain.assume_eq_imm(dst, c as i64);
     }
 
-    if width == Width::W32 {
-        if let Operand::Imm(mask) = src {
-            let mask32 = *mask as i32;
-            // If the value was exactly restricted to [-1, 0] (e.g. from arsh 31)
-            // Then val & mask is strictly bounded by min(mask32, 0) and max(mask32, 0).
-            if old_s32_min >= -1 && old_s32_max <= 0 {
-                let new_min = mask32.min(0);
-                let new_max = mask32.max(0);
-                state.domain.set_s32_bounds(dst, new_min, new_max);
-            }
-        }
-    }
+    // REMOVED (cilium chase 2026-06-12): a Zone-era (af47007) zovia-only
+    // refinement bounded `x in [-1,0] & mask` to s32 [min(mask,0),
+    // max(mask,0)] — the (ret s>>31) & -errno idiom. The kernel's
+    // scalar32_min_max_and has NO such rule: with either operand
+    // possibly negative it leaves s32 at [S32_MIN, S32_MAX]; only the
+    // tnum + unsigned bounds refine. The tnum {0, mask} canNOT separate
+    // -134 from -136 (0xffffff78 ⊆ mask 0xffffff7a), so the kernel
+    // FORKS on a later `w5 != -136` where zovia's [-134, 0] interval
+    // statically resolved it — pruning the exact dead path whose
+    // path-unreachable obligation the kernel queries (bpf_host 2/21
+    // pc 246, hash 286d21e4fe094520). Keeping only kernel-derivable
+    // bounds here is the mirror requirement; any program that NEEDS the
+    // precise rule would fail in the real kernel anyway.
+    let _ = (old_s32_min, old_s32_max);
 
     // --- BCF symbolic mirror. Mirrors kernel `bcf_alu` (verifier.c:15166)
     //     with the kernel-shape width discipline. ---

@@ -16,6 +16,23 @@ pub(crate) fn condition_outcome(
     op: CmpOp,
     right: &Operand,
 ) -> Option<bool> {
+    let v = condition_outcome_inner(state, width, left, op, right);
+    if v.is_some() && std::env::var("ZOVIA_DUMP_BRANCH_RESOLVE").ok().as_deref() == Some("1") {
+        eprintln!(
+            "[branch-resolve] pc={} left={:?} op={:?} right={:?} verdict={:?}",
+            state.pc, left, op, right, v
+        );
+    }
+    v
+}
+
+fn condition_outcome_inner(
+    state: &State,
+    width: Width,
+    left: Reg,
+    op: CmpOp,
+    right: &Operand,
+) -> Option<bool> {
     // Special case for NULL check
     if matches!(op, CmpOp::Eq | CmpOp::Ne) && matches!(right, Operand::Imm(0)) {
         let left_ty = state.types.get(left);
