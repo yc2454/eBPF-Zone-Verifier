@@ -223,12 +223,15 @@ pub fn mark_chain_precision_backward(
             // floor) always uses the faithful rule, and BCF bundles are
             // fail-closed (kernel re-checks every entry by canonical hash).
             // This is an EMISSION-PROFILE choice, not a soundness gate.
-            // Opt back into the faithful rule for BCF mode with
-            // ZOVIA_BCF_PRECISION_FAITHFUL=1 (e.g. for engine-shape studies).
-            let bcf_faithful_precision = std::env::var("ZOVIA_BCF_PRECISION_FAITHFUL")
-                .ok()
-                .as_deref()
-                == Some("1");
+            // 2026-06-12 UPDATE: the all-faithful single-pass mirror
+            // (repr-19 19/19 gate) runs WITH the faithful rule — it is
+            // now the BCF default too, so base and BCF share one rule.
+            // Kill-switch ZOVIA_BCF_PRECISION_FAITHFUL=0 restores the
+            // legacy reg-frontier-only emission profile for A/B studies.
+            let bcf_faithful_precision = crate::common::config::bcf_mirror_knob(
+                "ZOVIA_BCF_PRECISION_FAITHFUL",
+                env.bcf_enabled,
+            );
             let terminate = if env.bcf_enabled && !bcf_faithful_precision {
                 frontier.is_empty()
             } else {

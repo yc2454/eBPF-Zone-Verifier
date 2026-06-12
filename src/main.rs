@@ -343,8 +343,23 @@ fn run_analyze_all_thorough(path: &str, _config: VerifierConfig) {
         cmd.env("ZOVIA_BCF_THOROUGH_PASS", "1");
         // Clear every toggle, then apply this pass's own. Prevents a
         // sibling pass's flags (or a stray parent env) from leaking in.
+        // 2026-06-12: the all-faithful mirror knobs are now DEFAULT-ON in
+        // BCF mode (bcf_mirror_knob); legacy thorough passes must run the
+        // HISTORICAL per-pass configs, so pin every mirror knob to "0"
+        // first — a variant's own toggles then re-enable what it needs.
         for k in TOGGLE_KEYS {
             cmd.env_remove(k);
+        }
+        for k in [
+            "ZOVIA_KERNEL_ENGINE",
+            "ZOVIA_KERNEL_PUSH_ORDER",
+            "ZOVIA_BCF_PRECISION_FAITHFUL",
+            "ZOVIA_BCF_FAITHFUL_FOLD",
+            "ZOVIA_BCF_FOLD_PRENARROW",
+            "ZOVIA_BCF_BOTH_FOLDS",
+            "ZOVIA_BCF_ANCHOR_UNION",
+        ] {
+            cmd.env(k, "0");
         }
         for (k, v) in toggles.iter() {
             cmd.env(k, v);

@@ -932,8 +932,10 @@ fn run_worklist(
         //   (2) Inner: `add_new_state` heuristic (verifier.c v6.15
         //       L18998-L19013): force_new_state || (jmps_delta>=2 &&
         //       insns_delta>=8). Counters are PER-PATH on State.
+        // Default ON in BCF mode (all-faithful mirror, repr-19 19/19
+        // 2026-06-12); kill-switch ZOVIA_KERNEL_ENGINE=0.
         let kernel_engine = config.kernel_engine
-            || std::env::var("ZOVIA_KERNEL_ENGINE").ok().as_deref() == Some("1");
+            || crate::common::config::bcf_mirror_knob("ZOVIA_KERNEL_ENGINE", env.bcf_enabled);
         let at_prune_point = pruning::widening::is_prune_point(env, state.pc);
         let insn_aux_force = env
             .insn_aux_data
@@ -1300,16 +1302,16 @@ fn run_worklist(
 
         // H. Push Successors
         // Prioritize exit-path successors over loop-back successors.
-        // ZOVIA_KERNEL_PUSH_ORDER=1 (experiment, 2026-06-10): disable the
-        // partition — the kernel's push_stack has NO loop-back deferral;
-        // uniform LIFO gives sibling arms anchor recency-locality at loop
-        // heads (see get_branch_snapshot triage: the deferral lets every
-        // arm-variant of an iteration seed its own forward re-exploration
-        // before any back-edge pops → quadratic redundant paths).
-        let kernel_push_order = std::env::var("ZOVIA_KERNEL_PUSH_ORDER")
-            .ok()
-            .as_deref()
-            == Some("1");
+        // ZOVIA_KERNEL_PUSH_ORDER (2026-06-10): disable the partition —
+        // the kernel's push_stack has NO loop-back deferral; uniform LIFO
+        // gives sibling arms anchor recency-locality at loop heads (see
+        // get_branch_snapshot triage: the deferral lets every arm-variant
+        // of an iteration seed its own forward re-exploration before any
+        // back-edge pops → quadratic redundant paths). Default ON in BCF
+        // mode (all-faithful mirror); base mode keeps the deferral
+        // (selftest baseline) — kill-switch =0 / force-on =1.
+        let kernel_push_order =
+            crate::common::config::bcf_mirror_knob("ZOVIA_KERNEL_PUSH_ORDER", env.bcf_enabled);
         let mut loop_back = Vec::new();
         let mut other = Vec::new();
         let succ_count = successors.len();

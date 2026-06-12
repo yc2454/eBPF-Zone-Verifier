@@ -414,8 +414,10 @@ fn try_prove_unreachable_inner(
     //       folded to the literal `0x0`.
     // Default-OFF: env-gated so the 21 to_hep reg-filter wins stay
     // byte-identical until VM-gated. See project_no_log_subsumption_arc.md.
+    // Default ON (all-faithful mirror 2026-06-12): this fn only runs with
+    // a BCF symbolic state present. Kill-switch ZOVIA_BCF_FAITHFUL_FOLD=0.
     let faithful_fold = FOLD_OVERRIDE.with(|c| c.get()).unwrap_or_else(|| {
-        std::env::var("ZOVIA_BCF_FAITHFUL_FOLD").ok().as_deref() == Some("1")
+        crate::common::config::bcf_mirror_knob("ZOVIA_BCF_FAITHFUL_FOLD", true)
     });
     let mut orphaned_vars: std::collections::HashSet<u32> = std::collections::HashSet::new();
     for i in 0..sym.path_conds.len() {
@@ -752,8 +754,9 @@ fn try_prove_unreachable_inner(
             // branch → the range ENTERING it, i.e. pre-narrow `pre_bounds`
             // ([0,255]→VAR{JLE0xff}, not folded). Mirrors kernel bcf_reg_expr
             // first-reference-range semantics. Gated.
+            // Default ON (all-faithful mirror 2026-06-12); kill-switch =0.
             let prenarrow_on =
-                std::env::var("ZOVIA_BCF_FOLD_PRENARROW").ok().as_deref() == Some("1");
+                crate::common::config::bcf_mirror_knob("ZOVIA_BCF_FOLD_PRENARROW", true);
             // In-suffix branches (pc ≥ base) materialize the reg AT their own
             // branch, so they use the range ENTERING it — PRE-narrow
             // `pre_bounds` — mirroring kernel bcf_reg_expr, which runs before

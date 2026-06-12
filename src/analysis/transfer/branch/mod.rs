@@ -863,7 +863,7 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     // the same obligation. The kernel folds per-site based on ITS state; one
     // of the two forms hash-matches (from_nat 5edc48ab = legacy n=5 form;
     // faithful emits the n=4 fold). ADDITIVE + deduped.
-    if std::env::var("ZOVIA_BCF_BOTH_FOLDS").ok().as_deref() == Some("1") {
+    if crate::common::config::bcf_mirror_knob("ZOVIA_BCF_BOTH_FOLDS", true) {
         if let Some(ok_lf) = crate::refinement::refine_unreachable::try_prove_unreachable_fold_legacy(
             state, base_pc, prev_insn_pc,
         ) {
@@ -886,7 +886,7 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     // gated by BOTH_FOLDS like the legacy twin): the natural base may not be
     // a path-cond pc, so the anchor-union below never re-anchors exactly
     // there — emit the traj-window forms at (base_pc, prev_insn_pc) too.
-    if std::env::var("ZOVIA_BCF_BOTH_FOLDS").ok().as_deref() == Some("1") && base_pc.is_some() {
+    if crate::common::config::bcf_mirror_knob("ZOVIA_BCF_BOTH_FOLDS", true) && base_pc.is_some() {
         for okv in [
             crate::refinement::refine_unreachable::try_prove_unreachable_traj(
                 state, base_pc, prev_insn_pc,
@@ -922,7 +922,7 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     // port-compare conjuncts). Re-emit the obligation anchored at each later
     // narrowed-const branch pc on the path (the foldable-branch candidates,
     // same filter as flag_skip_multi), in BOTH fold modes. ADDITIVE + deduped.
-    if std::env::var("ZOVIA_BCF_ANCHOR_UNION").ok().as_deref() == Some("1") {
+    if crate::common::config::bcf_mirror_knob("ZOVIA_BCF_ANCHOR_UNION", true) {
         if let Some(bcfst) = state.bcf.as_ref() {
             // Candidates = EVERY distinct path-cond pc later than the current
             // base (not just narrowed-const branches): the kernel's bcf_track
@@ -1156,7 +1156,7 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     // stays off there and its bundle is byte-identical to HEAD — the
     // tight time budget isn't spent on extra cvc5 solves. Kill-switch:
     // ZOVIA_BCF_REGFILTER=0.
-    if std::env::var("ZOVIA_BCF_THOROUGH_PASS").ok().as_deref() == Some("1")
+    if crate::common::config::bcf_mirror_knob("ZOVIA_BCF_THOROUGH_PASS", true)
         && std::env::var("ZOVIA_BCF_REGFILTER").ok().as_deref() != Some("0")
     {
         use crate::refinement::refine_unreachable as ru;

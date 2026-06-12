@@ -190,3 +190,20 @@ impl Default for VerifierConfig {
         }
     }
 }
+
+/// All-faithful mirror knob resolution (2026-06-12, repr-19 19/19 gate).
+///
+/// The kernel-faithful BCF behaviors (kernel push order, kernel-shape
+/// caching, faithful precision/fold/prenarrow, both-folds + anchor-union
+/// emission, reg-filtered discharge) are ON BY DEFAULT whenever the
+/// context is BCF bundle generation, and OFF in the base verifier
+/// (selftest baseline untouched). Env overrides are kill-switches now:
+///   <NAME>=0  → force off (legacy emission profile / A-B studies)
+///   <NAME>=1  → force on even outside the default context
+pub fn bcf_mirror_knob(name: &str, bcf_context: bool) -> bool {
+    match std::env::var(name).ok().as_deref() {
+        Some("1") => true,
+        Some("0") => false,
+        _ => bcf_context,
+    }
+}
