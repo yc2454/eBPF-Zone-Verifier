@@ -349,6 +349,13 @@ pub fn apply_add_imm(state: &mut IntervalState, dst: Reg, imm: i64) {
         po.off = po.off.saturating_add(imm);
         // Adjust range: adding to offset decreases remaining safe range
         po.range = po.range.map(|r| r.saturating_sub(imm));
+        // Kernel: "something was added to pkt_ptr, set range to zero" —
+        // the AT/BEYOND_PKT_END sentinel does NOT survive pointer
+        // arithmetic (adjust_ptr_min_max_vals resets reg->range), so a
+        // re-advanced pointer's dup-check is NOT statically resolvable.
+        // Keeping it stale made zovia prune ext-header re-check paths
+        // the kernel walks (cilium bpf_host 2/18; FA-risk in base mode).
+        po.pkt_end_rel = None;
     }
 }
 
@@ -386,6 +393,7 @@ pub fn apply_add_reg(state: &mut IntervalState, dst: Reg, src: Reg) {
             // Adjust range: adding to offset decreases remaining safe range
             po.range = po.range.map(|r| r.saturating_sub(src_const));
             // id preserved: constant add stays in the same chain.
+            po.pkt_end_rel = None; // kernel zeroes range on pkt-ptr add
         }
     } else {
         // Variable addition: use signed bounds to properly track negative offsets
@@ -400,6 +408,7 @@ pub fn apply_add_reg(state: &mut IntervalState, dst: Reg, src: Reg) {
             }
             // Adding variable invalidates proven range
             po.range = None;
+            po.pkt_end_rel = None; // kernel zeroes range on pkt-ptr add
             // Mint a fresh kernel-style id when this is the first time
             // the pointer picks up a variable offset; otherwise the
             // existing chain absorbs the new variability.
@@ -509,6 +518,7 @@ pub fn apply_sub_reg(state: &mut IntervalState, dst: Reg, src: Reg) {
             po.var_off = po.var_off.saturating_add(signed_range as u64);
         }
         po.range = None;
+        po.pkt_end_rel = None; // kernel zeroes range on pkt-ptr arithmetic
     }
 }
 

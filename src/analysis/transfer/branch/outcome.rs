@@ -321,7 +321,7 @@ fn pkt_ptr_branch_taken(
 
     // Kernel `is_pkt_ptr_branch_taken`: only the unsigned pkt comparisons
     // are modeled. `pkt->range < 0` is implied by `rel` being set.
-    match op {
+    let verdict = match op {
         // `pkt > end` / `pkt <= end`: resolvable only when BEYOND.
         CmpOp::UGt | CmpOp::ULe => match rel {
             PktEndRel::Beyond => Some(op == CmpOp::UGt),
@@ -332,7 +332,12 @@ fn pkt_ptr_branch_taken(
             PktEndRel::Beyond | PktEndRel::At => Some(op == CmpOp::UGe),
         },
         _ => None,
+    };
+    if std::env::var("ZOVIA_DUMP_PKTEND").ok().as_deref() == Some("1") {
+        eprintln!("[pktend-resolve] pc={} reg={:?} op={:?} rel={:?} verdict={:?}",
+            state.pc, pkt_reg, op, rel, verdict);
     }
+    verdict
 }
 
 /// Flip a comparison operator's operands (kernel `flip_opcode`): rewrite

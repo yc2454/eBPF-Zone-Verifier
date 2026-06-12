@@ -1775,9 +1775,9 @@ pub(crate) fn interval_set_scalar_id(domain: &mut NumericDomain, reg: Reg) {
 pub(crate) fn restore_interval_ptr_offset_from_return(
     domain: &mut NumericDomain,
     ret_type: &RegType,
-    ret_interval_ptr_offset: (Option<i64>, Option<u64>, Option<i64>),
+    ret_interval_ptr_offset: (Option<i64>, Option<u64>, Option<i64>, Option<u32>),
 ) {
-    if let (Some(off), var_off_opt, range) = ret_interval_ptr_offset {
+    if let (Some(off), var_off_opt, range, id) = ret_interval_ptr_offset {
         use crate::domains::interval::PtrOffset;
 
         // Determine anchor from register type
@@ -1796,10 +1796,9 @@ pub(crate) fn restore_interval_ptr_offset_from_return(
                     off,
                     var_off,
                     range,
-                    // id not currently round-tripped across subprog
-                    // returns; conservative None loses id-aware
-                    // refinement at the boundary but is sound.
-                    id: None,
+                    // id round-trips across subprog returns (kernel
+                    // keeps the full reg state incl. id).
+                    id,
                     // mark_pkt_end relationship not round-tripped across
                     // subprog returns; conservative None is sound.
                     pkt_end_rel: None,
@@ -1813,9 +1812,13 @@ pub(crate) fn restore_interval_ptr_offset_from_return(
 pub(crate) fn restore_callee_interval_packet_info(
     domain: &mut NumericDomain,
     caller_types: &crate::analysis::machine::reg_types::TypeState,
-    callee_saved_packet_info: Vec<(Reg, RegType, (Option<i64>, Option<u64>, Option<i64>))>,
+    callee_saved_packet_info: Vec<(
+        Reg,
+        RegType,
+        (Option<i64>, Option<u64>, Option<i64>, Option<u32>),
+    )>,
 ) {
-    for (reg, callee_type, (off_opt, var_off_opt, range)) in callee_saved_packet_info {
+    for (reg, callee_type, (off_opt, var_off_opt, range, _id)) in callee_saved_packet_info {
         if let (Some(off), Some(range_val)) = (off_opt, range) {
             let anchor = match callee_type {
                 RegType::PtrToPacket => Some(Reg::AnchorData),

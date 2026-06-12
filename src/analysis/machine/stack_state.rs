@@ -198,6 +198,14 @@ pub enum PointerBounds {
         off: Option<i64>,     // fixed offset from anchor
         var_off: Option<u64>, // variable offset uncertainty
         range: Option<i64>,   // proven safe access range
+        // Kernel-style pointer chain id (PtrOffset::id). Round-tripping it
+        // through the spill slot lets find_good_pkt_pointers-mirror range
+        // propagation match spilled pkt pointers by ID — the kernel's rule
+        // — instead of the old var_off-equality approximation, which
+        // granted ranges across unrelated chains (cilium bpf_host 2/21
+        // pc 246: kernel rejects the reloaded-R4 byte load, zovia proved
+        // it safe and never emitted the 286d21e4 obligation).
+        id: Option<u32>,
     },
 }
 

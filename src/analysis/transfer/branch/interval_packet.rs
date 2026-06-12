@@ -303,6 +303,10 @@ fn refine_data_region_bounds(
                 let mut new_po = po;
                 new_po.pkt_end_rel = Some(mark);
                 ivl.get_mut(checked_reg).ptr_offset = Some(new_po);
+                if std::env::var("ZOVIA_DUMP_PKTEND").ok().as_deref() == Some("1") {
+                    eprintln!("[pktend-mark] pc={} reg={:?} rel={:?} upper_strict={}",
+                        state.pc, checked_reg, mark, upper_strict);
+                }
             }
         }
     }
@@ -378,22 +382,21 @@ fn propagate_packet_range(state: &mut State, checked_reg: Reg, proven_size: i64)
         }
     }
 
-    // Spilled packet pointers don't currently round-trip their id
-    // through `PointerBounds::Interval`, so we keep the var_off-based
-    // approximation for them — see comment at the call site.
-    let checked_var_off = if let NumericDomain::Interval(ref ivl) = state.domain {
-        ivl.get_ptr_offset(checked_reg).map(|po| po.var_off).unwrap_or(0)
-    } else {
-        0
-    };
-    propagate_packet_range_to_all_frames_stack(state, checked_var_off, proven_size);
+    // Spilled packet pointers: id now round-trips through
+    // `PointerBounds::Interval`, so the kernel's same-id rule applies to
+    // stack slots too (find_good_pkt_pointers iterates frames; matches
+    // reg->id only). The old var_off-equality approximation granted
+    // ranges across unrelated chains — kernel-UNFAITHFUL (cilium
+    // bpf_host 2/21 pc 246: zovia proved a reloaded-pointer byte load
+    // the kernel rejects, suppressing the 286d21e4 obligation).
+    propagate_packet_range_to_all_frames_stack(state, checked_id, proven_size);
 }
 
 /// Propagate packet range to spilled packet pointers on ALL frames' stacks.
 /// The kernel's find_good_pkt_pointers iterates all frames.
 fn propagate_packet_range_to_all_frames_stack(
     state: &mut State,
-    checked_var_off: u64,
+    checked_id: Option<u32>,
     proven_size: i64,
 ) {
     for frame_idx in 0..state.num_frames() {
@@ -410,13 +413,21 @@ fn propagate_packet_range_to_all_frames_stack(
             use crate::analysis::machine::stack_state::PointerBounds;
             if let Some(PointerBounds::Interval {
                 off,
-                var_off,
+                var_off: _,
                 range,
+                id,
             }) = &mut spilled.ptr_bounds
             {
-                if let (Some(o), Some(v)) = (*off, *var_off) {
-                    // Must have same var_off to be in the same "group"
-                    if v != checked_var_off {
+                if let Some(o) = *off {
+                    // Kernel same-id family rule (find_good_pkt_pointers):
+                    // Some==Some match, or both None (never separated by
+                    // variable arithmetic — alias the same anchor).
+                    let in_family = match (checked_id, *id) {
+                        (Some(a), Some(b)) => a == b,
+                        (None, None) => true,
+                        _ => false,
+                    };
+                    if !in_family {
                         continue;
                     }
 
@@ -495,16 +506,12 @@ fn propagate_meta_range(state: &mut State, checked_reg: Reg, proven_size: i64) {
         }
     }
 
-    let checked_var_off = if let NumericDomain::Interval(ref ivl) = state.domain {
-        ivl.get_ptr_offset(checked_reg).map(|po| po.var_off).unwrap_or(0)
-    } else {
-        0
-    };
-    propagate_meta_range_to_stack(state, checked_var_off, proven_size);
+    propagate_meta_range_to_stack(state, checked_id, proven_size);
 }
 
 /// Propagate meta range to spilled meta pointers on all stack frames.
-fn propagate_meta_range_to_stack(state: &mut State, checked_var_off: u64, proven_size: i64) {
+/// Matches by kernel-style id (find_good_pkt_pointers same-id rule).
+fn propagate_meta_range_to_stack(state: &mut State, checked_id: Option<u32>, proven_size: i64) {
     // Iterate over all frames and update meta pointer slots
     for frame_idx in 0..state.num_frames() {
         let frame_level = crate::analysis::machine::frame_stack::FrameLevel::from_index(frame_idx);
@@ -520,13 +527,19 @@ fn propagate_meta_range_to_stack(state: &mut State, checked_var_off: u64, proven
             use crate::analysis::machine::stack_state::PointerBounds;
             if let Some(PointerBounds::Interval {
                 off,
-                var_off,
+                var_off: _,
                 range,
+                id,
             }) = &mut spilled.ptr_bounds
             {
-                if let (Some(o), Some(v)) = (*off, *var_off) {
-                    // Must have same var_off to be in the same "group"
-                    if v != checked_var_off {
+                if let Some(o) = *off {
+                    // Kernel same-id family rule (find_good_pkt_pointers).
+                    let in_family = match (checked_id, *id) {
+                        (Some(a), Some(b)) => a == b,
+                        (None, None) => true,
+                        _ => false,
+                    };
+                    if !in_family {
                         continue;
                     }
 

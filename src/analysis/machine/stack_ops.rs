@@ -34,12 +34,13 @@ impl State {
         // Save pointer bounds if applicable
         let ptr_bounds = if size == MemSize::U64 && is_aligned {
             use crate::analysis::machine::stack_state::PointerBounds;
-            let (i_off, i_var, i_range) = self.save_interval_ptr_offset(reg);
+            let (i_off, i_var, i_range, i_id) = self.save_interval_ptr_offset(reg);
             if i_off.is_some() || i_var.is_some() || i_range.is_some() {
                 Some(PointerBounds::Interval {
                     off: i_off,
                     var_off: i_var,
                     range: i_range,
+                    id: i_id,
                 })
             } else {
                 let (a, lo, hi) = self.save_anchor_info(reg);
@@ -503,13 +504,21 @@ impl State {
     }
 
     /// Save interval mode PtrOffset info for a register
-    pub fn save_interval_ptr_offset(&self, reg: Reg) -> (Option<i64>, Option<u64>, Option<i64>) {
+    pub fn save_interval_ptr_offset(
+        &self,
+        reg: Reg,
+    ) -> (Option<i64>, Option<u64>, Option<i64>, Option<u32>) {
         if let NumericDomain::Interval(ref ivl) = self.domain {
             if let Some(ptr_off) = ivl.get_ptr_offset(reg) {
-                return (Some(ptr_off.off), Some(ptr_off.var_off), ptr_off.range);
+                return (
+                    Some(ptr_off.off),
+                    Some(ptr_off.var_off),
+                    ptr_off.range,
+                    ptr_off.id,
+                );
             }
         }
-        (None, None, None)
+        (None, None, None, None)
     }
 
     pub fn restore_anchor_info(&mut self, reg: Reg, spilled: &SpilledReg) {
@@ -577,6 +586,7 @@ impl State {
                 off,
                 var_off,
                 range,
+                id,
             }) => {
                 // Determine anchor from register type
                 let anchor = match spilled.reg_type {
@@ -602,10 +612,11 @@ impl State {
                             off: *o,
                             var_off: v,
                             range: *range,
-                            // id not round-tripped through spill/fill
-                            // today; conservative None — loses id-aware
-                            // refinement on reload but stays sound.
-                            id: None,
+                            // id round-trips through the spill slot so
+                            // find_good_pkt_pointers-mirror propagation
+                            // can match spilled pkt pointers by ID (the
+                            // kernel's rule).
+                            id: *id,
                             // mark_pkt_end relationship not round-tripped
                             // through spill/fill; conservative None is sound.
                             pkt_end_rel: None,
