@@ -851,6 +851,18 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
         }
     }
     env.bcf_proofs.push(entry);
+    // DEBUG (parent-hop validation, 2026-06-19): eagerly flush the
+    // accumulated bcf_proofs to a path after every discharge push, so the
+    // on-disk bundle reflects current proofs even when the run is killed by
+    // a wall-clock timeout before analyze() reaches its write_bundle. Lets
+    // us capture the accepted_entrypoint 21f06b60 entry despite the no_log
+    // non-termination. Writes atomically (tmp+rename). Default-OFF.
+    if let Ok(flush_path) = std::env::var("ZOVIA_BCF_EAGER_FLUSH") {
+        let tmp = format!("{}.tmp", flush_path);
+        if crate::refinement::bundle::write_bundle(std::path::Path::new(&tmp), &env.bcf_proofs).is_ok() {
+            let _ = std::fs::rename(&tmp, &flush_path);
+        }
+    }
     // Also push the un-rewritten (aliased-VAR) form so previously-
     // matched hashes that happened to be the aliased shape stay in the
     // bundle alongside the kernel-shape rewrites. Without this, the

@@ -582,7 +582,43 @@ pub fn bcf_suffix_base_pc(
                 }
                 if bt.is_empty() {
                     if debug {
-                        eprintln!("[bcf-track] bt empty at pc={}", step_pc);
+                        let pl_pc = parent_loc.map(|(pc, _)| pc);
+                        let gp_pc = parent_grandparent_id
+                            .and_then(|id| env.cache_loc_by_id.get(&id).map(|(pc, _)| *pc));
+                        eprintln!(
+                            "[bcf-track] bt empty at pc={} | parent_loc_pc={:?} grandparent_pc={:?} cur_parent_id={:?} gp_id={:?}",
+                            step_pc, pl_pc, gp_pc, current_parent_id, parent_grandparent_id
+                        );
+                    }
+                    // PARENT-HOP BASE (2026-06-19, accepted_entrypoint
+                    // pc907): the kernel's `base = st->parent` where `st` is
+                    // the state whose range CONTAINS the bt-empty insn. When
+                    // bt empties at insn i that is exactly the FIRST insn of
+                    // the state at `parent_loc` (i.e. `parent_loc_pc == i`),
+                    // that state IS the kernel's `st` and the faithful base
+                    // is its PARENT checkpoint, NOT `parent_loc` itself.
+                    // MEASURED: pc907 reject, kernel `[ZK refine]
+                    // bt_empty_idx=379 base_first=318`; zovia's state@379 =
+                    // cache 62, parent = cache 61 = pc318. Returning
+                    // parent_loc (379) emits a SUBSET path_cond → the kernel's
+                    // 21f06b60 (full 907→318 window) MISSes; returning the
+                    // grandparent (318) emits the kernel-queried obligation.
+                    // ADDITIVE on the canonical path; alternate sibling-path
+                    // bt-empties (parent_loc_pc != i) are untouched. Gated
+                    // default-OFF until VM-validated (repr-19 + cilium-17).
+                    if std::env::var("ZOVIA_BCF_PARENT_HOP_BASE").ok().as_deref()
+                        == Some("1")
+                        && parent_loc.map(|(pc, _)| pc) == Some(step_pc)
+                        && let Some(gp_id) = parent_grandparent_id
+                        && let Some((gp_pc, _)) = env.cache_loc_by_id.get(&gp_id).copied()
+                    {
+                        if debug {
+                            eprintln!(
+                                "[bcf-track] parent-hop base: bt-empty@{} parent_loc==self, return grandparent pc={}",
+                                step_pc, gp_pc
+                            );
+                        }
+                        return Some(gp_pc);
                     }
                     // FAITHFUL BASE (no_log lean-bundle, 2026-05-30):
                     // the kernel's `base = st->parent` is the parent
