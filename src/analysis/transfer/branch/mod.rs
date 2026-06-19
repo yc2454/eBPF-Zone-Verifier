@@ -510,7 +510,26 @@ fn unreachable_base_pc(env: &VerifierEnv, state: &State) -> Option<usize> {
             || matches!(ty, RegType::PtrToBtfId { .. })
             || matches!(ty, RegType::PtrToOwnedKptr { .. })
             || matches!(ty, RegType::PtrToMapKptr { .. });
-        if !matches!(ty, RegType::ScalarValue) && const_offset {
+        // Kernel-faithful reg_masks (2026-06-19): the kernel's bcf_refine
+        // reg_masks default (verifier.c:24535-24543) excludes every reg with
+        // `type != SCALAR_VALUE && tnum_is_const(reg->var_off)` — i.e. a packet
+        // pointer whose offset is fully CONST is dropped. zovia models a packet
+        // ptr's offset OUTSIDE the value-tnum (in `ptr_const_off`), and this fn
+        // deliberately keeps PtrToPacket (it CAN have a variable offset) — but
+        // when it carries ONLY a tracked const offset (no variable part) it
+        // matches the kernel's const-var_off exclusion. Without this, e.g.
+        // R8=pkt(off=14) leaks into the reject's target set (mask 0x68e vs the
+        // kernel's reg_masks 0x247) → a wider suffix-base walk → wrong discharge
+        // window (accepted_entrypoint pc907: zovia base 379 vs kernel 318).
+        // ADDITIVE: only ever EXCLUDES more, tightening toward the kernel's
+        // reg_masks, never widens the tracked set. Default-OFF
+        // (`ZOVIA_BCF_PKT_CONST_REGMASK=1`) until VM-gated (repr-19 + cilium-17
+        // loads, FA=0) — it shifts emitted discharge windows, so a
+        // currently-matched hash could move.
+        let pkt_const_off = matches!(ty, RegType::PtrToPacket)
+            && state.ptr_const_off.contains_key(&r)
+            && std::env::var("ZOVIA_BCF_PKT_CONST_REGMASK").ok().as_deref() == Some("1");
+        if (!matches!(ty, RegType::ScalarValue) && const_offset) || pkt_const_off {
             continue;
         }
         targets.push(r);
