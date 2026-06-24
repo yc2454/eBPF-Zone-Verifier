@@ -116,7 +116,16 @@ fn record_path_cond_for_side(
     // materializes (see K==K rewrite gate in
     // feedback_kernel_probe_record_path_cond_2026-05-23.md).
     let lhs_materialize_pc: Option<usize> = bcf.get_reg_pc(l_idx);
+    // PATH B: was the LHS reg uncached entering THIS branch? (kernel
+    // `bcf_pre == -1` → `bcf_bound_reg` emits its bound conjuncts; cached →
+    // none). Captured before reg_expr materializes it.
+    let lhs_was_uncached = lhs_materialize_pc.is_none();
     let cmp_l = bcf.reg_expr(l_idx, &lhs_bounds, jmp32);
+    let rhs_idx: Option<usize> = match right {
+        Operand::Reg(r) => r.bcf_idx(),
+        _ => None,
+    };
+    let rhs_was_uncached = rhs_idx.map(|ri| bcf.get_reg_pc(ri).is_none()).unwrap_or(false);
     let cmp_r = match right {
         Operand::Imm(c) => {
             let v = if jmp32 { (*c as u32) as u64 } else { *c as u64 };
@@ -127,6 +136,31 @@ fn record_path_cond_for_side(
             None => bcf.add_val(0, jmp32),
         },
     };
+    // PATH B (ZOVIA_BCF_REPLAY): mirror the kernel's `bcf_bound_reg`, which
+    // emits an operand's bound conjuncts INSIDE `record_path_cond` — BEFORE the
+    // branch cond is pushed, in umin/umax/smin/smax order, and ONLY when the reg
+    // was freshly materialized this branch (`bcf_pre == -1`). Emitting the block
+    // here (before `add_cond_at_narrowed`) reproduces the kernel's
+    // [u>=K, u<=M, …] block-then-branch ORDER and per-reg first-ref dedup that
+    // the post-branch replay arm (and the recording BOUND_SYNC arm) get wrong.
+    // calico from_nat_fib pc748 d53387e3: V0's [u>=6, u<=0xff] precede `s>5`.
+    // Const-materialized operands carry no VAR → no bound block (their value is
+    // emitted directly via the K==K rewrite).
+    if bcf.replay_emit_bounds {
+        if lhs_was_uncached && lhs_bounds.const_val.is_none() {
+            for bp in bcf.bound_reg_emit_preds(cmp_l, &lhs_bounds, jmp32) {
+                bcf.add_cond(bp);
+            }
+        }
+        if rhs_was_uncached
+            && let Some(rb) = rhs_bounds.as_ref()
+            && rb.const_val.is_none()
+        {
+            for bp in bcf.bound_reg_emit_preds(cmp_r, rb, jmp32) {
+                bcf.add_cond(bp);
+            }
+        }
+    }
     let pred = if op != CmpOp::Test {
         bcf.add_pred(op_byte_for_side, cmp_l, cmp_r)
     } else {
@@ -147,21 +181,11 @@ fn record_path_cond_for_side(
     // zovia's cached-VAR `reg_expr` only emits operand bounds at a reg's FIRST
     // (pre-narrow) reference, so later branches never re-emit the kernel's
     // `u>= K` conjunct (from_nat_fib pc748 d53387e3 = reconstruction goal +
-    // v0 `u>= 6`). Two gated modes (both default-OFF):
-    if bcf.replay_emit_bounds {
-        // REPLAY: `materialize_reg` made bare VARs, so emit the operand's FULL
-        // current bounds at each branch (the kernel's bcf_track form).
-        for bp in bcf.bound_reg_emit_preds(cmp_l, &lhs_bounds, jmp32) {
-            bcf.add_cond(bp);
-        }
-        if matches!(right, Operand::Reg(_))
-            && let Some(rb) = rhs_bounds.as_ref()
-        {
-            for bp in bcf.bound_reg_emit_preds(cmp_r, rb, jmp32) {
-                bcf.add_cond(bp);
-            }
-        }
-    } else if std::env::var("ZOVIA_BCF_BOUND_SYNC").ok().as_deref() == Some("1") {
+    // v0 `u>= 6`). The REPLAY block is emitted BEFORE the pred above; this
+    // recording-mode arm (default-OFF) is the non-replay BOUND_SYNC dedup:
+    if !bcf.replay_emit_bounds
+        && std::env::var("ZOVIA_BCF_BOUND_SYNC").ok().as_deref() == Some("1")
+    {
         // RECORDING (additive on top of the normal first-ref bounds): re-emit
         // ONLY the tightened post-narrow UMIN when this branch raised it (proto
         // `s> 5`: pre umin=0 → post umin=6), minimizing over-emission. Reaches
