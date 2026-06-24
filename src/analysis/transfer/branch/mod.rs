@@ -143,6 +143,44 @@ fn record_path_cond_for_side(
     // different cached PC than the originator).
     let narrow_now = narrow_for_side.map(|(k, op_b, j32, _)| (k, op_b, j32, lhs_materialize_pc));
     bcf.add_cond_at_narrowed(pred, src_pc, narrow_now, Some((l_idx, lhs_materialize_pc, jmp32, lhs_bounds.clone(), pre_lhs_bounds.clone())));
+    // Mirror the kernel's `bcf_bound_reg` (emitted per `record_path_cond`):
+    // zovia's cached-VAR `reg_expr` only emits operand bounds at a reg's FIRST
+    // (pre-narrow) reference, so later branches never re-emit the kernel's
+    // `u>= K` conjunct (from_nat_fib pc748 d53387e3 = reconstruction goal +
+    // v0 `u>= 6`). Two gated modes (both default-OFF):
+    if bcf.replay_emit_bounds {
+        // REPLAY: `materialize_reg` made bare VARs, so emit the operand's FULL
+        // current bounds at each branch (the kernel's bcf_track form).
+        for bp in bcf.bound_reg_emit_preds(cmp_l, &lhs_bounds, jmp32) {
+            bcf.add_cond(bp);
+        }
+        if matches!(right, Operand::Reg(_))
+            && let Some(rb) = rhs_bounds.as_ref()
+        {
+            for bp in bcf.bound_reg_emit_preds(cmp_r, rb, jmp32) {
+                bcf.add_cond(bp);
+            }
+        }
+    } else if std::env::var("ZOVIA_BCF_BOUND_SYNC").ok().as_deref() == Some("1") {
+        // RECORDING (additive on top of the normal first-ref bounds): re-emit
+        // ONLY the tightened post-narrow UMIN when this branch raised it (proto
+        // `s> 5`: pre umin=0 → post umin=6), minimizing over-emission. Reaches
+        // symdiff=1 on d53387e3 (residual = one extra u>=6, see
+        // project_from_nat_fib_chase: the exploration-order tail).
+        let mut ub = RegBounds::unknown();
+        if jmp32 {
+            if lhs_bounds.u32_min > pre_lhs_bounds.u32_min {
+                ub.u32_min = lhs_bounds.u32_min;
+            }
+        } else if lhs_bounds.umin > pre_lhs_bounds.umin {
+            ub.umin = lhs_bounds.umin;
+        }
+        if ub.umin != 0 || ub.u32_min != 0 {
+            for bp in bcf.bound_reg_emit_preds(cmp_l, &ub, jmp32) {
+                bcf.add_cond(bp);
+            }
+        }
+    }
 }
 
 /// Transfer function for conditional branch instructions.

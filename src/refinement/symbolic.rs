@@ -199,6 +199,13 @@ pub struct SymbolicState {
     /// each leaf VAR came from. See
     /// [[feedback_byte_level_decode_first]] §2026-05-29 cont.4.
     pub var_origin: std::collections::HashMap<u32, usize>,
+    /// Set true ONLY during a faithful base→reject replay (`reset_for_replay`).
+    /// When set, `record_path_cond_for_side` emits the branch operands' CURRENT
+    /// (post-narrow) bound preds at each branch — mirroring the kernel's
+    /// `bcf_bound_reg` call inside `record_path_cond`, which re-materializes
+    /// operand bounds per cond (giving the kernel goal its `u>= K` / duplicate
+    /// bound conjuncts). Default false → normal recording/reconstruction unchanged.
+    pub replay_emit_bounds: bool,
 }
 
 impl SymbolicState {
@@ -224,6 +231,10 @@ impl SymbolicState {
         self.path_cond_narrowed_const.clear();
         self.path_cond_lhs_meta.clear();
         self.refine_cond = None;
+        // Mirror the kernel's bcf_track: during replay emit per-branch operand
+        // bound preds (bcf_bound_reg) so the goal carries the post-narrow `u>= K`
+        // conjuncts the reconstruction's first-ref VAR caching drops.
+        self.replay_emit_bounds = true;
     }
 
     /// Append an expression and return its slot offset.
@@ -1089,21 +1100,32 @@ impl SymbolicState {
         if let Some(v) = bounds.const_val {
             return self.add_val64(v);
         }
+        // During replay, reg_expr makes a BARE VAR (kernel bcf_reg_expr): the
+        // operand bounds come from the per-branch bcf_bound_reg mirror in
+        // record_path_cond_for_side. Emitting first-ref bounds here too would
+        // DOUBLE the bound conjuncts (over-emit vs the kernel goal).
+        let emit_first_ref_bounds = !self.replay_emit_bounds;
         if bounds.fit_u32() {
             let v32 = self.add_var_bits(true);
             self.var_origin.insert(v32, reg);
-            self.bound_reg32(v32, bounds);
+            if emit_first_ref_bounds {
+                self.bound_reg32(v32, bounds);
+            }
             return self.add_extend(false, 32, 64, v32);
         }
         if bounds.fit_s32() {
             let v32 = self.add_var_bits(true);
             self.var_origin.insert(v32, reg);
-            self.bound_reg32(v32, bounds);
+            if emit_first_ref_bounds {
+                self.bound_reg32(v32, bounds);
+            }
             return self.add_extend(true, 32, 64, v32);
         }
         let v64 = self.add_var_bits(false);
         self.var_origin.insert(v64, reg);
-        self.bound_reg64(v64, bounds);
+        if emit_first_ref_bounds {
+            self.bound_reg64(v64, bounds);
+        }
         v64
     }
 

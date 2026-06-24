@@ -1095,7 +1095,12 @@ impl State {
         if let Some(b) = self.bcf.as_mut() {
             b.reset_for_replay();
         } else {
-            self.bcf = Some(Box::new(crate::refinement::symbolic::SymbolicState::new()));
+            let mut s = crate::refinement::symbolic::SymbolicState::new();
+            // Match reset_for_replay: a from-scratch replay bcf must also emit
+            // per-branch operand bounds (kernel bcf_bound_reg). Cached checkpoint
+            // states routinely drop their bcf, so this `else` is the common path.
+            s.replay_emit_bounds = true;
+            self.bcf = Some(Box::new(s));
         }
         for frame in self.frames.iter_mut() {
             frame.stack.reset_bcf_for_replay();
