@@ -167,13 +167,23 @@ fn record_path_cond_for_side(
         // `s> 5`: pre umin=0 → post umin=6), minimizing over-emission. Reaches
         // symdiff=1 on d53387e3 (residual = one extra u>=6, see
         // project_from_nat_fib_chase: the exploration-order tail).
+        // PATH A dedup: emit only when the post-narrow umin RAISED on this branch
+        // (vs entering it) AND strictly exceeds the highest umin THIS path has
+        // already additively emitted for the reg — so a reg crossing 0→6 emits
+        // `u>= 6` once, even though both the `==6` and `!=6` branches raise it.
         let mut ub = RegBounds::unknown();
         if jmp32 {
-            if lhs_bounds.u32_min > pre_lhs_bounds.u32_min {
+            if lhs_bounds.u32_min > pre_lhs_bounds.u32_min
+                && lhs_bounds.u32_min > bcf.bcf_sync_u32min_emitted[l_idx]
+            {
                 ub.u32_min = lhs_bounds.u32_min;
+                bcf.bcf_sync_u32min_emitted[l_idx] = lhs_bounds.u32_min;
             }
-        } else if lhs_bounds.umin > pre_lhs_bounds.umin {
+        } else if lhs_bounds.umin > pre_lhs_bounds.umin
+            && lhs_bounds.umin > bcf.bcf_sync_umin_emitted[l_idx]
+        {
             ub.umin = lhs_bounds.umin;
+            bcf.bcf_sync_umin_emitted[l_idx] = lhs_bounds.umin;
         }
         if ub.umin != 0 || ub.u32_min != 0 {
             for bp in bcf.bound_reg_emit_preds(cmp_l, &ub, jmp32) {
