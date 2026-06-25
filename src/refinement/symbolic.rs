@@ -1126,8 +1126,8 @@ impl SymbolicState {
         // and the arm skips them (from_nat_fib: REPLAY goals miss every `JLE
         // v,0xff`). With this flag, materialize_reg emits at first-ref and the
         // deferred arm is disabled (see record_path_cond_for_side).
-        let replay_firstref = std::env::var("ZOVIA_BCF_REPLAY_FIRSTREF").ok().as_deref()
-            == Some("1");
+        let replay_firstref =
+            crate::common::config::bcf_mirror_knob("ZOVIA_BCF_REPLAY_FIRSTREF", true);
         let emit_first_ref_bounds = !self.replay_emit_bounds || replay_firstref;
         if bounds.fit_u32() {
             let v32 = self.add_var_bits(true);

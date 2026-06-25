@@ -162,9 +162,10 @@ fn record_path_cond_for_side(
     // calico from_nat_fib pc748 d53387e3: V0's [u>=6, u<=0xff] precede `s>5`.
     // Const-materialized operands carry no VAR → no bound block (their value is
     // emitted directly via the K==K rewrite).
-    // ZOVIA_BCF_REPLAY_FIRSTREF disables this deferred (branch-only) arm —
-    // bounds are emitted at first materialization in materialize_reg instead.
-    let replay_firstref = std::env::var("ZOVIA_BCF_REPLAY_FIRSTREF").ok().as_deref() == Some("1");
+    // ZOVIA_BCF_REPLAY_FIRSTREF (default-ON) disables this deferred (branch-only)
+    // arm — bounds are emitted at first materialization in materialize_reg
+    // instead (kernel bcf_reg_expr→bcf_bound_reg, read OR branch).
+    let replay_firstref = crate::common::config::bcf_mirror_knob("ZOVIA_BCF_REPLAY_FIRSTREF", true);
     if bcf.replay_emit_bounds && !replay_firstref {
         if lhs_was_uncached && lhs_bounds.const_val.is_none() {
             for bp in bcf.bound_reg_emit_preds(cmp_l, &lhs_bounds, jmp32) {
@@ -921,7 +922,12 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     // replay-derived entry alongside the reconstruction discharges (merge
     // dedups by cond_hash). Lets us validate replay coverage without
     // disturbing the existing path.
-    if std::env::var("ZOVIA_BCF_REPLAY").ok().as_deref() == Some("1") {
+    // REPLAY = faithful base→reject re-execution (kernel bcf_track mirror).
+    // DEFAULT-ON (kill-switch ZOVIA_BCF_REPLAY=0); ADDITIVE alongside the
+    // reconstruction discharge (merge dedups by cond_hash). Pairs with
+    // ZOVIA_BCF_REPLAY_FIRSTREF (also default-ON) for kernel-faithful first-ref
+    // bound emission.
+    if crate::common::config::bcf_mirror_knob("ZOVIA_BCF_REPLAY", true) {
         if std::env::var("ZOVIA_BCF_REPLAY_DEBUG").ok().as_deref() == Some("1") {
             eprintln!("[replay] CALL reject@pc={} base_cid={:?}", state.pc, base_cid_dbg);
         }
