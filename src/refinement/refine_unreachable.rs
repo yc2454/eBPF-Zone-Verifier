@@ -1267,6 +1267,14 @@ fn try_prove_unreachable_inner(
         }
     };
 
+    if std::env::var("ZOVIA_GOAL_MODE").is_ok() {
+        let h = crate::refinement::canonical_hash::hash_expr(goal_root, &sym.exprs);
+        eprintln!(
+            "[goalmode] hash=0x{:016x} fresh_rewrite={} faithful_fold={} base_pc={:?}",
+            h, do_fresh_var_rewrite, faithful_fold, base_pc
+        );
+    }
+
     // Don't set sym.refine_cond — leaving it None makes smtlib::encode
     // emit `(assert <path_conds>)` directly (no nested CONJ with a
     // refine_cond), which is what we want for the path-unreachable proof.
