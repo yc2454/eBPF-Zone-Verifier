@@ -120,7 +120,23 @@ fn record_path_cond_for_side(
     // `bcf_pre == -1` → `bcf_bound_reg` emits its bound conjuncts; cached →
     // none). Captured before reg_expr materializes it.
     let lhs_was_uncached = lhs_materialize_pc.is_none();
-    let cmp_l = bcf.reg_expr(l_idx, &lhs_bounds, jmp32);
+    // ZOVIA_BCF_LHS_EQ_PRENARROW (from_nat_fib 92e8d190, default-OFF, NON-default
+    // because it's NOT additive on its own — it flips equality branches
+    // folded→VAR globally, dropping the kernel's FOLDED forms like c1dae923; use
+    // ONLY for a run-twice + bundle-UNION with the default folded run): for an
+    // EQUALITY (`==`/`!=`) branch whose LHS enters as a NON-const range but
+    // narrows to const, materialize from the PRE-narrow range so it stays
+    // `VAR{JLE0xff} + JEQ K` instead of folding to `(K==K)` — the kernel's VAR
+    // form (92e8d190 reload `v<=0xff, v==6`). Dual of LHS_BOUND_AT_BRANCH
+    // (inequality → POST-narrow bound `u>=6`). Takes 92e8 from symdiff=6 → 1
+    // (residual = base-placement JSLE5, see memory).
+    let eq_prenarrow = std::env::var("ZOVIA_BCF_LHS_EQ_PRENARROW").ok().as_deref() == Some("1")
+        && matches!(op, CmpOp::Eq | CmpOp::Ne)
+        && lhs_was_uncached
+        && lhs_bounds.const_val.is_some()
+        && pre_lhs_bounds.const_val.is_none();
+    let mat_l_bounds = if eq_prenarrow { &pre_lhs_bounds } else { &lhs_bounds };
+    let cmp_l = bcf.reg_expr(l_idx, mat_l_bounds, jmp32);
     let rhs_idx: Option<usize> = match right {
         Operand::Reg(r) => r.bcf_idx(),
         _ => None,
