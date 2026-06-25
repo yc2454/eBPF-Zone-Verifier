@@ -58,6 +58,24 @@ fn bcf_materialize_src(state: &mut State, reg: Reg) {
 /// Checks if a register is readable (has been initialized).
 /// Returns true if readable, false if not (and records error).
 pub(crate) fn check_reg_readable(env: &mut VerifierEnv, state: &mut State, reg: Reg) -> bool {
+    check_reg_readable_ex(env, state, reg, true)
+}
+
+/// Like [`check_reg_readable`] but `materialize=false` performs the
+/// readability check WITHOUT eagerly binding the reg's bcf_expr. The kernel
+/// materializes a branch operand's bound conjuncts in `record_path_cond`
+/// (post-narrow, via `bcf_bound_reg`), NOT at the source-operand read; a
+/// branch LHS that this read would otherwise materialize PRE-narrow (umin=0)
+/// then loses the kernel's `u>= K` lower-bound conjunct on the narrowing
+/// (taken) side. Deferring lets `record_path_cond_for_side` re-materialize it
+/// post-narrow so `[u>=K, u<=M]` emit together before the branch cond
+/// (from_nat_fib pc748 d53387e3 V0 `u>= 6`). Gated by the caller.
+pub(crate) fn check_reg_readable_ex(
+    env: &mut VerifierEnv,
+    state: &mut State,
+    reg: Reg,
+    materialize: bool,
+) -> bool {
     // R10 (frame pointer) is always readable
     if reg == Reg::R10 {
         return true;
@@ -104,7 +122,9 @@ pub(crate) fn check_reg_readable(env: &mut VerifierEnv, state: &mut State, reg: 
         _ => {
             // Faithful kernel `check_reg_arg` SRC_OP hook: bind the
             // reg's bcf_expr on first source-operand read.
-            bcf_materialize_src(state, reg);
+            if materialize {
+                bcf_materialize_src(state, reg);
+            }
             true
         }
     }

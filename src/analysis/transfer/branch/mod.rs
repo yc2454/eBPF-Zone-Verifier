@@ -21,7 +21,7 @@ use self::constraints::apply_jmp_constraints;
 use self::interval_packet::refine_packet_bounds_on_branch;
 use self::outcome::condition_outcome;
 use self::refinement::{propagate_scalar_links, refine_branch};
-use super::common::{check_operand_readable, check_reg_readable};
+use super::common::check_operand_readable;
 
 /// Map an AST `CmpOp` to the (taken, not-taken) BCF/BPF jump-op byte pair.
 /// Returns `None` for ops we don't yet symbolically model (JSET — encoded
@@ -227,8 +227,22 @@ pub(crate) fn transfer_if(
     right: Operand,
     target: usize,
 ) -> Vec<State> {
-    // Check operand readability
-    if !check_reg_readable(env, &mut state, left) {
+    // Check operand readability. Under ZOVIA_BCF_LHS_BOUND_AT_BRANCH, DEFER
+    // the branch LHS's bcf_expr materialization (don't bind+bound it here at
+    // its PRE-narrow range); record_path_cond_for_side then materializes it
+    // POST-narrow per side, mirroring the kernel's bcf_bound_reg-in-
+    // record_path_cond emission (from_nat_fib pc748 d53387e3: V0 `u>=6` must
+    // precede `u<=0xff` and `s>5`, which only happens post-narrow).
+    let lhs_defer_bounds = std::env::var("ZOVIA_BCF_LHS_BOUND_AT_BRANCH")
+        .ok()
+        .as_deref()
+        == Some("1");
+    if !crate::analysis::transfer::common::check_reg_readable_ex(
+        env,
+        &mut state,
+        left,
+        !lhs_defer_bounds,
+    ) {
         return vec![];
     }
     if !check_operand_readable(env, &mut state, &right) {
