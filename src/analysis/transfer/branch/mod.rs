@@ -722,87 +722,103 @@ fn try_prove_unreachable_via_replay(
     env: &mut VerifierEnv,
     reject_state: &State,
     base_cid: u32,
-) -> Option<crate::refinement::refine_unreachable::UnreachableOk> {
+) -> Vec<crate::refinement::refine_unreachable::UnreachableOk> {
 
+    let empty = Vec::new();
     // 1. Retrieve the cached base State (with its register/domain state).
-    let (bpc, bidx) = env.cache_loc_by_id.get(&base_cid).copied()?;
-    let base_state = env.explored_states.get(&bpc)?.get(bidx)?.clone();
+    let Some((bpc, bidx)) = env.cache_loc_by_id.get(&base_cid).copied() else { return empty };
+    let Some(base_state) = env.explored_states.get(&bpc).and_then(|v| v.get(bidx)).cloned()
+        else { return empty };
     let base_hidx = base_state.history_idx;
 
     // 2. Recover the forward base→reject instruction path by walking the
-    //    Breadcrumb parent chain from the reject insn's breadcrumb
-    //    (env.current_step_idx) back to (exclusive) the base's breadcrumb.
-    let reject_bc = env.current_step_idx?;
+    //    Breadcrumb parent chain from the reject insn's breadcrumb.
+    let Some(reject_bc) = env.current_step_idx else { return empty };
     let mut path: Vec<(usize, Instr)> = Vec::new();
     let mut cur = Some(reject_bc);
     let mut budget: usize = 200_000;
     while let Some(idx) = cur {
-        if Some(idx) == base_hidx {
-            break;
-        }
-        budget = budget.checked_sub(1)?;
-        let bc = env.history.get(idx)?;
+        if Some(idx) == base_hidx { break; }
+        match budget.checked_sub(1) { Some(b) => budget = b, None => return empty }
+        let Some(bc) = env.history.get(idx) else { return empty };
         path.push((bc.pc, bc.instr.clone()));
         cur = bc.parent_idx;
     }
     let dbg = std::env::var("ZOVIA_BCF_REPLAY_DEBUG").ok().as_deref() == Some("1");
-    if path.is_empty() {
-        if dbg { eprintln!("[replay] EMPTY path base_cid={} base_hidx={:?} reject_bc={}", base_cid, base_hidx, reject_bc); }
-        return None;
-    }
+    if path.is_empty() { return empty; }
     path.reverse(); // forward order: base_pc .. reject branch
 
-    // The reject is the DEAD path: its destination pc disambiguates which
-    // edge the final branch transfer should follow.
     let dead_target = reject_state.pc;
-    // The reject insn at `reject_pc` is the last breadcrumb. Two reject
-    // shapes: (a) BRANCH reject (transfer_if dead side) — `reject_state` is
-    // a successor whose pc is the dead edge's destination (≠ reject_pc); we
-    // EXECUTE the branch and follow the dead edge. (b) ACCESS/ALU/CALL
-    // reject — `reject_state` IS the state at the reject insn (pc ==
-    // reject_pc); the failing insn must NOT be executed, so we replay up to
-    // its predecessor and read the bcf of the state that arrives at it.
-    let reject_pc = env.history.get(reject_bc)?.pc;
+    let Some(reject_pc) = env.history.get(reject_bc).map(|b| b.pc) else { return empty };
     let is_branch_reject = reject_state.pc != reject_pc;
     let n_exec = if is_branch_reject { path.len() } else { path.len() - 1 };
-    if n_exec == 0 {
-        return None;
-    }
+    if n_exec == 0 { return empty; }
     if dbg {
         eprintln!("[replay] STRUCT reject_pc={} reject_state.pc={} is_branch={} path[0]={} path[last]={} len={} n_exec={}",
             reject_pc, reject_state.pc, is_branch_reject, path[0].0, path[path.len()-1].0, path.len(), n_exec);
     }
 
-    // 3. Replay: clone base, reset bcf (kernel resets bcf_expr=-1 at replay
-    //    start), re-run transfer following the path. replay_mode suppresses
-    //    fail()/precision/discharge side effects and makes branches return
-    //    both edges so we can pick the path's next pc (dead edge at the end).
-    let mut base_state = base_state;
-    base_state.reset_bcf_for_replay();
-    env.replay_mode = true;
-    let mut holder: Option<State> = Some(base_state);
-    for i in 0..n_exec {
-        let pc = path[i].0;
-        let instr = path[i].1.clone();
-        let mut st = match holder.take() {
-            Some(s) => s,
-            None => break,
-        };
-        st.pc = pc;
-        let succ = crate::analysis::transfer::transfer(env, st, &instr);
-        let next_pc = if i + 1 < path.len() { path[i + 1].0 } else { dead_target };
-        let pcs: Vec<usize> = succ.iter().map(|s| s.pc).collect();
-        holder = succ.into_iter().find(|s| s.pc == next_pc);
-        if holder.is_none() {
-            if dbg { eprintln!("[replay] DIVERGE at step {}/{} pc={} want_next={} got={:?}", i, path.len(), pc, next_pc, pcs); }
-            break; // replay diverged from the recorded path
+    // 3. Reset points: None = the plain replay (bcf reset at the suffix base).
+    //    NARROWBASE (default-ON) adds one per CONDITIONAL branch step k whose
+    //    LHS reg NARROWS on the taken side — re-anchoring the bcf base PAST the
+    //    narrowing so the LHS materializes POST-narrow (kernel bcf_track base =
+    //    st->parent past the narrowing branch). Emitted ADDITIVELY (caller
+    //    dedups by cond_hash). from_nat_fib pc748: the `s>5`@523 reset point
+    //    yields d53387e3 (proto `[u>=6,u<=0xff]`) the plain replay misses
+    //    (it re-executes 523 → proto pre-narrow = 2af13624 shape).
+    let narrowbase = crate::common::config::bcf_mirror_knob("ZOVIA_BCF_REPLAY_NARROWBASE", true);
+    let mut reset_points: Vec<Option<usize>> = vec![None];
+    if narrowbase {
+        for i in 0..n_exec {
+            if matches!(path[i].1, Instr::If { .. }) {
+                reset_points.push(Some(i));
+            }
         }
     }
-    env.replay_mode = false;
-    let mut final_state = holder?;
-    let sym = *final_state.bcf.take()?;
-    if dbg { eprintln!("[replay] OK path_len={} reject_pc={} dead_target={} n_conds={}", path.len(), reject_bc, dead_target, sym.path_conds.len()); }
-    crate::refinement::refine_unreachable::build_unreachable_from_replay(sym)
+
+    let mut goals = Vec::new();
+    for reset_after_idx in reset_points {
+        let mut base_state = base_state.clone();
+        base_state.reset_bcf_for_replay();
+        env.replay_mode = true;
+        let mut holder: Option<State> = Some(base_state);
+        for i in 0..n_exec {
+            let pc = path[i].0;
+            let instr = path[i].1.clone();
+            let st = match holder.take() { Some(s) => s, None => break };
+            let mut st = st;
+            st.pc = pc;
+            let succ = crate::analysis::transfer::transfer(env, st, &instr);
+            let next_pc = if i + 1 < path.len() { path[i + 1].0 } else { dead_target };
+            holder = succ.into_iter().find(|s| s.pc == next_pc);
+            if holder.is_none() { break; }
+            if Some(i) == reset_after_idx {
+                if let (Some(h), Instr::If { width, left, op, right, target }) =
+                    (holder.as_mut(), &instr)
+                {
+                    if let Some((op_then, op_else)) = cmp_op_to_bcf_pair(*op) {
+                        h.reset_bcf_for_replay();
+                        let taken = next_pc == *target;
+                        let op_byte = if taken { op_then } else { op_else };
+                        let pre_b =
+                            crate::analysis::transfer::alu::helpers::bcf_reg_bounds(h, *left);
+                        record_path_cond_for_side(
+                            h, *width, *left, *op, op_byte, right, pc, None, pre_b,
+                        );
+                    }
+                }
+            }
+        }
+        env.replay_mode = false;
+        if let Some(mut final_state) = holder {
+            if let Some(symb) = final_state.bcf.take() {
+                if let Some(g) = crate::refinement::refine_unreachable::build_unreachable_from_replay(*symb) {
+                    goals.push(g);
+                }
+            }
+        }
+    }
+    goals
 }
 
 pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &State) -> bool {
@@ -932,7 +948,7 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
             eprintln!("[replay] CALL reject@pc={} base_cid={:?}", state.pc, base_cid_dbg);
         }
         if let Some(cid) = base_cid_dbg {
-            if let Some(rok) = try_prove_unreachable_via_replay(env, state, cid) {
+            for rok in try_prove_unreachable_via_replay(env, state, cid) {
                 let rentry = RefineEntry::new(
                     rok.goal_root,
                     rok.sym.exprs,
@@ -941,6 +957,9 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
                 );
                 if std::env::var("ZOVIA_BCF_REPLAY_DEBUG").ok().as_deref() == Some("1") {
                     eprintln!("[replay] HASH reject@pc={} hash={:016x}", state.pc, rentry.cond_hash);
+                }
+                if env.bcf_proofs.iter().any(|e| e.cond_hash == rentry.cond_hash) {
+                    continue;
                 }
                 info!(target: "app",
                     "[bcf] REPLAY path-unreachable: proof {} bytes (hash {:016x})",
@@ -1422,8 +1441,8 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
             // (ZOVIA_BCF_REPLAY=1). Re-executes from the ancestor's cached
             // state, so the goal is the kernel's exact bcf_track path cond
             // for a replay starting here. Additive + deduped by cond_hash.
-            if std::env::var("ZOVIA_BCF_REPLAY").ok().as_deref() == Some("1") {
-                if let Some(rok) = try_prove_unreachable_via_replay(env, state, parent_cid) {
+            if crate::common::config::bcf_mirror_knob("ZOVIA_BCF_REPLAY", true) {
+                for rok in try_prove_unreachable_via_replay(env, state, parent_cid) {
                     let rentry = RefineEntry::new(
                         rok.goal_root, rok.sym.exprs, rok.proof_bytes,
                         BCF_BUNDLE_KIND_UNREACHABLE,
