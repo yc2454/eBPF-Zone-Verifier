@@ -162,7 +162,10 @@ fn record_path_cond_for_side(
     // calico from_nat_fib pc748 d53387e3: V0's [u>=6, u<=0xff] precede `s>5`.
     // Const-materialized operands carry no VAR → no bound block (their value is
     // emitted directly via the K==K rewrite).
-    if bcf.replay_emit_bounds {
+    // ZOVIA_BCF_REPLAY_FIRSTREF disables this deferred (branch-only) arm —
+    // bounds are emitted at first materialization in materialize_reg instead.
+    let replay_firstref = std::env::var("ZOVIA_BCF_REPLAY_FIRSTREF").ok().as_deref() == Some("1");
+    if bcf.replay_emit_bounds && !replay_firstref {
         if lhs_was_uncached && lhs_bounds.const_val.is_none() {
             for bp in bcf.bound_reg_emit_preds(cmp_l, &lhs_bounds, jmp32) {
                 bcf.add_cond(bp);

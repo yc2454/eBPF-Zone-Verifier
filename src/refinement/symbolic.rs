@@ -1118,7 +1118,17 @@ impl SymbolicState {
         // operand bounds come from the per-branch bcf_bound_reg mirror in
         // record_path_cond_for_side. Emitting first-ref bounds here too would
         // DOUBLE the bound conjuncts (over-emit vs the kernel goal).
-        let emit_first_ref_bounds = !self.replay_emit_bounds;
+        // ZOVIA_BCF_REPLAY_FIRSTREF: kernel-faithful FIRST-REF bound emission —
+        // bcf_reg_expr→bcf_bound_reg emits a reg's bounds at its FIRST
+        // materialization (read OR branch), wherever it is. The deferred
+        // (branch-only) REPLAY arm LOSES bounds for regs first-materialized at a
+        // non-branch read (bcf_materialize_src) — they become cached bare vars
+        // and the arm skips them (from_nat_fib: REPLAY goals miss every `JLE
+        // v,0xff`). With this flag, materialize_reg emits at first-ref and the
+        // deferred arm is disabled (see record_path_cond_for_side).
+        let replay_firstref = std::env::var("ZOVIA_BCF_REPLAY_FIRSTREF").ok().as_deref()
+            == Some("1");
+        let emit_first_ref_bounds = !self.replay_emit_bounds || replay_firstref;
         if bounds.fit_u32() {
             let v32 = self.add_var_bits(true);
             self.var_origin.insert(v32, reg);
