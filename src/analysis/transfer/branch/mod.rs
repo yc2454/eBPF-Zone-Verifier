@@ -521,6 +521,13 @@ fn unreachable_base_pc(env: &VerifierEnv, state: &State) -> Option<usize> {
         Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4,
         Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9,
     ];
+    // Kernel-faithful reg_masks: the kernel keeps a non-const packet_end in
+    // reg_masks (its rule is `tnum_is_const(var_off)`, and packet_end's var_off
+    // is non-const). d0eb6b5 blanket-excluded PtrToPacketEnd to cap a
+    // calico_tc_main 1M-timeout; that over-excludes (calico from_nat_fib pc748:
+    // kernel tracks r2=packet_end → base 521). Default = keep it (faithful);
+    // kill-switch ZOVIA_BCF_EXCLUDE_PKT_END=1 restores the d0eb6b5 behaviour.
+    let excl_pkt_end = std::env::var("ZOVIA_BCF_EXCLUDE_PKT_END").ok().as_deref() == Some("1");
     let mut targets: Vec<Reg> = Vec::new();
     for &r in &VARREGS {
         let ty = state.types.get(r);
@@ -566,7 +573,7 @@ fn unreachable_base_pc(env: &VerifierEnv, state: &State) -> Option<usize> {
             // PtrToPacket is the only ptr type with variable offset
             // (`ptr += scalar`) and is deliberately NOT excluded.
             || matches!(ty, RegType::PtrToCtx)
-            || matches!(ty, RegType::PtrToPacketEnd)
+            || (excl_pkt_end && matches!(ty, RegType::PtrToPacketEnd))
             || matches!(ty, RegType::PtrToSocket { .. })
             || matches!(ty, RegType::PtrToSocketOrNull { .. })
             || matches!(ty, RegType::PtrToSockCommon { .. })
@@ -798,6 +805,10 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
             Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4,
             Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9,
         ];
+        // Twin of the kernel-faithful packet_end rule in unreachable_base_pc:
+        // keep non-const packet_end in reg_masks by default (kill-switch
+        // ZOVIA_BCF_EXCLUDE_PKT_END=1 restores d0eb6b5's blanket exclusion).
+        let excl_pkt_end = std::env::var("ZOVIA_BCF_EXCLUDE_PKT_END").ok().as_deref() == Some("1");
         let targets: Vec<Reg> = VARREGS.iter().copied()
             .filter(|&r| !matches!(state.types.get(r), RegType::NotInit))
             .filter(|&r| {
@@ -806,7 +817,7 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
                     || matches!(ty, RegType::PtrToMapValue { offset: Some(_), .. })
                     || matches!(ty, RegType::PtrToMapValueOrNull { .. })
                     || matches!(ty, RegType::PtrToCtx)
-                    || matches!(ty, RegType::PtrToPacketEnd)
+                    || (excl_pkt_end && matches!(ty, RegType::PtrToPacketEnd))
                     || matches!(ty, RegType::PtrToSocket { .. })
                     || matches!(ty, RegType::PtrToSocketOrNull { .. })
                     || matches!(ty, RegType::PtrToSockCommon { .. })
