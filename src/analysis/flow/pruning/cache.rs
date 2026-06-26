@@ -252,10 +252,21 @@ pub fn mark_path_children_unsafe(env: &mut VerifierEnv, cur: &State, base_pc: Op
             break;
         };
         if s.children_unsafe {
-            // Already marked: this prefix (and its ancestors) was
-            // marked by an earlier path-unreachable on the same
-            // lineage — stop, the rest is already done.
-            break;
+            // Already marked by an EARLIER discharge — but do NOT stop:
+            // the kernel marks `parents[0..vstate_cnt-1]` UNCONDITIONALLY
+            // (verifier.c:24629). Each discharge's backtrack base differs;
+            // a shallow discharge (base 579) marks 579→cur, then a later
+            // DEEPER discharge (base 521/512/455) walks the same lineage
+            // and, hitting the already-marked 742/739 prefix, must keep
+            // going to mark the 521→578 segment BELOW it. The old
+            // `break` assumed "already-marked ⇒ rest done", which is false
+            // when bases vary: it capped the cumulative marked floor at the
+            // FIRST discharge's base (579), so the proto-demux convergences
+            // at pc521 (calico from_nat_fib) stayed prune-safe and the
+            // w1!=6 arm was pruned there → 2a94 never emitted. Continue up
+            // the lineage; the `pc < base_pc` bound above still stops it.
+            id = s.parent_cache_id;
+            continue;
         }
         if skip_loop_hdr && env.loop_header_pcs.contains(&pc) {
             // EXPERIMENT: protect the loop-convergence subsumer; keep
