@@ -46,14 +46,19 @@ pub fn transfer(env: &mut VerifierEnv, mut state: State, instr: &Instr) -> Vec<S
             let (w4lo, w4hi) = state.domain.get_u32_bounds(Reg::R4);
             let (r1lo, r1hi) = state.domain.get_interval(Reg::R1);
             let (r2lo, r2hi) = state.domain.get_interval(Reg::R2);
+            let (r8lo, r8hi) = state.domain.get_interval(Reg::R8);
+            let (w8lo, w8hi) = state.domain.get_u32_bounds(Reg::R8);
             let r1t = state.types.get(Reg::R1);
             let r2t = state.types.get(Reg::R2);
             let r3t = state.types.get(Reg::R3);
             let r4t = state.types.get(Reg::R4);
+            let r8t = state.types.get(Reg::R8);
+            let r8p = state.precise_regs.contains(&Reg::R8);
             eprintln!(
-                "[VISIT] pc={} depth={} R1=[{}..{}]:{:?} R2=[{}..{}]:{:?} R3=[{}..{}]:{:?} R4=[{}..{}]:{:?} R5=[{}..{}] R6=[{}..{}] w4=[{}..{}]",
+                "[VISIT] pc={} depth={} R1=[{}..{}]:{:?} R2=[{}..{}]:{:?} R3=[{}..{}]:{:?} R4=[{}..{}]:{:?} R5=[{}..{}] R6=[{}..{}] w4=[{}..{}] R8=[{}..{}]:{:?} w8=[{}..{}] R8prec={}",
                 state.pc, state.frames.depth(),
                 r1lo, r1hi, r1t, r2lo, r2hi, r2t, r3lo, r3hi, r3t, r4lo, r4hi, r4t, r5lo, r5hi, r6lo, r6hi, w4lo, w4hi,
+                r8lo, r8hi, r8t, w8lo, w8hi, r8p,
             );
         }
     }
