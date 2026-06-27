@@ -60,7 +60,7 @@ awk '{print $1, $2}' "$clean_list" | \
   xargs -P "$JOBS" -L1 bash -c 'build1 "$1" "$2"' _
 echo "[$(date +%H:%M:%S)] phase 1 done. build log:" | tee -a "$RES"
 sort "$BLOG" | tee -a "$RES"
-NB=$(grep -c 'sz=0$' "$BLOG"); echo "  (no-bundle: $NB)" | tee -a "$RES"
+NB=$(grep -c 'sz=0$' "$BLOG"); echo "  (build-timeout, no bundle: $NB)" | tee -a "$RES"
 
 # ---- Phase 2: parallel VM-load (ssh -n so stdin is NOT consumed) ----
 export LLOG LTO
@@ -68,7 +68,9 @@ load1() {
   local name="$1" type="$2"
   local o="/root/bcf/sweep_pivot/$name.o"
   local b="/root/bcf/sweep_pivot/$name.o.bcf-bundle"
-  if [ ! -f "$SP/$name.o.bcf-bundle" ]; then echo "$name NO-BUNDLE" >> "$LLOG"; return; fi
+  # No staged bundle = the build hit BTO before writing one (sz=0). This is a
+  # build-time TIMEOUT, NOT a verification/load failure — keep them distinct.
+  if [ ! -f "$SP/$name.o.bcf-bundle" ]; then echo "$name BUILD-TIMEOUT" >> "$LLOG"; return; fi
   local out
   out=$(ssh -n -o ConnectTimeout=8 -o StrictHostKeyChecking=no -i "$VMKEY" -p 10023 root@localhost \
     "timeout $LTO /root/bcf/build/test_loader --type $type $o $b 2>&1 | grep -cE 'SUCCESS: loaded'")
