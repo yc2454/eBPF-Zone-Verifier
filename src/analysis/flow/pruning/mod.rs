@@ -36,6 +36,17 @@ fn is_inf_loop_skip_pc(prog: &Program, pc: usize) -> bool {
     matches!(prog.instrs.get(pc), Some(Instr::Call { .. }))
 }
 
+/// DIAGNOSTIC (ZOVIA_EXP_IGNORE_CHILDREN_UNSAFE): when set, the
+/// `children_unsafe` pruning-skip gate is bypassed — a marked cached state
+/// may still subsume later arrivals. Used to test whether children_unsafe
+/// over-marking is what disables convergence pruning and explodes the route
+/// enumeration in calico_tc_skb_accepted_entrypoint (pc274). Cached once.
+fn ignore_children_unsafe() -> bool {
+    use std::sync::OnceLock;
+    static V: OnceLock<bool> = OnceLock::new();
+    *V.get_or_init(|| std::env::var("ZOVIA_EXP_IGNORE_CHILDREN_UNSAFE").is_ok())
+}
+
 /// Handle pruning decision at a loop point.
 /// Returns Some(true) to prune, Some(false) to continue, None if no previous states.
 /// Walk cur's `parent_cache_id` lineage and collect the cache_ids of all
@@ -145,7 +156,7 @@ fn handle_loop_pruning(
         let mut r: Vec<SubsumptionMissReason> = Vec::new();
         for (i, prev) in prev_states.iter().enumerate() {
             // Kernel children_unsafe (bcf_refine, verifier.c:24580-81).
-            if prev.children_unsafe {
+            if prev.children_unsafe && !ignore_children_unsafe() {
                 continue;
             }
             // SCC force_exact: prev is on the current DFS path iff its
@@ -335,7 +346,7 @@ fn handle_standard_pruning(
             // Kernel children_unsafe (bcf_refine, verifier.c:24580-81):
             // a path-unreachable refinement marked this cached ancestor
             // not-prune-safe. Don't let it subsume a later arrival.
-            if prev.children_unsafe {
+            if prev.children_unsafe && !ignore_children_unsafe() {
                 local_children_unsafe_skips += 1;
                 continue;
             }
