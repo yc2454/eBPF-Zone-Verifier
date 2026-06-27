@@ -151,6 +151,15 @@ impl State {
             dynptr: None,
                     irq_flag: None,
             bcf_expr: slot_bcf_expr,
+            // Carry the const pointer offset (kernel copy_register_state
+            // preserves var_off/off across spill). Only meaningful for an
+            // aligned U64 pointer spill; sub-64 / unaligned spills lose the
+            // pointer anyway, so a None there matches.
+            ptr_const_off: if is_aligned && size == MemSize::U64 {
+                self.ptr_const_off.get(&reg).copied()
+            } else {
+                None
+            },
         };
 
         let stack = &mut self.frames.get_mut(level).stack;
@@ -173,6 +182,7 @@ impl State {
                         ptr_bounds: None,
                         scalar_id: None,
                         precise: false,
+            ptr_const_off: None,
                         iterator: None,
                         dynptr: None,
                     irq_flag: None,
@@ -221,6 +231,7 @@ impl State {
             ptr_bounds: None,
             scalar_id: None,
             precise: false,
+            ptr_const_off: None,
             iterator: None,
             dynptr: None,
                     irq_flag: None,
@@ -251,6 +262,7 @@ impl State {
                         ptr_bounds: None,
                         scalar_id: None,
                         precise: false,
+            ptr_const_off: None,
                         iterator: None,
                         dynptr: None,
                     irq_flag: None,
@@ -286,6 +298,10 @@ impl State {
         };
 
         self.domain.forget(dst);
+        // dst is being overwritten by the fill — drop any stale const
+        // pointer offset; the aligned-U64 pointer-restore branch below
+        // re-inserts the carried offset when present.
+        self.ptr_const_off.remove(&dst);
 
         // Check if we can preserve type/bounds:
         // 1. Must be reading from start of a spilled value (source_reg.is_some())
@@ -406,6 +422,24 @@ impl State {
                 self.precise_regs.insert(dst);
             } else {
                 self.precise_regs.remove(&dst);
+            }
+
+            // Restore the const pointer offset carried at spill time
+            // (kernel copy_register_state preserves var_off/off). Without
+            // this a filled packet pointer comes back with no const offset
+            // and leaks into the BCF reject reg_masks. U64-only: a pointer
+            // never survives a narrower fill.
+            if size == MemSize::U64 {
+                match spilled.ptr_const_off {
+                    Some(k) => {
+                        self.ptr_const_off.insert(dst, k);
+                    }
+                    None => {
+                        self.ptr_const_off.remove(&dst);
+                    }
+                }
+            } else {
+                self.ptr_const_off.remove(&dst);
             }
 
             // Only restore anchors for U64 (pointers need full 64-bit)

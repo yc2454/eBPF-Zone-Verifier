@@ -639,8 +639,17 @@ fn unreachable_base_pc(env: &VerifierEnv, state: &State) -> Option<usize> {
         // (`ZOVIA_BCF_PKT_CONST_REGMASK=1`) until VM-gated (repr-19 + cilium-17
         // loads, FA=0) — it shifts emitted discharge windows, so a
         // currently-matched hash could move.
+        // A PtrToPacket's var_off is CONST iff no variable scalar was ever
+        // added to it (`var_off_contributor` records the `ptr += scalar`
+        // source). That mirrors the kernel's `tnum_is_const(reg->var_off)`
+        // exactly — and, unlike requiring a tracked `ptr_const_off` *value*,
+        // it correctly excludes a fresh `data`/`data+K` pointer whose const
+        // offset zovia failed to thread through a spill/fill or ctx-load
+        // rewrite (accepted_entrypoint pc274 R2=pkt: const offset, no
+        // variable part → kernel drops it from reg_masks 0x17b; zovia kept it
+        // → bcf_suffix_base_pc=None → full-lineage marking → route explosion).
         let pkt_const_off = matches!(ty, RegType::PtrToPacket)
-            && state.ptr_const_off.contains_key(&r)
+            && !state.var_off_contributor.contains_key(&r)
             && std::env::var("ZOVIA_BCF_PKT_CONST_REGMASK").ok().as_deref() == Some("1");
         if (!matches!(ty, RegType::ScalarValue) && const_offset) || pkt_const_off {
             continue;

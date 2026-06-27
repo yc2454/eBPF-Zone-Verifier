@@ -249,6 +249,17 @@ pub struct SpilledReg {
     /// `check_stack_read_fixed_off` (`copy_register_state`,
     /// verifier.c:5889/5934). `None` == kernel `-1`.
     pub bcf_expr: Option<u32>,
+    /// Const pointer offset (zovia's `ptr_const_off`) carried across
+    /// spill/fill. The kernel keeps a pointer's offset in `reg->var_off`
+    /// / `reg->off`, which `copy_register_state` preserves verbatim across
+    /// spill+fill; zovia models a packet pointer's const offset OUTSIDE the
+    /// value-tnum (in `State::ptr_const_off`), so without carrying it here a
+    /// filled packet pointer loses its const offset and is wrongly kept in
+    /// the BCF reject `reg_masks` (accepted_entrypoint pc274 R2=pkt(off=14):
+    /// missing offset → `bcf_suffix_base_pc`=None → full-lineage
+    /// children_unsafe marking → route explosion). `None` = no tracked
+    /// const offset.
+    pub ptr_const_off: Option<i64>,
 }
 
 /// Spilled-register stack snapshot.
@@ -376,6 +387,7 @@ impl StackState {
                     ptr_bounds: None,
                     scalar_id: None,
                     precise: false,
+            ptr_const_off: None,
                     iterator: None,
                     dynptr: None,
                     irq_flag: None,
@@ -412,6 +424,7 @@ impl StackState {
                 ptr_bounds: None,
                 scalar_id: None,
                 precise: false,
+            ptr_const_off: None,
                 iterator: None,
                 dynptr: None,
                     irq_flag: None,
