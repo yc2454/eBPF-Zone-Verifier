@@ -224,6 +224,15 @@ pub struct VerifierEnv<'a> {
     /// them per-retry; zovia's one-shot cascade would otherwise kill the
     /// fan's only wide subsumer — accepted_entrypoint pc-170 OOM).
     pub loop_header_pcs: HashSet<usize>,
+    /// PCs whose instruction is a branch (If / Jmp / MayGoto) — a USE of its
+    /// operands, never a register definition. Used by
+    /// `mark_path_children_unsafe` (ZOVIA_EXP_MARK_DEFS_ONLY) to skip marking
+    /// the state cached at a branch: those are the convergence points whose
+    /// children_unsafe marking collapses pruning and explodes route
+    /// enumeration (accepted_entrypoint pc256/267/272), whereas the reg
+    /// DEF-sites a reject's reg_masks actually depend on (e.g. pc521 `w1=0`
+    /// enabling calico from_nat_fib pc748 d53) are assignments, not branches.
+    pub branch_pcs: HashSet<usize>,
     /// Loop EXIT/bound-check branch PCs (e.g. `If R8 u>= R1 -> after_loop`) —
     /// the kernel's bcf_track anchor for the zero-iteration proto-switch route.
     pub loop_exit_branch_pcs: HashSet<usize>,
@@ -405,6 +414,20 @@ impl<'a> VerifierEnv<'a> {
             loop_header_pcs: crate::analysis::flow::cfg::collect_loop_back_edges(prog)
                 .into_iter()
                 .map(|(_src, tgt)| tgt)
+                .collect(),
+            branch_pcs: prog
+                .instrs
+                .iter()
+                .enumerate()
+                .filter(|(_, i)| {
+                    matches!(
+                        i,
+                        crate::ast::Instr::If { .. }
+                            | crate::ast::Instr::Jmp { .. }
+                            | crate::ast::Instr::MayGoto { .. }
+                    )
+                })
+                .map(|(p, _)| p)
                 .collect(),
             loop_exit_branch_pcs: crate::analysis::flow::cfg::collect_loop_exit_branch_pcs(prog),
             invalid_pc_set: prog.invalid_pc_set.clone(),

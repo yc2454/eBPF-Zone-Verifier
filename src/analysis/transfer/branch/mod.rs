@@ -1000,6 +1000,11 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
             Err(e) => log::warn!(target: "app", "[bcf] proof dump to {} failed: {}", path, e),
         }
     }
+    // Is this reject's PRIMARY route (its natural path-unreachable hash) one
+    // we've not seen before? A duplicate route is already covered; re-marking
+    // its lineage children_unsafe only re-opens convergence points and feeds
+    // the route-explosion cascade (accepted_entrypoint pc274). EXP gate below.
+    let primary_was_new = !env.bcf_proofs.iter().any(|e| e.cond_hash == entry.cond_hash);
     env.bcf_proofs.push(entry);
     // DEBUG (parent-hop validation, 2026-06-19): eagerly flush the
     // accumulated bcf_proofs to a path after every discharge push, so the
@@ -1477,6 +1482,9 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     // its own path-unreachable bundle entry (cilium bpf_wireguard
     // pc246 route-B). Scoped to the same suffix base as the
     // path_conds (kernel parents[0..vstate_cnt-1]).
-    crate::analysis::flow::pruning::cache::mark_path_children_unsafe(env, state, base_pc);
+    let mark_if_new = std::env::var("ZOVIA_EXP_MARK_IF_NEW").ok().as_deref() == Some("1");
+    if !mark_if_new || primary_was_new {
+        crate::analysis::flow::pruning::cache::mark_path_children_unsafe(env, state, base_pc);
+    }
     true
 }

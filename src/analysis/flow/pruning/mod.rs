@@ -47,6 +47,51 @@ fn ignore_children_unsafe() -> bool {
     *V.get_or_init(|| std::env::var("ZOVIA_EXP_IGNORE_CHILDREN_UNSAFE").is_ok())
 }
 
+/// EXPERIMENT (ZOVIA_EXP_MARK_ONCE): a children_unsafe-marked cached state
+/// blocks pruning for only the FIRST later arrival, then reverts to prune-able.
+/// Mirrors the kernel's one-route-per-BCF-retry discovery (it rebuilds the
+/// convergence subsumer each retry) rather than zovia's one-shot cascade where
+/// a mark permanently disables pruning at a convergence point → route
+/// explosion (accepted_entrypoint pc256/267/272). Returns true if this skip
+/// should be HONORED (state still blocks); false = treat as prune-able now.
+fn mark_once_blocks(cache_id: Option<u32>) -> bool {
+    use std::sync::{Mutex, OnceLock};
+    static K: OnceLock<Option<u32>> = OnceLock::new();
+    let k = *K.get_or_init(|| {
+        std::env::var("ZOVIA_EXP_MARK_CAP").ok().and_then(|s| s.parse::<u32>().ok())
+    });
+    let Some(k) = k else { return true }; // experiment off: always honor the mark
+    let Some(id) = cache_id else { return true };
+    static CNT: OnceLock<Mutex<std::collections::HashMap<u32, u32>>> = OnceLock::new();
+    let m = CNT.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    let mut g = m.lock().unwrap();
+    let c = g.entry(id).or_insert(0);
+    *c += 1;
+    *c <= k // block for the first K arrivals, then revert to prune-able
+}
+
+/// DIAGNOSTIC (ZOVIA_DBG_SKIP_PC): tally children_unsafe prune-skips per pc;
+/// dump the top offenders every 50k skips. Finds the cached state(s) whose
+/// children_unsafe marking is collapsing convergence and exploding routes.
+fn dbg_skip_pc(pc: usize) {
+    use std::sync::{Mutex, OnceLock};
+    static ON: OnceLock<bool> = OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var("ZOVIA_DBG_SKIP_PC").is_ok()) {
+        return;
+    }
+    static T: OnceLock<Mutex<(std::collections::HashMap<usize, u64>, u64)>> = OnceLock::new();
+    let m = T.get_or_init(|| Mutex::new((std::collections::HashMap::new(), 0)));
+    let mut g = m.lock().unwrap();
+    *g.0.entry(pc).or_insert(0) += 1;
+    g.1 += 1;
+    if g.1 % 3_000 == 0 {
+        let mut v: Vec<_> = g.0.iter().map(|(&p, &c)| (c, p)).collect();
+        v.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+        let top: Vec<String> = v.iter().take(8).map(|(c, p)| format!("pc{}={}", p, c)).collect();
+        eprintln!("[skip_pc] total={} top: {}", g.1, top.join(" "));
+    }
+}
+
 /// Handle pruning decision at a loop point.
 /// Returns Some(true) to prune, Some(false) to continue, None if no previous states.
 /// Walk cur's `parent_cache_id` lineage and collect the cache_ids of all
@@ -156,7 +201,10 @@ fn handle_loop_pruning(
         let mut r: Vec<SubsumptionMissReason> = Vec::new();
         for (i, prev) in prev_states.iter().enumerate() {
             // Kernel children_unsafe (bcf_refine, verifier.c:24580-81).
-            if prev.children_unsafe && !ignore_children_unsafe() {
+            if prev.children_unsafe && !ignore_children_unsafe()
+                && mark_once_blocks(prev.cache_id)
+            {
+                dbg_skip_pc(pc);
                 continue;
             }
             // SCC force_exact: prev is on the current DFS path iff its
@@ -346,8 +394,11 @@ fn handle_standard_pruning(
             // Kernel children_unsafe (bcf_refine, verifier.c:24580-81):
             // a path-unreachable refinement marked this cached ancestor
             // not-prune-safe. Don't let it subsume a later arrival.
-            if prev.children_unsafe && !ignore_children_unsafe() {
+            if prev.children_unsafe && !ignore_children_unsafe()
+                && mark_once_blocks(prev.cache_id)
+            {
                 local_children_unsafe_skips += 1;
+                dbg_skip_pc(pc);
                 continue;
             }
             // Kernel-faithful force_exact (see matching block above for

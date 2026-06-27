@@ -226,6 +226,8 @@ pub fn mark_path_children_unsafe(env: &mut VerifierEnv, cur: &State, base_pc: Op
     // for coverage (its route obligations are straight-line, high-pc).
     let skip_loop_hdr =
         std::env::var("ZOVIA_EXP_SKIP_LOOP_HEADER_UNSAFE").ok().as_deref() == Some("1");
+    let mark_defs_only =
+        std::env::var("ZOVIA_EXP_MARK_DEFS_ONLY").ok().as_deref() == Some("1");
     let mut marked = 0usize;
     let mut first_pc: Option<usize> = None;
     let mut last_pc: Option<usize> = None;
@@ -271,6 +273,19 @@ pub fn mark_path_children_unsafe(env: &mut VerifierEnv, cur: &State, base_pc: Op
         if skip_loop_hdr && env.loop_header_pcs.contains(&pc) {
             // EXPERIMENT: protect the loop-convergence subsumer; keep
             // walking ancestors (the suffix continues past it).
+            id = s.parent_cache_id;
+            continue;
+        }
+        // EXPERIMENT (ZOVIA_EXP_MARK_DEFS_ONLY): skip marking the state cached
+        // at a branch pc. A branch is a USE, not a reg definition; its cached
+        // state is the convergence subsumer at that demux point. Marking it
+        // children_unsafe collapses pruning → route explosion
+        // (accepted_entrypoint pc256/267/272). The reg DEF-sites a reject's
+        // reg_masks depend on (assignments like pc521 `w1=0`, enabling pc748
+        // d53) are NOT branches, so they still get marked. Borrow `s` ends
+        // before the env read, so re-fetch is not needed (env.branch_pcs is a
+        // separate field).
+        if mark_defs_only && env.branch_pcs.contains(&pc) {
             id = s.parent_cache_id;
             continue;
         }
