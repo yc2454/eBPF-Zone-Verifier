@@ -239,11 +239,22 @@ pub fn mark_path_children_unsafe(env: &mut VerifierEnv, cur: &State, base_pc: Op
         let Some(&(pc, idx)) = env.cache_loc_by_id.get(&cid) else {
             break;
         };
+        // Kernel `bcf_refine` marks `parents[0..vstate_cnt-1]` where parents[]
+        // is built from `cur->parent` walking up to BUT NOT INCLUDING `base`
+        // (verifier.c:24570-24585), and the `- 1` also drops `cur`. So the
+        // kernel marks the chain EXCLUDING both the reject `cur` (zovia already
+        // starts at cur.parent) AND the suffix `base`. The base is the
+        // convergence point where the reject's reg_masks backtrack ends — the
+        // bottleneck shared by ALL paths to the reject. Leaving it prune-able
+        // lets paths CONVERGE there; marking it (zovia's old `pc < bp`) kills
+        // that convergence → the demux fan re-explores → route explosion
+        // (accepted_entrypoint pc274). ZOVIA_EXP_EXCLUDE_BASE mirrors the
+        // kernel: stop AT the base (`pc <= bp`), excluding it.
+        let exclude_base =
+            std::env::var("ZOVIA_EXP_EXCLUDE_BASE").ok().as_deref() == Some("1");
         if let Some(bp) = base_pc
-            && pc < bp
+            && (pc < bp || (exclude_base && pc == bp))
         {
-            // Past the backtrack suffix base — kernel parents[]
-            // span only the suffix; stop here.
             break;
         }
         let Some(s) = env
