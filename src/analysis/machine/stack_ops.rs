@@ -160,6 +160,8 @@ impl State {
             } else {
                 None
             },
+            // Register spilled into the stack (kernel STACK_SPILL).
+            kind: crate::analysis::machine::stack_state::StackSlotKind::Spill,
         };
 
         let stack = &mut self.frames.get_mut(level).stack;
@@ -187,6 +189,8 @@ impl State {
                         dynptr: None,
                     irq_flag: None,
                         bcf_expr: None,
+                        // Trailing byte of a spilled register (kernel STACK_SPILL).
+                        kind: crate::analysis::machine::stack_state::StackSlotKind::Spill,
                     },
                 );
             }
@@ -222,6 +226,16 @@ impl State {
             if is_aligned { Some(Reg::R0) } else { None },
         );
 
+        // Kernel `check_stack_write_fixed_off`: a constant-zero store marks the
+        // bytes STACK_ZERO; a non-zero constant is recorded as a known value
+        // (STACK_SPILL of a const fake_reg). Either way the byte is WRITTEN —
+        // never STACK_INVALID.
+        let store_kind = if masked_imm == 0 {
+            crate::analysis::machine::stack_state::StackSlotKind::Zero
+        } else {
+            crate::analysis::machine::stack_state::StackSlotKind::Spill
+        };
+
         let slot_content = SpilledReg {
             source_reg: if is_aligned { Some(Reg::R0) } else { None }, // Use dummy reg to indicate "trackable"
             reg_type: RegType::ScalarValue,
@@ -240,6 +254,7 @@ impl State {
             // `bcf_mov` gate is skipped and no variable expr is carried.
             // The constant lazy-materializes as `BV_VAL` on fill.
             bcf_expr: None,
+            kind: store_kind,
         };
 
         let stack = &mut self.frames.get_mut(level).stack;
@@ -267,6 +282,9 @@ impl State {
                         dynptr: None,
                     irq_flag: None,
                         bcf_expr: None,
+                        // Trailing byte shares the store's slot kind (STACK_ZERO
+                        // for a zero store, else the known-value STACK_SPILL).
+                        kind: store_kind,
                     },
                 );
             }

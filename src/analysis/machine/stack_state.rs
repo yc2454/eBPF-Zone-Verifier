@@ -209,6 +209,34 @@ pub enum PointerBounds {
     },
 }
 
+/// Kernel `enum bpf_stack_slot_type` (verifier.h) for the scalar-data slot
+/// kinds zovia distinguishes. `STACK_INVALID` is modelled as the ABSENCE of a
+/// map entry (a never-written / scratch byte), so it has no variant here; the
+/// remaining kernel kinds (`STACK_DYNPTR`/`STACK_ITER`/`STACK_IRQ_FLAG`) are
+/// carried by the dedicated `dynptr`/`iterator`/`irq_flag` annotations on
+/// [`SpilledReg`]. This enum names only the three scalar-byte kinds:
+///
+///   - `Spill` — `STACK_SPILL`: this byte is part of a spilled register; the
+///     value lives in the `SpilledReg`'s `reg_type`/`tnum`/`bounds`.
+///   - `Misc`  — `STACK_MISC`: the program/a helper wrote unknown data here
+///     (e.g. an `ARG_PTR_TO_UNINIT_MEM` output byte from `bpf_skb_load_bytes`).
+///     No usable value — but, critically, DISTINCT from `STACK_INVALID`.
+///   - `Zero`  — `STACK_ZERO`: the program wrote a constant zero byte.
+///
+/// The Spill/Misc/Invalid distinction is what the kernel's `stacksafe` uses to
+/// keep two paths that wrote DIFFERENT numbers of helper bytes to the same
+/// buffer apart (calico from_nat_fib proto-demux: TCP writes 20B, non-TCP 8B,
+/// converge at pc521). zovia previously collapsed every present byte AND every
+/// absent byte to a default `ScalarValue` in `get_slot_type`, so the arms
+/// looked identical and one subsumed the other — dropping the sibling's pc748
+/// obligations. Consulted by `stack_subsumed_by` under `ZOVIA_BCF_STACK_MISC`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StackSlotKind {
+    Spill,
+    Misc,
+    Zero,
+}
+
 /// Snapshot of a register's abstract state at spill time
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SpilledReg {
@@ -260,6 +288,11 @@ pub struct SpilledReg {
     /// children_unsafe marking → route explosion). `None` = no tracked
     /// const offset.
     pub ptr_const_off: Option<i64>,
+    /// Kernel `slot_type[i]` for this byte (`STACK_SPILL`/`STACK_MISC`/
+    /// `STACK_ZERO`). `STACK_INVALID` is the absence of the map entry, so it
+    /// is not representable here — every present `SpilledReg` carries one of
+    /// the three written kinds. See [`StackSlotKind`].
+    pub kind: StackSlotKind,
 }
 
 /// Spilled-register stack snapshot.
@@ -360,6 +393,15 @@ impl StackState {
         self.slots.get(&offset)
     }
 
+    /// Kernel `slot_type[i]` for this byte: `Some(kind)` for a written byte
+    /// (`STACK_SPILL`/`STACK_MISC`/`STACK_ZERO`), `None` for an unwritten /
+    /// scratch byte (`STACK_INVALID`). Used by `stack_subsumed_by` to mirror
+    /// the kernel `stacksafe` MISC-vs-INVALID distinction that `get_slot_type`
+    /// (which defaults absent → `ScalarValue`) cannot express.
+    pub fn get_slot_kind(&self, offset: i16) -> Option<StackSlotKind> {
+        self.slots.get(&offset).map(|s| s.kind)
+    }
+
     pub fn get_slot_mut(&mut self, offset: i16) -> Option<&mut SpilledReg> {
         self.slots_mut().get_mut(&offset)
     }
@@ -392,6 +434,9 @@ impl StackState {
                     dynptr: None,
                     irq_flag: None,
                     bcf_expr: None,
+                    // Assigning a concrete reg_type ⇒ the slot holds a value
+                    // (kernel STACK_SPILL).
+                    kind: StackSlotKind::Spill,
                 },
             );
         }
@@ -429,6 +474,11 @@ impl StackState {
                 dynptr: None,
                     irq_flag: None,
                 bcf_expr: None,
+                // Invalidation = the program/a helper clobbered this byte with
+                // unknown data (kernel STACK_MISC). Distinct from STACK_INVALID
+                // (an unwritten/absent byte) — that distinction is exactly what
+                // keeps the from_nat_fib proto-demux arms apart in stacksafe.
+                kind: StackSlotKind::Misc,
             },
         );
     }
