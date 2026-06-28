@@ -252,8 +252,25 @@ pub fn mark_path_children_unsafe(env: &mut VerifierEnv, cur: &State, base_pc: Op
         // kernel: stop AT the base (`pc <= bp`), excluding it.
         let exclude_base =
             std::env::var("ZOVIA_EXP_EXCLUDE_BASE").ok().as_deref() == Some("1");
-        if let Some(bp) = base_pc
-            && (pc < bp || (exclude_base && pc == bp))
+        // DIAGNOSTIC (pm20): the kernel bounds the children_unsafe marking by
+        // how far the reject's reg_masks BACKTRACK reaches, not the suffix
+        // `base_pc`. For calico_tc_main pc748 the reg_masks include the
+        // protocol scalar spilled at fp-272 (pc746), whose backtrack continues
+        // to the proto-demux convergence at pc521 — BELOW base_pc=582. With the
+        // suffix bound the pc521 convergence cache stays prunable, so the
+        // w1!=6 arm is pruned there and the 6-hash pc748 family is never
+        // emitted. `ZOVIA_BCF_DEEP_UNSAFE=<pc>` overrides the lower bound to
+        // <pc> to test whether deepening to the reg_masks reach recovers them.
+        let deep_unsafe: Option<usize> = std::env::var("ZOVIA_BCF_DEEP_UNSAFE")
+            .ok()
+            .and_then(|s| s.parse().ok());
+        let effective_bp = match (base_pc, deep_unsafe) {
+            (Some(bp), Some(d)) => Some(bp.min(d)),
+            (b, None) => b,
+            (None, Some(d)) => Some(d),
+        };
+        if let Some(bp) = effective_bp
+            && (pc < bp || (exclude_base && deep_unsafe.is_none() && pc == bp))
         {
             break;
         }
