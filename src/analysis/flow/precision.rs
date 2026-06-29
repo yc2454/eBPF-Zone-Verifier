@@ -517,6 +517,17 @@ pub fn bcf_suffix_base_pc(
     let mut skip_first = true;
     let mut last_pc_walked: Option<usize> = None;
     let mut first_pc_walked: Option<usize> = None;
+    // RANGE-HOP BASE: the pc (`first_insn_idx`) of the CHILD state whose
+    // own insns the current outer-iteration's inner loop is walking. The
+    // child is the previous outer-iteration's `parent_loc` (for the first
+    // iteration it is `cur`, whose own insns are all >= its first_insn, so
+    // `None` disables the hop there). The kernel crosses `st = st->parent`
+    // when the bt-empty insn `i < st->first_insn_idx`; the inner loop here
+    // can over-walk past the child's first insn into `parent_loc`'s OWN
+    // span (parent_loc's insns have history idx above its stop), so when
+    // bt empties at `i < child_first_pc` the kernel's containing `st` is
+    // `parent_loc` itself and the faithful base is its PARENT (grandparent).
+    let mut child_first_pc: Option<usize> = None;
 
     'outer: loop {
         let parent_loc = current_parent_id
@@ -581,7 +592,7 @@ pub fn bcf_suffix_base_pc(
                     );
                 }
                 if bt.is_empty() {
-                    if debug {
+                    if debug || probe {
                         let pl_pc = parent_loc.map(|(pc, _)| pc);
                         let gp_pc = parent_grandparent_id
                             .and_then(|id| env.cache_loc_by_id.get(&id).map(|(pc, _)| *pc));
@@ -616,6 +627,39 @@ pub fn bcf_suffix_base_pc(
                             eprintln!(
                                 "[bcf-track] parent-hop base: bt-empty@{} parent_loc==self, return grandparent pc={}",
                                 step_pc, gp_pc
+                            );
+                        }
+                        return Some(gp_pc);
+                    }
+                    // RANGE-HOP BASE diagnostic (2026-06-29, calico_tc_main
+                    // pc748 d53): the kernel rule is `base = st->parent` where
+                    // `st` is the state whose [first,last] range CONTAINS the
+                    // bt-empty insn. zovia's via-449→521 lineage has the 521
+                    // checkpoint (cache_1301, parent=449) span [521,523]; bt
+                    // empties at 522 inside it, so the kernel base is 449 while
+                    // zovia returns parent_loc=521 (off by one level). A naive
+                    // `parent_loc.first <= step_pc < child_first` hop to the
+                    // grandparent FIXES that lineage BUT over-fires and
+                    // EXPLODES: zovia has a SECOND 521 checkpoint (cache_20,
+                    // parent=362 via the pc404 JA arm) that the kernel merges
+                    // into the single [521,523]←449 state. Those un-merged arms
+                    // create extra pc748 reject lineages rooted at 362/327;
+                    // deepening their bases collapses pruning. ROOT = pc521
+                    // subsumption/topology (two un-merged 521 caches), NOT the
+                    // base walk. Knob kept default-OFF for diagnosis only.
+                    if std::env::var("ZOVIA_BCF_RANGE_HOP_BASE").ok().as_deref()
+                        == Some("1")
+                        && let Some(cf) = child_first_pc
+                        && let Some((pl_pc, _)) = parent_loc
+                        && pl_pc <= step_pc
+                        && step_pc < cf
+                        && let Some(gp_id) = parent_grandparent_id
+                        && let Some((gp_pc, _)) = env.cache_loc_by_id.get(&gp_id).copied()
+                    {
+                        if debug || probe {
+                            eprintln!(
+                                "[bcf-track] range-hop base: bt-empty@{} < child_first={} parent_loc={:?} -> grandparent pc={}",
+                                step_pc, cf, parent_loc.map(|(pc, _)| pc), gp_pc
                             );
                         }
                         return Some(gp_pc);
@@ -689,6 +733,11 @@ pub fn bcf_suffix_base_pc(
         if parent_grandparent_id.is_none() {
             break;
         }
+        // The current `parent_loc` becomes the child whose insns the NEXT
+        // outer iteration's inner loop walks; record its first_insn pc so the
+        // range-hop above can tell when bt empties below it (in the new
+        // parent_loc's own span).
+        child_first_pc = parent_loc.map(|(pc, _)| pc);
         current_parent_id = parent_grandparent_id;
         current_history = parent_history_stop;
     }
