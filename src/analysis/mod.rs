@@ -996,23 +996,23 @@ fn run_worklist(
         // the existing write_bundle dedup. 61d60ac measured 20 unique
         // entries across AND+OR merge for calico_tc_main, covering all
         // 9 known kernel discharge hashes.
-        let kernel_engine_and = config.kernel_engine_and
-            || std::env::var("ZOVIA_KERNEL_ENGINE_AND").ok().as_deref() == Some("1");
-        // Kernel-engine (non-AND): env-OR-path. Under linear DFS the kernel's
-        // env-wide counters are effectively per-path between cache events;
-        // zovia's interleaved worklist makes path-only too tight at major
-        // multi-trajectory convergence points (e.g. calico anchor PC 1873,
-        // 9 incoming jumps), where each upstream cache resets the per-path
-        // delta to ~1 → no add_new_state → walker can't land at the
-        // kernel-matched base. OR-mode lets a sibling-inflated env delta
-        // admit the cache. Verified 2026-05-23 to close calico anchor
-        // (-EACCES → 7/7) without regressing c17 from_tnl_debug (6/6).
-        let combined_heuristic = if kernel_engine_and {
-            env_heuristic && path_heuristic
-        } else if kernel_engine {
+        // Kernel `is_state_visited` add_new_state heuristic (verifier.c
+        // L20186-20189) is a SINGLE condition on the env-wide counters:
+        //   jmps_processed - prev_jmps_processed >= 2 && insn_processed - prev >= 8
+        // zovia's worklist is a LIFO stack (push_back + pop_back) = pure DFS,
+        // identical to the kernel's traversal, and `jmps/insn_processed` are
+        // bumped per-insn/per-jmp with `prev_*` reset at each add_new_state
+        // (below) — so `env_heuristic` reproduces the kernel's condition
+        // exactly. (The old `env_heuristic || path_heuristic` OR was justified
+        // by a now-disproven "interleaved worklist" claim; the worklist is not
+        // interleaved, so the extra per-path term over-cached vs the kernel.)
+        // `ZOVIA_KERNEL_ENGINE_OR=1` restores the legacy OR as a kill-switch.
+        let legacy_or =
+            std::env::var("ZOVIA_KERNEL_ENGINE_OR").ok().as_deref() == Some("1");
+        let combined_heuristic = if legacy_or {
             env_heuristic || path_heuristic
         } else {
-            env_heuristic || path_heuristic
+            env_heuristic
         };
         let mut outer_gate = !kernel_engine || at_prune_point;
         let mut add_new_state = !kernel_engine
