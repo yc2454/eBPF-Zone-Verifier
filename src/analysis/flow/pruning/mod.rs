@@ -494,6 +494,14 @@ pub fn should_prune(
 
     env.pruning_stats.should_prune_calls += 1;
 
+    if crate::analysis::trace_pc_in_range(pc) {
+        let nprev = env.explored_states.get(&pc).map(|v| v.len()).unwrap_or(0);
+        eprintln!(
+            "[SP_ENTRY] pc={} nprev={} is_prune_point={}",
+            pc, nprev, is_prune_point(env, pc)
+        );
+    }
+
     if !is_prune_point(env, pc) {
         env.pruning_stats.not_prune_point += 1;
         return false;
@@ -534,6 +542,22 @@ pub fn should_prune(
             prog.instrs.get(pc),
             Some(Instr::Call { .. }) | Some(Instr::MayGoto { .. })
         );
+
+    // DIAG (pc521 d53): when this pc is traced and prev cached states
+    // already exist, log the early-decision inputs so we can see WHY a
+    // second arm's subsumption is skipped (the kernel compares here and
+    // keeps ONE state; zovia forms two).
+    if crate::analysis::trace_pc_in_range(pc) {
+        let nprev = env.explored_states.get(&pc).map(|v| v.len()).unwrap_or(0);
+        if nprev > 0 {
+            eprintln!(
+                "[SP_GATE] pc={} nprev={} is_on_path={} in_loop={} force_ckpt={} prune_point={} -> would_skip_onpath={}",
+                pc, nprev, is_on_path, in_loop, pc_is_force_checkpoint,
+                is_prune_point(env, pc),
+                is_on_path && !in_loop && !pc_is_force_checkpoint,
+            );
+        }
+    }
 
     // Re-entry to a PC from a different depth (e.g. repeated call in a loop).
     // Must continue to reach the actual loop back-edge.

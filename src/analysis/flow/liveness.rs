@@ -508,13 +508,51 @@ fn get_use_def(instr: &Instr, alias: &AliasMap) -> UseDef {
             }
         }
 
-        Instr::Call { .. } => {
-            // Helper calls: use R1-R5 as arguments, clobber R0-R5 on return.
-            for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
-                ud.use_regs.insert(r);
-            }
+        Instr::Call { kind } => {
+            // Helper/kfunc calls clobber caller-saved R0-R5 on return.
             for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
                 ud.def_regs.insert(r);
+            }
+            // USES: the kernel reads exactly the call's actual argument
+            // registers (proto->arg_type[0..nargs]; trailing/unused slots
+            // are DontCare). Over-marking ALL of R1-R5 as used spuriously
+            // keeps a DEAD argument register live across the call — e.g.
+            // R3 across a 2-arg bpf_map_lookup_elem (calico from_nat_fib
+            // pc535). That false-live R3 (PtrToMapValue on one demux arm,
+            // NotInit on another) then forces a Types subsumption MISS at
+            // the pc521 convergence, splitting the kernel's single
+            // [521,523] state into two and breaking the pc748 d53 discharge
+            // family. Mirror the kernel: mark only non-DontCare arg regs.
+            let arg_regs = [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5];
+            let faithful = std::env::var("ZOVIA_FAITHFUL_HELPER_ARGS")
+                .ok()
+                .as_deref()
+                == Some("1");
+            let proto = if faithful {
+                match kind {
+                    crate::ast::CallKind::Helper { id } => {
+                        crate::analysis::transfer::call::helper_protos::get_helper_proto(*id)
+                    }
+                    // Kfunc arg-count precision is a separate refinement;
+                    // keep the conservative all-args behaviour for now.
+                    crate::ast::CallKind::Kfunc { .. } => None,
+                }
+            } else {
+                None
+            };
+            match proto {
+                Some(p) => {
+                    for (i, a) in p.args.iter().enumerate() {
+                        if *a != crate::analysis::transfer::call::signatures::ArgKind::DontCare {
+                            ud.use_regs.insert(arg_regs[i]);
+                        }
+                    }
+                }
+                None => {
+                    for r in arg_regs {
+                        ud.use_regs.insert(r);
+                    }
+                }
             }
         }
 
