@@ -601,6 +601,58 @@ pub fn bcf_suffix_base_pc(
                             step_pc, pl_pc, gp_pc, current_parent_id, parent_grandparent_id
                         );
                     }
+                    // BREADCRUMB-IDX BASE (2026-06-29, faithful kernel
+                    // backtrack_states `base = st->parent`, VALIDATED vs box
+                    // [ZK vst2]+[ZK chain]). A cached state's `history_idx`
+                    // points at its PREDECESSOR breadcrumb (set on the
+                    // successor at push, mod.rs:1319) while the reject's start
+                    // history_idx is its OWN breadcrumb — inconsistent
+                    // conventions made the legacy walk mis-attribute the
+                    // bt-empty breadcrumb to a CHILD segment and return the
+                    // OWNER instead of owner->parent. Determine the owner by
+                    // breadcrumb index (monotonic along the path → jump/gap
+                    // safe, unlike pc ranges): owner = deepest chain cache with
+                    // history_idx < bt-empty breadcrumb idx; base = owner->parent
+                    // (next chain entry). cur's own segment (idx >
+                    // chain[0].history_idx) keeps base = chain[0] (cur->parent).
+                    // MEASURED: bt_empty insn 522 (bc 343), chain 744→596→582→
+                    // 521(h341)→362(h298): owner=521, base=362 = kernel
+                    // base_first (legacy returned 521). Gated default-OFF.
+                    if std::env::var("ZOVIA_BCF_BCIDX_BASE").ok().as_deref()
+                        == Some("1")
+                    {
+                        let mut chain: Vec<(usize, usize)> = Vec::new();
+                        let mut cid = parent_cache_id;
+                        let mut guard = 0usize;
+                        while let Some(c) = cid {
+                            let Some(&(pc, pidx)) = env.cache_loc_by_id.get(&c) else { break };
+                            let s = env.explored_states.get(&pc).and_then(|v| v.get(pidx));
+                            let h = s.and_then(|s| s.history_idx).unwrap_or(0);
+                            chain.push((pc, h));
+                            cid = s.and_then(|s| s.parent_cache_id);
+                            guard += 1; if guard > 16_384 { break; }
+                        }
+                        if let Some(&(c0_pc, c0_h)) = chain.first() {
+                            let base_opt = if idx > c0_h {
+                                Some(c0_pc)
+                            } else {
+                                chain.iter().position(|&(_, h)| h < idx)
+                                    .and_then(|k| chain.get(k + 1))
+                                    .map(|&(pc, _)| pc)
+                            };
+                            if let Some(bp) = base_opt {
+                                if debug || probe {
+                                    eprintln!(
+                                        "[bcf-track] bcidx-base: bt-empty@pc{} bc_idx={} -> base={}",
+                                        step_pc, idx, bp
+                                    );
+                                }
+                                return Some(bp);
+                            }
+                            // owner is the deepest cache → base is program entry;
+                            // fall through to the entry-drain logic below.
+                        }
+                    }
                     // PARENT-HOP BASE (2026-06-19, accepted_entrypoint
                     // pc907): the kernel's `base = st->parent` where `st` is
                     // the state whose range CONTAINS the bt-empty insn. When
