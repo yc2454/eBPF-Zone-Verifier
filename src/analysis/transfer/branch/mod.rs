@@ -120,23 +120,10 @@ fn record_path_cond_for_side(
     // `bcf_pre == -1` → `bcf_bound_reg` emits its bound conjuncts; cached →
     // none). Captured before reg_expr materializes it.
     let lhs_was_uncached = lhs_materialize_pc.is_none();
-    // ZOVIA_BCF_LHS_EQ_PRENARROW (from_nat_fib 92e8d190, default-OFF, NON-default
-    // because it's NOT additive on its own — it flips equality branches
-    // folded→VAR globally, dropping the kernel's FOLDED forms like c1dae923; use
-    // ONLY for a run-twice + bundle-UNION with the default folded run): for an
-    // EQUALITY (`==`/`!=`) branch whose LHS enters as a NON-const range but
-    // narrows to const, materialize from the PRE-narrow range so it stays
-    // `VAR{JLE0xff} + JEQ K` instead of folding to `(K==K)` — the kernel's VAR
-    // form (92e8d190 reload `v<=0xff, v==6`). Dual of LHS_BOUND_AT_BRANCH
-    // (inequality → POST-narrow bound `u>=6`). Takes 92e8 from symdiff=6 → 1
-    // (residual = base-placement JSLE5, see memory).
-    let eq_prenarrow = std::env::var("ZOVIA_BCF_LHS_EQ_PRENARROW").ok().as_deref() == Some("1")
-        && matches!(op, CmpOp::Eq | CmpOp::Ne)
-        && lhs_was_uncached
-        && lhs_bounds.const_val.is_some()
-        && pre_lhs_bounds.const_val.is_none();
-    let mat_l_bounds = if eq_prenarrow { &pre_lhs_bounds } else { &lhs_bounds };
-    let cmp_l = bcf.reg_expr(l_idx, mat_l_bounds, jmp32);
+    // Kernel `bcf_reg_expr` materializes an operand's VAR + bounds from its
+    // bounds AT first reference; there is no op-type-dependent pre/post-narrow
+    // rule, so the LHS always materializes from its current (`lhs_bounds`) range.
+    let cmp_l = bcf.reg_expr(l_idx, &lhs_bounds, jmp32);
     let rhs_idx: Option<usize> = match right {
         Operand::Reg(r) => r.bcf_idx(),
         _ => None,
@@ -197,44 +184,6 @@ fn record_path_cond_for_side(
     // different cached PC than the originator).
     let narrow_now = narrow_for_side.map(|(k, op_b, j32, _)| (k, op_b, j32, lhs_materialize_pc));
     bcf.add_cond_at_narrowed(pred, src_pc, narrow_now, Some((l_idx, lhs_materialize_pc, jmp32, lhs_bounds.clone(), pre_lhs_bounds.clone())));
-    // Mirror the kernel's `bcf_bound_reg` (emitted per `record_path_cond`):
-    // zovia's cached-VAR `reg_expr` only emits operand bounds at a reg's FIRST
-    // (pre-narrow) reference, so later branches never re-emit the kernel's
-    // `u>= K` conjunct (from_nat_fib pc748 d53387e3 = reconstruction goal +
-    // v0 `u>= 6`). The REPLAY block is emitted BEFORE the pred above; this
-    // recording-mode arm (default-OFF) is the non-replay BOUND_SYNC dedup:
-    if !bcf.replay_emit_bounds
-        && std::env::var("ZOVIA_BCF_BOUND_SYNC").ok().as_deref() == Some("1")
-    {
-        // RECORDING (additive on top of the normal first-ref bounds): re-emit
-        // ONLY the tightened post-narrow UMIN when this branch raised it (proto
-        // `s> 5`: pre umin=0 → post umin=6), minimizing over-emission. Reaches
-        // symdiff=1 on d53387e3 (residual = one extra u>=6, see
-        // project_from_nat_fib_chase: the exploration-order tail).
-        // PATH A dedup: emit only when the post-narrow umin RAISED on this branch
-        // (vs entering it) AND strictly exceeds the highest umin THIS path has
-        // already additively emitted for the reg — so a reg crossing 0→6 emits
-        // `u>= 6` once, even though both the `==6` and `!=6` branches raise it.
-        let mut ub = RegBounds::unknown();
-        if jmp32 {
-            if lhs_bounds.u32_min > pre_lhs_bounds.u32_min
-                && lhs_bounds.u32_min > bcf.bcf_sync_u32min_emitted[l_idx]
-            {
-                ub.u32_min = lhs_bounds.u32_min;
-                bcf.bcf_sync_u32min_emitted[l_idx] = lhs_bounds.u32_min;
-            }
-        } else if lhs_bounds.umin > pre_lhs_bounds.umin
-            && lhs_bounds.umin > bcf.bcf_sync_umin_emitted[l_idx]
-        {
-            ub.umin = lhs_bounds.umin;
-            bcf.bcf_sync_umin_emitted[l_idx] = lhs_bounds.umin;
-        }
-        if ub.umin != 0 || ub.u32_min != 0 {
-            for bp in bcf.bound_reg_emit_preds(cmp_l, &ub, jmp32) {
-                bcf.add_cond(bp);
-            }
-        }
-    }
 }
 
 /// Transfer function for conditional branch instructions.
@@ -247,21 +196,11 @@ pub(crate) fn transfer_if(
     right: Operand,
     target: usize,
 ) -> Vec<State> {
-    // Check operand readability. Under ZOVIA_BCF_LHS_BOUND_AT_BRANCH, DEFER
-    // the branch LHS's bcf_expr materialization (don't bind+bound it here at
-    // its PRE-narrow range); record_path_cond_for_side then materializes it
-    // POST-narrow per side, mirroring the kernel's bcf_bound_reg-in-
-    // record_path_cond emission (from_nat_fib pc748 d53387e3: V0 `u>=6` must
-    // precede `u<=0xff` and `s>5`, which only happens post-narrow).
-    let lhs_defer_bounds = std::env::var("ZOVIA_BCF_LHS_BOUND_AT_BRANCH")
-        .ok()
-        .as_deref()
-        == Some("1");
     if !crate::analysis::transfer::common::check_reg_readable_ex(
         env,
         &mut state,
         left,
-        !lhs_defer_bounds,
+        true,
     ) {
         return vec![];
     }

@@ -206,18 +206,6 @@ pub struct SymbolicState {
     /// operand bounds per cond (giving the kernel goal its `u>= K` / duplicate
     /// bound conjuncts). Default false → normal recording/reconstruction unchanged.
     pub replay_emit_bounds: bool,
-    /// PATH A (per-reg umin DEDUP for the `ZOVIA_BCF_BOUND_SYNC` recording arm).
-    /// Tracks, per register, the highest `umin`/`u32_min` this path has already
-    /// additively re-emitted as a `bcf_bound_reg` `u>= K` conjunct. The kernel
-    /// emits `v0 u>= 6` ONCE (at its `s> 5` branch) even though the goal carries
-    /// `==6`/`!=6` multiply; zovia's BOUND_SYNC arm otherwise re-emits `u>= 6` at
-    /// EACH umin-raising branch (pc742 `==6` AND pc747 `!=6` both see pre umin=0),
-    /// giving the d53387e3 goal one extra `u>= 6` (symdiff=1). Gating emission on
-    /// "umin strictly exceeds what THIS path already emitted for this reg" collapses
-    /// the duplicate to one. Cloned per branch fork (per-path), cleared on replay
-    /// reset. See [[project-from-nat-fib-continue-exploration-order]] PATH A.
-    pub bcf_sync_umin_emitted: [u64; NUM_REGS],
-    pub bcf_sync_u32min_emitted: [u32; NUM_REGS],
 }
 
 impl SymbolicState {
@@ -247,8 +235,6 @@ impl SymbolicState {
         // bound preds (bcf_bound_reg) so the goal carries the post-narrow `u>= K`
         // conjuncts the reconstruction's first-ref VAR caching drops.
         self.replay_emit_bounds = true;
-        self.bcf_sync_umin_emitted = [0; NUM_REGS];
-        self.bcf_sync_u32min_emitted = [0; NUM_REGS];
     }
 
     /// Append an expression and return its slot offset.
