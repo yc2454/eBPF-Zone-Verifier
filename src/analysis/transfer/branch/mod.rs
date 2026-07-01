@@ -568,46 +568,35 @@ fn unreachable_target_regs(
         Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4,
         Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9,
     ];
-    let excl_pkt_end =
-        std::env::var("ZOVIA_BCF_EXCLUDE_PKT_END").ok().as_deref() == Some("1");
     let mut targets: Vec<Reg> = Vec::new();
     for &r in &VARREGS {
         let ty = state.types.get(r);
         if matches!(ty, RegType::NotInit) {
             continue;
         }
-        // Skip a reg with `type != SCALAR_VALUE && tnum_is_const(var_off)`.
-        // zovia splits the offset across the RegType enum, so exclude
-        // per-pointer-kind (const-offset map_value / *OrNull / structurally-0
-        // ptrs). Missing `PtrToCtx` once let R9 leak → base=None → 1M timeout.
-        let const_offset = state.get_tnum(r).is_const()
-            || matches!(ty, RegType::PtrToMapValue { offset: Some(_), .. })
-            || matches!(ty, RegType::PtrToMapValueOrNull { .. })
-            || matches!(ty, RegType::PtrToCtx)
-            || (excl_pkt_end && matches!(ty, RegType::PtrToPacketEnd))
-            || matches!(ty, RegType::PtrToSocket { .. })
-            || matches!(ty, RegType::PtrToSocketOrNull { .. })
-            || matches!(ty, RegType::PtrToSockCommon { .. })
-            || matches!(ty, RegType::PtrToSockCommonOrNull { .. })
-            || matches!(ty, RegType::PtrToTcpSock { .. })
-            || matches!(ty, RegType::PtrToTcpSockOrNull { .. })
-            || matches!(ty, RegType::PtrToCpumask { .. })
-            || matches!(ty, RegType::PtrToCpumaskOrNull { .. })
-            || matches!(ty, RegType::PtrToArena { .. })
-            || matches!(ty, RegType::PtrToArenaOrNull { .. })
-            || matches!(ty, RegType::PtrToCgroup { .. })
-            || matches!(ty, RegType::PtrToCgroupOrNull { .. })
-            || matches!(ty, RegType::PtrToBtfId { .. })
-            || matches!(ty, RegType::PtrToOwnedKptr { .. })
-            || matches!(ty, RegType::PtrToMapKptr { .. });
-        // A PtrToPacket whose var_off is fully const (no `ptr += scalar`
-        // contributor) matches the kernel's `tnum_is_const(var_off)` drop
-        // (pc274 R2=pkt const-offset → kernel reg_masks 0x17b excludes it).
-        // Gated `ZOVIA_BCF_PKT_CONST_REGMASK`.
-        let pkt_const_off = matches!(ty, RegType::PtrToPacket)
-            && !state.var_off_contributor.contains_key(&r)
-            && std::env::var("ZOVIA_BCF_PKT_CONST_REGMASK").ok().as_deref() == Some("1");
-        if (!matches!(ty, RegType::ScalarValue) && const_offset) || pkt_const_off {
+        // Faithful port of the kernel's `bcf_refine` reg_masks==0 auto-fill
+        // (verifier.c:24611-24620): skip a register that is
+        // `type != SCALAR_VALUE && tnum_is_const(reg->var_off)`.
+        //
+        // zovia has no single per-register var_off tnum, but the interval
+        // domain carries the faithful analog on `PtrOffset.var_off` (its doc:
+        // "kernel tnum_range(reg->var_off)"): `tnum_is_const(var_off)` holds
+        // iff the pointer's offset range is a single point (`min == max`), or
+        // there is no `ptr_offset` at all (types that can't hold a variable
+        // offset — they demote to scalar on `ptr += reg`, or track only a const
+        // embedded offset). This is the SAME reliable analog the refine-target
+        // selection uses (memory/map.rs); `var_off_contributor` is NOT reliable
+        // (spill/fill doesn't always clear it). One uniform rule replaces the
+        // former per-RegType-variant enumeration and the PtrToPacket /
+        // PtrToPacketEnd env-gated special cases (`ZOVIA_BCF_PKT_CONST_REGMASK`,
+        // `ZOVIA_BCF_EXCLUDE_PKT_END`, both deleted). See
+        // reference_var_off_faithful_analog.md.
+        let var_off_const = state
+            .domain
+            .as_interval()
+            .and_then(|iv| iv.get_ptr_offset(r))
+            .is_none_or(|po| po.min_offset() == po.max_offset());
+        if !matches!(ty, RegType::ScalarValue) && var_off_const {
             continue;
         }
         targets.push(r);
