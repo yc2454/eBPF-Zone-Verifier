@@ -132,11 +132,6 @@ pub struct VerifierConfig {
     /// the original dense per-popped-state caching is used.
     pub kernel_engine: bool,
 
-    /// Restrict the kernel-shape `add_new_state` heuristic to AND of
-    /// env-wide and per-path counters (formerly `ZOVIA_KERNEL_ENGINE_AND`
-    /// env var). Effective only when `kernel_engine` is true. False
-    /// selects the looser OR variant.
-    pub kernel_engine_and: bool,
 }
 
 impl Default for VerifierConfig {
@@ -176,7 +171,6 @@ impl Default for VerifierConfig {
             bcf_enabled: false,
             bcf_bundle_out: None,
             kernel_engine: false,
-            kernel_engine_and: false,
         }
     }
 }

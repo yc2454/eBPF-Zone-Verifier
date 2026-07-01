@@ -932,10 +932,9 @@ fn run_worklist(
         //   (2) Inner: `add_new_state` heuristic (verifier.c v6.15
         //       L18998-L19013): force_new_state || (jmps_delta>=2 &&
         //       insns_delta>=8). Counters are PER-PATH on State.
-        // Default ON in BCF mode (all-faithful mirror, repr-19 19/19
-        // 2026-06-12); kill-switch ZOVIA_KERNEL_ENGINE=0.
-        let kernel_engine = config.kernel_engine
-            || crate::common::config::bcf_mirror_knob("ZOVIA_KERNEL_ENGINE", env.bcf_enabled);
+        // ON in BCF mode (all-faithful mirror, repr-19 19/19 2026-06-12); the
+        // legacy dense-cache path remains for non-BCF mode (selftest baseline).
+        let kernel_engine = config.kernel_engine || env.bcf_enabled;
         let at_prune_point = pruning::widening::is_prune_point(env, state.pc);
         let insn_aux_force = env
             .insn_aux_data
@@ -984,51 +983,32 @@ fn run_worklist(
         let force_new_state = insn_aux_force || long_history;
         let env_heuristic =
             env_jmps_delta >= 2 && env_insns_delta >= 8;
-        let path_heuristic =
-            path_jmps_delta >= 2 && path_insns_delta >= 8;
-        // ZOVIA_KERNEL_ENGINE_AND=1 selects the more-restrictive AND
-        // mode: cache only when BOTH env-wide AND per-path heuristics
-        // fire. Default is OR (either fires) — see commit 61d60ac. AND
-        // mode produces MORE bundle entries (sparser caching → more
-        // exploration paths reach each rejection site). The two modes
-        // produce DIFFERENT entry sets that overlap; running both
-        // passes with ZOVIA_BUNDLE_KEEP=1 (main.rs) merges by hash via
-        // the existing write_bundle dedup. 61d60ac measured 20 unique
-        // entries across AND+OR merge for calico_tc_main, covering all
-        // 9 known kernel discharge hashes.
-        // Kernel `is_state_visited` add_new_state heuristic (verifier.c
-        // L20186-20189) is a SINGLE condition on the env-wide counters:
+        // Kernel `is_state_visited` add_new_state (verifier.c L20186-20189) is a
+        // SINGLE condition on the env-wide counters:
         //   jmps_processed - prev_jmps_processed >= 2 && insn_processed - prev >= 8
         // zovia's worklist is a LIFO stack (push_back + pop_back) = pure DFS,
         // identical to the kernel's traversal, and `jmps/insn_processed` are
         // bumped per-insn/per-jmp with `prev_*` reset at each add_new_state
-        // (below) — so `env_heuristic` reproduces the kernel's condition
-        // exactly. (The old `env_heuristic || path_heuristic` OR was justified
-        // by a now-disproven "interleaved worklist" claim; the worklist is not
-        // interleaved, so the extra per-path term over-cached vs the kernel.)
-        // `ZOVIA_KERNEL_ENGINE_OR=1` restores the legacy OR as a kill-switch.
-        let legacy_or =
-            std::env::var("ZOVIA_KERNEL_ENGINE_OR").ok().as_deref() == Some("1");
-        let combined_heuristic = if legacy_or {
-            env_heuristic || path_heuristic
-        } else {
-            env_heuristic
-        };
+        // (below) — so `env_heuristic` reproduces the kernel's condition exactly.
+        // (An older `env_heuristic || path_heuristic` OR added a per-path term
+        // justified by a since-disproven "interleaved worklist" claim; the
+        // worklist is not interleaved, so that term over-cached vs the kernel.
+        // Removed along with the AND/OR env knobs.)
         let outer_gate = !kernel_engine || at_prune_point;
         let add_new_state = !kernel_engine
             || force_new_state
-            || combined_heuristic;
+            || env_heuristic;
         if outer_gate && add_new_state {
             let cache_id =
                 merging::record_state(env, state.clone(), config.max_states_per_pc);
             if trace_pc_in_range(state.pc) {
                 let n_cached = env.explored_states.get(&state.pc).map(|v| v.len()).unwrap_or(0);
                 eprintln!(
-                    "[TRACE] CACHE pc={} -> cache_id={} parent={:?} (n_now={}, force_new={} env_jd={} env_id={} path_jd={} path_id={} jmp_hist={} env_h={} path_h={} combined={} outer_gate={})",
+                    "[TRACE] CACHE pc={} -> cache_id={} parent={:?} (n_now={}, force_new={} env_jd={} env_id={} path_jd={} path_id={} jmp_hist={} env_h={} outer_gate={})",
                     state.pc, cache_id, state.parent_cache_id, n_cached,
                     force_new_state, env_jmps_delta, env_insns_delta, path_jmps_delta, path_insns_delta,
                     state.jmp_history_cnt,
-                    env_heuristic, path_heuristic, combined_heuristic,
+                    env_heuristic,
                     outer_gate,
                 );
             }
@@ -1068,11 +1048,11 @@ fn run_worklist(
             state.jmp_history_cnt = 0;
         } else if trace_pc_in_range(state.pc) {
             eprintln!(
-                "[TRACE] NOCACHE pc={} parent={:?} (force_new={} env_jd={} env_id={} path_jd={} path_id={} jmp_hist={} env_h={} path_h={} combined={} outer_gate={})",
+                "[TRACE] NOCACHE pc={} parent={:?} (force_new={} env_jd={} env_id={} path_jd={} path_id={} jmp_hist={} env_h={} outer_gate={})",
                 state.pc, state.parent_cache_id,
                 force_new_state, env_jmps_delta, env_insns_delta, path_jmps_delta, path_insns_delta,
                 state.jmp_history_cnt,
-                env_heuristic, path_heuristic, combined_heuristic,
+                env_heuristic,
                 outer_gate,
             );
         }
@@ -1295,11 +1275,9 @@ fn run_worklist(
         // gives sibling arms anchor recency-locality at loop heads (see
         // get_branch_snapshot triage: the deferral lets every arm-variant
         // of an iteration seed its own forward re-exploration before any
-        // back-edge pops → quadratic redundant paths). Default ON in BCF
-        // mode (all-faithful mirror); base mode keeps the deferral
-        // (selftest baseline) — kill-switch =0 / force-on =1.
-        let kernel_push_order =
-            crate::common::config::bcf_mirror_knob("ZOVIA_KERNEL_PUSH_ORDER", env.bcf_enabled);
+        // back-edge pops → quadratic redundant paths). ON in BCF mode
+        // (all-faithful mirror); base mode keeps the deferral (selftest baseline).
+        let kernel_push_order = env.bcf_enabled;
         let mut loop_back = Vec::new();
         let mut other = Vec::new();
         let succ_count = successors.len();
