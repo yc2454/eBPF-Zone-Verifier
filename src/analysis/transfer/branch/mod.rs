@@ -819,31 +819,6 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
         // pc274 190-path family MISSes.
         let hidx = env.current_step_idx.or(state.history_idx);
         let targets = unreachable_target_regs(env, state, hidx);
-        // KERNEL-FAITHFUL PRECISION (no_log proto-arm fix, 2026-05-31):
-        // mirror bcf_prove_unreachable → backtrack_states(reg_masks)'s
-        // precision side-effect. The kernel marks the reject's live,
-        // non-const "reg_masks" registers precise along the suffix; that
-        // precision keeps sibling paths (the proto≤5 / ==6 / ≥7 arms of an
-        // IP-proto switch) DISTINCT in is_state_visited, so each reaches the
-        // reject and gets its own discharge. zovia computes the same
-        // `targets` for the base walk but never marked them precise, so its
-        // imprecise-scalar wildcard rule (regsafe NOT_EXACT: a non-precise
-        // scalar is skipped) MERGED the arms — only a subset of the reject's
-        // discharges were produced, leaving kernel MISSes on the unmerged
-        // siblings' hashes (from_nat_no_log pc735: 618296 etc.). Marking here
-        // makes the cached ancestor states carry the precision, so a later
-        // sibling's is_state_visited sees range_within over disjoint proto
-        // ranges ([0,5] vs [7,255]) and stays distinct. Replaces the blunt
-        // ZOVIA_NO_PRUNE_WINDOW experiment knob with a targeted, kernel-shaped
-        // change. Default-OFF until VM-gated (repr-19 + cilium-17 loads, watch
-        // state-count). See project_no_log_subsumption_arc.md.
-        if std::env::var("ZOVIA_BCF_REJECT_PRECISE").ok().as_deref() == Some("1") {
-            if let Some(h) = hidx {
-                for &r in &targets {
-                    crate::analysis::flow::precision::mark_chain_precision_backward(env, h, state.parent_cache_id, r);
-                }
-            }
-        }
         let landed = hidx.and_then(|hidx| {
             crate::analysis::flow::precision::bcf_suffix_base_pc_and_cache_id(env, hidx, state.parent_cache_id, &targets)
         });
