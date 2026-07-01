@@ -77,20 +77,11 @@ pub struct GlobalOpts {
     #[arg(long = "bcf", global = true)]
     pub bcf: bool,
 
-    /// DEPRECATED no-op (2026-06-12): single-pass all-faithful mirror is
-    /// now the `--bcf` default, so there is no thorough mode to opt out
-    /// of. Accepted for script compatibility.
+    /// DEPRECATED no-op: the multi-pass "thorough" union mode has been
+    /// removed (the single-pass all-faithful mirror is the only path).
+    /// Still accepted so existing scripts don't break.
     #[arg(long = "no-bcf-thorough", global = true)]
     pub no_bcf_thorough: bool,
-
-    /// Opt INTO the legacy BCF "thorough" multi-pass mode: the ELF
-    /// analysis runs as multiple internal passes that vary state-cache
-    /// placement and merge per-pass discharge entries into one bundle.
-    /// Superseded as default by the all-faithful single-pass mirror
-    /// (repr-19 19/19, 2026-06-12); retained for chase archaeology and
-    /// A/B studies. No effect when `--bcf` is off.
-    #[arg(long = "bcf-thorough", global = true)]
-    pub bcf_thorough: bool,
 
     #[arg(long, global = true, value_name = "N")]
     pub max_insn: Option<usize>,
@@ -382,10 +373,6 @@ impl GlobalOpts {
         }
         if self.bcf {
             c.bcf_enabled = true;
-            // Single-pass all-faithful mirror is the default (2026-06-12);
-            // legacy multi-pass thorough is opt-in via --bcf-thorough
-            // (and --no-bcf-thorough still wins if both are passed).
-            c.bcf_thorough = self.bcf_thorough && !self.no_bcf_thorough;
         }
 
         if let Some(n) = self.max_insn {

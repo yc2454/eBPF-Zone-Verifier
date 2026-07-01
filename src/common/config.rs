@@ -137,15 +137,6 @@ pub struct VerifierConfig {
     /// env var). Effective only when `kernel_engine` is true. False
     /// selects the looser OR variant.
     pub kernel_engine_and: bool,
-
-    /// BCF "thorough" mode. When true with `--bcf`, the ELF analysis runs
-    /// internally as multiple passes that vary the state-cache placement
-    /// and merge per-pass discharge entries into one bundle. The exact
-    /// passes are an implementation detail; the *intent* is broader
-    /// coverage of kernel-rejection sites. Default `true` whenever
-    /// `bcf_enabled` is set (opt-out via `--no-bcf-thorough`); always
-    /// `false` when `bcf_enabled` is false.
-    pub bcf_thorough: bool,
 }
 
 impl Default for VerifierConfig {
@@ -186,7 +177,6 @@ impl Default for VerifierConfig {
             bcf_bundle_out: None,
             kernel_engine: false,
             kernel_engine_and: false,
-            bcf_thorough: false,
         }
     }
 }
