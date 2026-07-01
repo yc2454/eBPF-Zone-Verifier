@@ -816,12 +816,6 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     // marking below uses `base_cid_dbg` (the base cache_id) to mark exactly
     // the `parents[]` chain — no split, no bcidx/EXCLUDE_BASE pc-window.
     let base_pc = unreachable_base_pc(env, state);
-    let loop_suffix_on =
-        std::env::var("ZOVIA_EXP_LOOP_SUFFIX_BASE").ok().as_deref() == Some("1");
-    let flag_skip_on =
-        std::env::var("ZOVIA_EXP_FLAG_SKIP_BASE").ok().as_deref() == Some("1");
-    let loop_entry_on =
-        std::env::var("ZOVIA_EXP_LOOP_ENTRY_BASE").ok().as_deref() == Some("1");
     // Mirror kernel's `vstate->last_insn_idx` retrieval at bcf_track
     // replay start: look up the prev_insn PC of the cached state AT
     // base_pc (the cache the suffix walk landed on, not the immediate
@@ -939,11 +933,6 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
             Err(e) => log::warn!(target: "app", "[bcf] proof dump to {} failed: {}", path, e),
         }
     }
-    // Is this reject's PRIMARY route (its natural path-unreachable hash) one
-    // we've not seen before? A duplicate route is already covered; re-marking
-    // its lineage children_unsafe only re-opens convergence points and feeds
-    // the route-explosion cascade (accepted_entrypoint pc274). EXP gate below.
-    let primary_was_new = !env.bcf_proofs.iter().any(|e| e.cond_hash == entry.cond_hash);
     env.bcf_proofs.push(entry);
     // DEBUG (parent-hop validation, 2026-06-19): eagerly flush the
     // accumulated bcf_proofs to a path after every discharge push, so the
@@ -1036,212 +1025,6 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
                     );
                     env.bcf_proofs.push(entry_t);
                 }
-            }
-        }
-    }
-
-    // anchor-union (2026-06-11 → RETIRED 2026-06-30, now DEFAULT-OFF;
-    // kill-switch ZOVIA_BCF_ANCHOR_UNION=1 to restore for A/B).
-    // This was a guess-sweep that re-emitted the obligation at every later
-    // path-cond pc × 18 fold/prev variants because zovia's base was WRONG:
-    // it returned a cache first_insn (146) where the kernel anchors at
-    // `base->insn_idx` (190/207). The INSNIDX base (default-ON above) now
-    // computes that faithfully, so the ONE natural obligation matches the
-    // kernel — the sweep is redundant over-emission (18×|anchors| per reject
-    // = the dominant bundle bloat / E2BIG driver + the debug-program non-
-    // termination). Box-verified vs #15 base_insn probe; from_nat_fib pc748
-    // 28/28 + pc274 24/24 with it OFF. See project_from_nat_fib_pc521_*.md.
-    if crate::common::config::bcf_mirror_knob("ZOVIA_BCF_ANCHOR_UNION", false) {
-        if let Some(bcfst) = state.bcf.as_ref() {
-            // Candidates = EVERY distinct path-cond pc later than the current
-            // base (not just narrowed-const branches): the kernel's bcf_track
-            // base can sit at any checkpoint, including jump-edge targets
-            // whose surrounding cond stretch (e.g. from_hep 2586-2597 port
-            // bounds) is exactly what narrower anchor sets exclude.
-            //
-            // PLUS a bounded LOOKBACK of path-cond pcs at/below the natural
-            // base: the kernel's checkpoint can also sit EARLIER than zovia's
-            // cached base (to_wep reject 1783: zovia base=1633, kernel
-            // base=1599 → window [1602..] = the c70002dc/588b0338/5bc713f6/
-            // 86ac8cbf quartet, 2 path-cond pcs before zovia's base). Earlier
-            // anchors give superset windows — still cvc5-proven, additive.
-            let mut all_pcs: Vec<usize> = bcfst.path_cond_pcs.clone();
-            all_pcs.sort_unstable();
-            all_pcs.dedup();
-            let lookback: usize = std::env::var("ZOVIA_BCF_ANCHOR_LOOKBACK")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(8);
-            let anchors: Vec<usize> = match base_pc {
-                None => all_pcs,
-                Some(bp) => {
-                    let idx = all_pcs.partition_point(|&q| q <= bp);
-                    all_pcs[idx.saturating_sub(lookback)..].to_vec()
-                }
-            };
-            for p in anchors {
-                // prev for a re-anchored replay = the last path-cond pc below
-                // the anchor (the actual preceding cond on the path — mirrors
-                // record_path_cond at bcf_track replay start; for a jump-edge
-                // anchor this is the jump source, e.g. 2586's prev = 1484).
-                let prev_for_p = bcfst
-                    .path_cond_pcs
-                    .iter()
-                    .filter(|&&q| q < p)
-                    .copied()
-                    .max();
-                // mode: 0 = current fold (faithful when env set), 1 = legacy
-                // fold, 2 = NO-REWRITE (aliased-VAR form — the Class-A loop
-                // emits rw=false per anchor and the kernel queries it, e.g.
-                // 673434f3 on the to_hep/to_lo co-re_v6 pair).
-                // prev=p-1 mirrors the kernel's vstate->last_insn_idx: the
-                // replay-start prev is the INSN preceding the base, which need
-                // not be a recorded cond pc (prev-push then SYNTHESIZES that
-                // branch's cond — e.g. the (0x0 != 0x2)-prefixed forms).
-                let prev_insn = p.checked_sub(1);
-                for (mode, prev_v) in [
-                    (0, prev_for_p),
-                    (1, prev_for_p),
-                    (2, prev_for_p),
-                    (0, prev_insn),
-                    (1, prev_insn),
-                    (2, prev_insn),
-                    // prev=None variants: some kernel bases push NO prev
-                    // branch cond at replay start.
-                    (0, None),
-                    (1, None),
-                    (2, None),
-                    // TRAJECTORY-suffix window modes (3 = env fold, 4 =
-                    // legacy fold, 5 = no-rewrite): kernel replay is a
-                    // linear trajectory suffix; when the path crossed
-                    // higher-pc code before the base the numeric window
-                    // keeps carried conds the kernel never replays
-                    // (from_l3_co-re_v6 fe23e625).
-                    (3, prev_for_p),
-                    (4, prev_for_p),
-                    (5, prev_for_p),
-                    (3, prev_insn),
-                    (4, prev_insn),
-                    (5, prev_insn),
-                    (3, None),
-                    (4, None),
-                    (5, None),
-                ] {
-                    if prev_v.is_none() && prev_for_p.is_none() && mode != 0 {
-                        continue; // avoid exact duplicates of the Some-prev rows
-                    }
-                    if prev_v == prev_insn && prev_insn == prev_for_p && mode != 0 {
-                        continue; // p-1 row duplicates the computed-prev row
-                    }
-                    let okv = match mode {
-                        1 => crate::refinement::refine_unreachable::try_prove_unreachable_fold_legacy(
-                            state, Some(p), prev_v,
-                        ),
-                        2 => crate::refinement::refine_unreachable::try_prove_unreachable_no_rewrite(
-                            state, Some(p), prev_v,
-                        ),
-                        3 => crate::refinement::refine_unreachable::try_prove_unreachable_traj(
-                            state, Some(p), prev_v,
-                        ),
-                        4 => crate::refinement::refine_unreachable::try_prove_unreachable_traj_fold_legacy(
-                            state, Some(p), prev_v,
-                        ),
-                        5 => crate::refinement::refine_unreachable::try_prove_unreachable_traj_no_rewrite(
-                            state, Some(p), prev_v,
-                        ),
-                        _ => try_prove_unreachable(state, Some(p), prev_v),
-                    };
-                    if let Some(ok_au) = okv {
-                        let entry_au = RefineEntry::new(
-                            ok_au.goal_root, ok_au.sym.exprs, ok_au.proof_bytes,
-                            BCF_BUNDLE_KIND_UNREACHABLE,
-                        );
-                        if !env.bcf_proofs.iter().any(|e| e.cond_hash == entry_au.cond_hash) {
-                            info!(
-                                target: "app",
-                                "[bcf] path-unreachable (anchor-union@{} mode={}): cvc5 proof {} bytes (hash {:016x})",
-                                p, mode, entry_au.proof_bytes.len(), entry_au.cond_hash
-                            );
-                            env.bcf_proofs.push(entry_au);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Loop-suffix-base discharge (additive). When the reject's recorded path
-    // crossed an unrolled bounded loop, re-anchor the goal at the loop exit
-    // (the kernel's bcf_track base) so only the exit branch + post-loop suffix
-    // survive — produces the kernel's post-loop obligation (accepted_entrypoint
-    // 0x11cc) that the pre-loop-anchored discharges above miss. ADDITIVE +
-    // deduped: returns None when the path crossed no loop, so it never drops
-    // another reject's obligation.
-    if loop_suffix_on {
-        if let Some(ok_ls) = crate::refinement::refine_unreachable::try_prove_unreachable_loop_suffix(
-            state, base_pc, prev_insn_pc,
-        ) {
-            let entry_ls = RefineEntry::new(
-                ok_ls.goal_root, ok_ls.sym.exprs, ok_ls.proof_bytes,
-                BCF_BUNDLE_KIND_UNREACHABLE,
-            );
-            if !env.bcf_proofs.iter().any(|e| e.cond_hash == entry_ls.cond_hash) {
-                info!(
-                    target: "app",
-                    "[bcf] path-unreachable (loop-suffix): cvc5 proof {} bytes (hash {:016x})",
-                    entry_ls.proof_bytes.len(), entry_ls.cond_hash
-                );
-                env.bcf_proofs.push(entry_ls);
-            }
-        }
-    }
-
-    // Flag-skip-base discharge (additive). Re-anchors past the loop exit at
-    // the proto-switch "flag" branch's flag-clear (`0==0`) side, dropping the
-    // loop and the flag's `!=0x400` conjunct — produces the kernel's
-    // flag-bypass obligations (accepted_entrypoint 0x2f5796f3… family) that
-    // the loop-suffix + pre-loop discharges miss. ADDITIVE + deduped: returns
-    // None when the path crossed no loop / has no post-loop foldable branch.
-    if flag_skip_on {
-        for ok_fs in crate::refinement::refine_unreachable::try_prove_unreachable_flag_skip_multi(
-            state, base_pc, prev_insn_pc,
-        ) {
-            let entry_fs = RefineEntry::new(
-                ok_fs.goal_root, ok_fs.sym.exprs, ok_fs.proof_bytes,
-                BCF_BUNDLE_KIND_UNREACHABLE,
-            );
-            if !env.bcf_proofs.iter().any(|e| e.cond_hash == entry_fs.cond_hash) {
-                info!(
-                    target: "app",
-                    "[bcf] path-unreachable (flag-skip): cvc5 proof {} bytes (hash {:016x})",
-                    entry_fs.proof_bytes.len(), entry_fs.cond_hash
-                );
-                env.bcf_proofs.push(entry_fs);
-            }
-        }
-    }
-
-    // Loop-entry-base discharge (additive). Re-anchors at a loop-header bound
-    // check on the zero-iteration route, reproducing the kernel's `u>=`-anchored
-    // proto-switch obligations (the second engine-shape family) that flag-skip
-    // (== anchors) and the loop-suffix/pre-loop discharges miss. ADDITIVE +
-    // deduped.
-    if loop_entry_on && !env.loop_exit_branch_pcs.is_empty() {
-        let headers = env.loop_exit_branch_pcs.clone();
-        for ok_le in crate::refinement::refine_unreachable::try_prove_unreachable_loop_entry_multi(
-            state, base_pc, prev_insn_pc, &headers,
-        ) {
-            let entry_le = RefineEntry::new(
-                ok_le.goal_root, ok_le.sym.exprs, ok_le.proof_bytes,
-                BCF_BUNDLE_KIND_UNREACHABLE,
-            );
-            if !env.bcf_proofs.iter().any(|e| e.cond_hash == entry_le.cond_hash) {
-                info!(
-                    target: "app",
-                    "[bcf] path-unreachable (loop-entry): cvc5 proof {} bytes (hash {:016x})",
-                    entry_le.proof_bytes.len(), entry_le.cond_hash
-                );
-                env.bcf_proofs.push(entry_le);
             }
         }
     }
@@ -1425,11 +1208,6 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     // its own path-unreachable bundle entry (cilium bpf_wireguard
     // pc246 route-B). Scoped to the same suffix base as the
     // path_conds (kernel parents[0..vstate_cnt-1]).
-    let mark_if_new = std::env::var("ZOVIA_EXP_MARK_IF_NEW").ok().as_deref() == Some("1");
-    if !mark_if_new || primary_was_new {
-        // Deeper bcidx base (NOT the INSNIDX goal anchor): the marking must
-        // reach pc521 for d53. See the split at the top of this fn.
-        crate::analysis::flow::pruning::cache::mark_path_children_unsafe(env, state, base_cid_dbg);
-    }
+    crate::analysis::flow::pruning::cache::mark_path_children_unsafe(env, state, base_cid_dbg);
     true
 }

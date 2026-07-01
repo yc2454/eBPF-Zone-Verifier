@@ -315,14 +315,8 @@ fn run_analyze_all_thorough(path: &str, _config: VerifierConfig) {
     // that exact set + whole-object VM load of the gate list
     // (--no-cache-bundles). The 3-pass default passed that gate 19/19;
     // variant c remains excluded (covered: 19/19 without it) — it exists
-    // for the no_log FUNCTION-level chase work. Set ZOVIA_BCF_ALL_PASSES=1
-    // to restore the full 4-pass set.
-    let variations: &[(&str, &[(&str, &str)])] =
-        if std::env::var("ZOVIA_BCF_ALL_PASSES").ok().as_deref() == Some("1") {
-            ALL_VARIATIONS
-        } else {
-            &ALL_VARIATIONS[..3] // baseline + variant a + variant b
-        };
+    // for the no_log FUNCTION-level chase work.
+    let variations: &[(&str, &[(&str, &str)])] = &ALL_VARIATIONS[..3]; // baseline + variant a + variant b
 
     for (label, toggles) in variations {
         println!("--- pass: {} ---", label);
@@ -357,7 +351,6 @@ fn run_analyze_all_thorough(path: &str, _config: VerifierConfig) {
             "ZOVIA_BCF_FAITHFUL_FOLD",
             "ZOVIA_BCF_FOLD_PRENARROW",
             "ZOVIA_BCF_BOTH_FOLDS",
-            "ZOVIA_BCF_ANCHOR_UNION",
         ] {
             cmd.env(k, "0");
         }

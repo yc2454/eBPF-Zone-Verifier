@@ -36,40 +36,6 @@ fn is_inf_loop_skip_pc(prog: &Program, pc: usize) -> bool {
     matches!(prog.instrs.get(pc), Some(Instr::Call { .. }))
 }
 
-/// DIAGNOSTIC (ZOVIA_EXP_IGNORE_CHILDREN_UNSAFE): when set, the
-/// `children_unsafe` pruning-skip gate is bypassed — a marked cached state
-/// may still subsume later arrivals. Used to test whether children_unsafe
-/// over-marking is what disables convergence pruning and explodes the route
-/// enumeration in calico_tc_skb_accepted_entrypoint (pc274). Cached once.
-fn ignore_children_unsafe() -> bool {
-    use std::sync::OnceLock;
-    static V: OnceLock<bool> = OnceLock::new();
-    *V.get_or_init(|| std::env::var("ZOVIA_EXP_IGNORE_CHILDREN_UNSAFE").is_ok())
-}
-
-/// EXPERIMENT (ZOVIA_EXP_MARK_ONCE): a children_unsafe-marked cached state
-/// blocks pruning for only the FIRST later arrival, then reverts to prune-able.
-/// Mirrors the kernel's one-route-per-BCF-retry discovery (it rebuilds the
-/// convergence subsumer each retry) rather than zovia's one-shot cascade where
-/// a mark permanently disables pruning at a convergence point → route
-/// explosion (accepted_entrypoint pc256/267/272). Returns true if this skip
-/// should be HONORED (state still blocks); false = treat as prune-able now.
-fn mark_once_blocks(cache_id: Option<u32>) -> bool {
-    use std::sync::{Mutex, OnceLock};
-    static K: OnceLock<Option<u32>> = OnceLock::new();
-    let k = *K.get_or_init(|| {
-        std::env::var("ZOVIA_EXP_MARK_CAP").ok().and_then(|s| s.parse::<u32>().ok())
-    });
-    let Some(k) = k else { return true }; // experiment off: always honor the mark
-    let Some(id) = cache_id else { return true };
-    static CNT: OnceLock<Mutex<std::collections::HashMap<u32, u32>>> = OnceLock::new();
-    let m = CNT.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
-    let mut g = m.lock().unwrap();
-    let c = g.entry(id).or_insert(0);
-    *c += 1;
-    *c <= k // block for the first K arrivals, then revert to prune-able
-}
-
 /// DIAGNOSTIC (ZOVIA_DBG_SKIP_PC): tally children_unsafe prune-skips per pc;
 /// dump the top offenders every 50k skips. Finds the cached state(s) whose
 /// children_unsafe marking is collapsing convergence and exploding routes.
@@ -201,9 +167,7 @@ fn handle_loop_pruning(
         let mut r: Vec<SubsumptionMissReason> = Vec::new();
         for (i, prev) in prev_states.iter().enumerate() {
             // Kernel children_unsafe (bcf_refine, verifier.c:24580-81).
-            if prev.children_unsafe && !ignore_children_unsafe()
-                && mark_once_blocks(prev.cache_id)
-            {
+            if prev.children_unsafe {
                 dbg_skip_pc(pc);
                 continue;
             }
@@ -394,9 +358,7 @@ fn handle_standard_pruning(
             // Kernel children_unsafe (bcf_refine, verifier.c:24580-81):
             // a path-unreachable refinement marked this cached ancestor
             // not-prune-safe. Don't let it subsume a later arrival.
-            if prev.children_unsafe && !ignore_children_unsafe()
-                && mark_once_blocks(prev.cache_id)
-            {
+            if prev.children_unsafe {
                 local_children_unsafe_skips += 1;
                 dbg_skip_pc(pc);
                 continue;
@@ -471,26 +433,6 @@ pub fn should_prune(
     prog: &Program,
 ) -> bool {
     let pc = state.pc;
-
-    if std::env::var("ZOVIA_NO_PRUNE").is_ok() {
-        return false;
-    }
-
-    // EXPERIMENT (no_log proto-arm investigation 2026-05-31): windowed
-    // prune-disable. `ZOVIA_NO_PRUNE_WINDOW=lo:hi` suppresses subsumption
-    // for pc in [lo,hi], keeping sibling trajectories (e.g. the proto>5
-    // and proto<=5 arms of the pc506 switch) DISTINCT through that window
-    // so the kernel's per-arm reject discharge (base 530 / hash 78171d)
-    // can be reproduced. Scoped to avoid the pc1190-1330 fan-out E2BIG.
-    if let Ok(w) = std::env::var("ZOVIA_NO_PRUNE_WINDOW") {
-        if let Some((lo, hi)) = w.split_once(':') {
-            if let (Ok(lo), Ok(hi)) = (lo.parse::<usize>(), hi.parse::<usize>()) {
-                if pc >= lo && pc <= hi {
-                    return false;
-                }
-            }
-        }
-    }
 
     env.pruning_stats.should_prune_calls += 1;
 
@@ -737,9 +679,6 @@ pub fn should_prune(
                 continue;
             }
             if iter_active_depths_differ(prev, state) {
-                continue;
-            }
-            if std::env::var("ZOVIA_DISABLE_INF_LOOP_TRAP").ok().as_deref() == Some("1") {
                 continue;
             }
             if state_exact_equal(prev, state) {
