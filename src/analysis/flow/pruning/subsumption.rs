@@ -923,17 +923,14 @@ fn stack_subsumed_by(
     // for consistency: a given old id may map to exactly one cur id
     // across the comparison.
     let mut iter_idmap: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
-    // Kernel `stacksafe` per-byte `slot_type` comparison. zovia's default
-    // model keys absent bytes as `STACK_INVALID` but collapses every PRESENT
-    // byte (spill / helper-MISC / const) to a default `ScalarValue` in
-    // `get_slot_type` — so a byte one path wrote via a helper (`STACK_MISC`)
-    // and a byte another path never wrote (`STACK_INVALID`) look identical,
-    // and the two paths wrongly subsume each other (calico from_nat_fib
-    // proto-demux pc521 → drops the sibling's pc748 obligations). When
-    // `ZOVIA_BCF_STACK_MISC` is set we consult the faithful per-byte
-    // `StackSlotKind` and apply the kernel rule below. Default-OFF until gated.
-    let stack_misc_model =
-        std::env::var("ZOVIA_BCF_STACK_MISC").ok().as_deref() == Some("1");
+    // Kernel `stacksafe` per-byte `slot_type` comparison (verifier.c:19708-19762,
+    // the `StackSlotKind` block below). The older model keyed absent bytes as
+    // `STACK_INVALID` but collapsed every PRESENT byte (spill / helper-MISC /
+    // const) to a default `ScalarValue` in `get_slot_type` — so a byte one path
+    // wrote via a helper (`STACK_MISC`) and a byte another path never wrote
+    // (`STACK_INVALID`) looked identical, and the two paths wrongly subsumed
+    // each other (calico from_nat_fib proto-demux pc521 → dropped the sibling's
+    // pc748 obligations). The faithful per-byte kind rule is now unconditional.
     for (frame_i, (old_frame, new_frame)) in
         old.frames.iter().zip(cur.frames.iter()).enumerate()
     {
@@ -989,7 +986,7 @@ fn stack_subsumed_by(
             //     For MISC/ZERO scalar bytes there is no spilled value to
             //     compare, so the byte is settled here; only `STACK_SPILL`
             //     falls through to the reg-level type/precision checks below.
-            if stack_misc_model {
+            {
                 use crate::analysis::machine::stack_state::StackSlotKind::*;
                 match (
                     old_frame.stack.get_slot_kind(offset),

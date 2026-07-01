@@ -229,7 +229,8 @@ pub enum PointerBounds {
 /// converge at pc521). zovia previously collapsed every present byte AND every
 /// absent byte to a default `ScalarValue` in `get_slot_type`, so the arms
 /// looked identical and one subsumed the other — dropping the sibling's pc748
-/// obligations. Consulted by `stack_subsumed_by` under `ZOVIA_BCF_STACK_MISC`.
+/// obligations. Consulted unconditionally by `stack_subsumed_by` (the faithful
+/// per-byte `stacksafe` slot_type rule, verifier.c:19708-19762).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StackSlotKind {
     Spill,
