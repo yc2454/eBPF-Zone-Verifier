@@ -662,30 +662,8 @@ fn try_prove_unreachable_inner(
             // OPPOSITE bound-timing under one window, so no single rule serves
             // both. (Reverted a const-distinguisher that fixed r0 but
             // regressed w2's umax 0xff→5.)
-            // WIP (from_nat_fib pc748 d53387e3, 2026-06-24): LOWER-bound-narrowing
-            // exception to FOLD_PRENARROW. A `s> K`/`u> K`/`>=` branch tightens the
-            // reg's LOWER bound to a non-const RANGE (V0 proto [0,255]→[6,255]); the
-            // kernel materializes the VAR at THIS branch (first ref) POST-narrow so
-            // bcf_bound_reg emits BOTH `u>= K+1` and the unchanged `u<= max`.
-            // Pre-narrow drops `u>= K+1`. NARROWER than the reverted const-
-            // distinguisher: stays pre-narrow for UPPER narrowing (w2 `s<=5` keeps
-            // u<=0xff, NOT u<=5) and const-collapse (R1 `==6` keeps VAR{u<=0xff}+JEQ6),
-            // so it can't regress those. VERIFIED to emit u>=6 (96 len=350 goals gain
-            // it) but does NOT alone flip d53 — the d53-structure anchor caches V0
-            // BEFORE s>5 (reg2's s>5 reuses the cached VAR), so u>=6 lands only on
-            // OTHER anchors with wrong structure. Default-OFF (rewrites 1000s of
-            // goals, un-gated). See project_from_nat_fib_CONTINUE_exploration_order.md.
-            let lower_post = std::env::var("ZOVIA_BCF_FOLD_LOWER_POSTNARROW").ok().as_deref()
-                == Some("1");
-            let lower_tightened = lower_post
-                && lhs_bounds.const_val.is_none()
-                && (lhs_bounds.umin > pre_bounds.umin
-                    || lhs_bounds.u32_min > pre_bounds.u32_min
-                    || lhs_bounds.smin > pre_bounds.smin
-                    || (lhs_bounds.s32_min as i64) > (pre_bounds.s32_min as i64));
             let use_pre = prenarrow_on
-                && base_pc.map(|bp| pc >= bp).unwrap_or(false)
-                && !lower_tightened;
+                && base_pc.map(|bp| pc >= bp).unwrap_or(false);
             let mat_bounds = if use_pre { &pre_bounds } else { &lhs_bounds };
             // Re-mint cache key: under the flag, key by (reg, materialize_pc)
             // so a redefined reg (call/reload between references) gets a fresh
