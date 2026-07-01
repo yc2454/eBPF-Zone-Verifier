@@ -549,63 +549,40 @@ pub(crate) fn transfer_if(
 /// path_cond goal carries spurious leading conditions (from its full
 /// abstract-interpretation path) and its canonical hash misses the
 /// kernel's bundle lookup. `None` ⇒ keep all (sound, just not as tight).
-fn unreachable_base_pc(env: &VerifierEnv, state: &State) -> Option<usize> {
+/// Kernel `bcf_refine` auto-fill `reg_masks` (verifier.c:24611-24620): the
+/// live, non-const registers a reject backtracks to find its base. Shared by
+/// `unreachable_base_pc` (base/anchor) AND the prev/cache-id computation so
+/// the two `bcf_suffix_base_pc*` walks use an IDENTICAL mask. A drift here is
+/// fatal: with the `pkt_const_off` exclusion missing on one side (pc274 keeps
+/// R2=pkt → mask 0x2f6→wider), that walk empties at a DIFFERENT insn (pc99 vs
+/// 207) → `parent_loc=None` → `base_cid=None` → the faithful REPLAY is skipped
+/// and the 190-path family MISSes. See the per-clause rationale (PtrToCtx R9
+/// drain, pkt_const_off) inline below.
+fn unreachable_target_regs(
+    env: &VerifierEnv,
+    state: &State,
+    hidx: Option<usize>,
+) -> Vec<Reg> {
     use crate::analysis::machine::reg_types::RegType;
     const VARREGS: [Reg; 10] = [
         Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4,
         Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9,
     ];
-    // Kernel-faithful reg_masks: the kernel keeps a non-const packet_end in
-    // reg_masks (its rule is `tnum_is_const(var_off)`, and packet_end's var_off
-    // is non-const). d0eb6b5 blanket-excluded PtrToPacketEnd to cap a
-    // calico_tc_main 1M-timeout; that over-excludes (calico from_nat_fib pc748:
-    // kernel tracks r2=packet_end → base 521). Default = keep it (faithful);
-    // kill-switch ZOVIA_BCF_EXCLUDE_PKT_END=1 restores the d0eb6b5 behaviour.
-    let excl_pkt_end = std::env::var("ZOVIA_BCF_EXCLUDE_PKT_END").ok().as_deref() == Some("1");
+    let excl_pkt_end =
+        std::env::var("ZOVIA_BCF_EXCLUDE_PKT_END").ok().as_deref() == Some("1");
     let mut targets: Vec<Reg> = Vec::new();
     for &r in &VARREGS {
         let ty = state.types.get(r);
         if matches!(ty, RegType::NotInit) {
             continue;
         }
-        // Kernel `bcf_refine` auto-fill (verifier.c): skip every reg with
-        // `type != SCALAR_VALUE && tnum_is_const(reg->var_off)` — i.e. a
-        // non-scalar whose *offset* has no variable component. The kernel
-        // models that offset uniformly in `reg->var_off`; zovia splits it
-        // across the `RegType` enum, so the faithful mirror is
-        // per-representation: most pointer offsets ride the value-tnum
-        // (`get_tnum().is_const()` already captures them), but a
-        // `PtrToMapValue` carries its constant offset in the *type*
-        // (`offset: Some(k)`, with `None` = unknown/variable), and a
-        // `*OrNull` map pointer is offset-0 by construction — neither is
-        // reflected in the value-tnum. Without these, a constant-offset
-        // map_value pointer (kernel-excluded) is wrongly backtracked,
-        // exploding the precision suffix (calico_tc_main R7 = map_value
-        // +0x4c → ~115-clause over-walk vs the kernel's 9). This is
-        // additive: it only ever *excludes* more, tightening toward the
-        // kernel's reg_masks — never widens the tracked set.
-        // Per-pointer-kind const-offset detection. Kernel's
-        // `tnum_is_const(reg->var_off)` captures every fresh non-scalar
-        // pointer because the kernel uses a single `var_off` field for
-        // offset across all ptr types. Zovia splits that representation
-        // across the `RegType` enum; for kernel-faithful exclusion we
-        // need an explicit case per ptr kind whose offset is structurally
-        // constant (i.e. not modeled in the value-tnum). Calico-trace
-        // 2026-05-20: missing `PtrToCtx` here caused R9 to leak into
-        // `target_regs` at every BCF discharge, the walker could never
-        // drain R9 (its definition is the caller's frame, not any
-        // in-program insn), and `bcf_suffix_base_pc` always returned
-        // `None` → full-lineage `children_unsafe` marking → 26× cache
-        // invalidation → 1M-insn TIMEOUT. The kernel-side `[ZK]` probe
-        // confirmed kernel `reg_masks=0x73` (excludes R9=PtrToCtx);
-        // matching it brings the suffix base from None to a tight pc.
+        // Skip a reg with `type != SCALAR_VALUE && tnum_is_const(var_off)`.
+        // zovia splits the offset across the RegType enum, so exclude
+        // per-pointer-kind (const-offset map_value / *OrNull / structurally-0
+        // ptrs). Missing `PtrToCtx` once let R9 leak → base=None → 1M timeout.
         let const_offset = state.get_tnum(r).is_const()
             || matches!(ty, RegType::PtrToMapValue { offset: Some(_), .. })
             || matches!(ty, RegType::PtrToMapValueOrNull { .. })
-            // Below: ptr types whose "offset" component is structurally 0
-            // (no variable-offset arithmetic possible in normal use).
-            // PtrToPacket is the only ptr type with variable offset
-            // (`ptr += scalar`) and is deliberately NOT excluded.
             || matches!(ty, RegType::PtrToCtx)
             || (excl_pkt_end && matches!(ty, RegType::PtrToPacketEnd))
             || matches!(ty, RegType::PtrToSocket { .. })
@@ -623,31 +600,10 @@ fn unreachable_base_pc(env: &VerifierEnv, state: &State) -> Option<usize> {
             || matches!(ty, RegType::PtrToBtfId { .. })
             || matches!(ty, RegType::PtrToOwnedKptr { .. })
             || matches!(ty, RegType::PtrToMapKptr { .. });
-        // Kernel-faithful reg_masks (2026-06-19): the kernel's bcf_refine
-        // reg_masks default (verifier.c:24535-24543) excludes every reg with
-        // `type != SCALAR_VALUE && tnum_is_const(reg->var_off)` — i.e. a packet
-        // pointer whose offset is fully CONST is dropped. zovia models a packet
-        // ptr's offset OUTSIDE the value-tnum (in `ptr_const_off`), and this fn
-        // deliberately keeps PtrToPacket (it CAN have a variable offset) — but
-        // when it carries ONLY a tracked const offset (no variable part) it
-        // matches the kernel's const-var_off exclusion. Without this, e.g.
-        // R8=pkt(off=14) leaks into the reject's target set (mask 0x68e vs the
-        // kernel's reg_masks 0x247) → a wider suffix-base walk → wrong discharge
-        // window (accepted_entrypoint pc907: zovia base 379 vs kernel 318).
-        // ADDITIVE: only ever EXCLUDES more, tightening toward the kernel's
-        // reg_masks, never widens the tracked set. Default-OFF
-        // (`ZOVIA_BCF_PKT_CONST_REGMASK=1`) until VM-gated (repr-19 + cilium-17
-        // loads, FA=0) — it shifts emitted discharge windows, so a
-        // currently-matched hash could move.
-        // A PtrToPacket's var_off is CONST iff no variable scalar was ever
-        // added to it (`var_off_contributor` records the `ptr += scalar`
-        // source). That mirrors the kernel's `tnum_is_const(reg->var_off)`
-        // exactly — and, unlike requiring a tracked `ptr_const_off` *value*,
-        // it correctly excludes a fresh `data`/`data+K` pointer whose const
-        // offset zovia failed to thread through a spill/fill or ctx-load
-        // rewrite (accepted_entrypoint pc274 R2=pkt: const offset, no
-        // variable part → kernel drops it from reg_masks 0x17b; zovia kept it
-        // → bcf_suffix_base_pc=None → full-lineage marking → route explosion).
+        // A PtrToPacket whose var_off is fully const (no `ptr += scalar`
+        // contributor) matches the kernel's `tnum_is_const(var_off)` drop
+        // (pc274 R2=pkt const-offset → kernel reg_masks 0x17b excludes it).
+        // Gated `ZOVIA_BCF_PKT_CONST_REGMASK`.
         let pkt_const_off = matches!(ty, RegType::PtrToPacket)
             && !state.var_off_contributor.contains_key(&r)
             && std::env::var("ZOVIA_BCF_PKT_CONST_REGMASK").ok().as_deref() == Some("1");
@@ -656,14 +612,24 @@ fn unreachable_base_pc(env: &VerifierEnv, state: &State) -> Option<usize> {
         }
         targets.push(r);
     }
+    filter_live_unknown_targets(env, state, hidx, targets)
+}
+
+fn unreachable_base_pc(env: &VerifierEnv, state: &State, insnidx_anchor: bool) -> Option<usize> {
     // Start the backtrack at the *rejecting* insn's breadcrumb (kernel
-    // `backtrack_states` `last_idx = cur->insn_idx` with skip_first),
-    // not the in-flight state's parent `history_idx` — the latter skips
-    // one insn too early (fatal when the skipped predecessor is a
-    // helper-call argument's only definition).
+    // `backtrack_states` `last_idx = cur->insn_idx` with skip_first).
+    // `insnidx_anchor`: true → kernel `base->insn_idx` anchor (goal/prove);
+    // false → deeper bcidx base (EXCLUDE_BASE marking, must reach pc521).
     let hidx = env.current_step_idx.or(state.history_idx)?;
-    let targets = filter_live_unknown_targets(env, state, Some(hidx), targets);
-    crate::analysis::flow::precision::bcf_suffix_base_pc(env, hidx, state.parent_cache_id, &targets)
+    let targets = unreachable_target_regs(env, state, Some(hidx));
+    let base = crate::analysis::flow::precision::bcf_suffix_base_pc(env, hidx, state.parent_cache_id, &targets, insnidx_anchor);
+    if std::env::var("ZOVIA_DUMP_REGMASK").ok().as_deref() == Some("1") {
+        let mut mask: u32 = 0;
+        for &r in &targets { mask |= 1u32 << (r as u32); }
+        eprintln!("[regmask] reject_pc={} mask=0x{:x} targets={:?} base={:?}",
+            state.pc, mask, targets, base);
+    }
+    base
 }
 
 /// Kernel-faithful `reg_masks` tightening (cont.20): drop a reject `reg_masks`
@@ -844,7 +810,20 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     if state.bcf.is_none() {
         return false;
     }
-    let base_pc = unreachable_base_pc(env, state);
+    // SPLIT anchor vs marking (2026-06-30). The kernel's goal anchors at
+    // `base->insn_idx` (INSNIDX), but the EXCLUDE_BASE `children_unsafe`
+    // marking must reach the DEEPER bcidx base (d53/pc748 must mark down to
+    // pc521 to un-prune the w1!=6 arm). INSNIDX makes the base shallower →
+    // marking stops too high → the 4 deepest d53 hashes MISS (pc748 24/28).
+    // So: `base_pc` = the goal anchor (INSNIDX when enabled); `mark_base_pc`
+    // = always the deeper bcidx base. When INSNIDX is off they're identical
+    // (no behaviour change).
+    // DEFAULT-ON (kill-switch ZOVIA_BCF_INSNIDX_BASE=0): the faithful kernel
+    // `base->insn_idx` anchor. Replaces the anchor-union guess-sweep below.
+    let insnidx_on =
+        crate::common::config::bcf_mirror_knob("ZOVIA_BCF_INSNIDX_BASE", true);
+    let base_pc = unreachable_base_pc(env, state, insnidx_on);
+    let mark_base_pc = unreachable_base_pc(env, state, false);
     let loop_suffix_on =
         std::env::var("ZOVIA_EXP_LOOP_SUFFIX_BASE").ok().as_deref() == Some("1");
     let flag_skip_on =
@@ -858,45 +837,13 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     // to identify the immediate-predecessor branch cond (the kernel's
     // record_path_cond push at insn=base_pc, verifier.c:21117).
     let (prev_insn_pc, base_cid_dbg) = {
-        use crate::analysis::machine::reg::Reg;
-        use crate::analysis::machine::reg_types::RegType;
-        const VARREGS: [Reg; 10] = [
-            Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4,
-            Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9,
-        ];
-        // Twin of the kernel-faithful packet_end rule in unreachable_base_pc:
-        // keep non-const packet_end in reg_masks by default (kill-switch
-        // ZOVIA_BCF_EXCLUDE_PKT_END=1 restores d0eb6b5's blanket exclusion).
-        let excl_pkt_end = std::env::var("ZOVIA_BCF_EXCLUDE_PKT_END").ok().as_deref() == Some("1");
-        let targets: Vec<Reg> = VARREGS.iter().copied()
-            .filter(|&r| !matches!(state.types.get(r), RegType::NotInit))
-            .filter(|&r| {
-                let ty = state.types.get(r);
-                let const_off = state.get_tnum(r).is_const()
-                    || matches!(ty, RegType::PtrToMapValue { offset: Some(_), .. })
-                    || matches!(ty, RegType::PtrToMapValueOrNull { .. })
-                    || matches!(ty, RegType::PtrToCtx)
-                    || (excl_pkt_end && matches!(ty, RegType::PtrToPacketEnd))
-                    || matches!(ty, RegType::PtrToSocket { .. })
-                    || matches!(ty, RegType::PtrToSocketOrNull { .. })
-                    || matches!(ty, RegType::PtrToSockCommon { .. })
-                    || matches!(ty, RegType::PtrToSockCommonOrNull { .. })
-                    || matches!(ty, RegType::PtrToTcpSock { .. })
-                    || matches!(ty, RegType::PtrToTcpSockOrNull { .. })
-                    || matches!(ty, RegType::PtrToCpumask { .. })
-                    || matches!(ty, RegType::PtrToCpumaskOrNull { .. })
-                    || matches!(ty, RegType::PtrToArena { .. })
-                    || matches!(ty, RegType::PtrToArenaOrNull { .. })
-                    || matches!(ty, RegType::PtrToCgroup { .. })
-                    || matches!(ty, RegType::PtrToCgroupOrNull { .. })
-                    || matches!(ty, RegType::PtrToBtfId { .. })
-                    || matches!(ty, RegType::PtrToOwnedKptr { .. })
-                    || matches!(ty, RegType::PtrToMapKptr { .. });
-                !(!matches!(ty, RegType::ScalarValue) && const_off)
-            })
-            .collect();
+        // Shared target mask — IDENTICAL to unreachable_base_pc via the
+        // common helper. A drift here (e.g. missing the pkt_const_off drop)
+        // empties the cache-id walk at a different insn than the pc walk,
+        // leaving base_cid=None → the faithful REPLAY is skipped and the
+        // pc274 190-path family MISSes.
         let hidx = env.current_step_idx.or(state.history_idx);
-        let targets = filter_live_unknown_targets(env, state, hidx, targets);
+        let targets = unreachable_target_regs(env, state, hidx);
         // KERNEL-FAITHFUL PRECISION (no_log proto-arm fix, 2026-05-31):
         // mirror bcf_prove_unreachable → backtrack_states(reg_masks)'s
         // precision side-effect. The kernel marks the reject's live,
@@ -1101,14 +1048,18 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
         }
     }
 
-    // EXPERIMENT anchor-union (ZOVIA_BCF_ANCHOR_UNION=1, all-faithful mirror
-    // 2026-06-11): the kernel's bcf_track base can sit at a LATER checkpoint
-    // than this discharge's base_pc, yielding a leaner suffix-only cond
-    // (from_hep 415f43/a46620/600a50/09b8c4: kernel forms lack the early
-    // port-compare conjuncts). Re-emit the obligation anchored at each later
-    // narrowed-const branch pc on the path (the foldable-branch candidates,
-    // same filter as flag_skip_multi), in BOTH fold modes. ADDITIVE + deduped.
-    if crate::common::config::bcf_mirror_knob("ZOVIA_BCF_ANCHOR_UNION", true) {
+    // anchor-union (2026-06-11 → RETIRED 2026-06-30, now DEFAULT-OFF;
+    // kill-switch ZOVIA_BCF_ANCHOR_UNION=1 to restore for A/B).
+    // This was a guess-sweep that re-emitted the obligation at every later
+    // path-cond pc × 18 fold/prev variants because zovia's base was WRONG:
+    // it returned a cache first_insn (146) where the kernel anchors at
+    // `base->insn_idx` (190/207). The INSNIDX base (default-ON above) now
+    // computes that faithfully, so the ONE natural obligation matches the
+    // kernel — the sweep is redundant over-emission (18×|anchors| per reject
+    // = the dominant bundle bloat / E2BIG driver + the debug-program non-
+    // termination). Box-verified vs #15 base_insn probe; from_nat_fib pc748
+    // 28/28 + pc274 24/24 with it OFF. See project_from_nat_fib_pc521_*.md.
+    if crate::common::config::bcf_mirror_knob("ZOVIA_BCF_ANCHOR_UNION", false) {
         if let Some(bcfst) = state.bcf.as_ref() {
             // Candidates = EVERY distinct path-cond pc later than the current
             // base (not just narrowed-const branches): the kernel's bcf_track
@@ -1484,7 +1435,9 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     // path_conds (kernel parents[0..vstate_cnt-1]).
     let mark_if_new = std::env::var("ZOVIA_EXP_MARK_IF_NEW").ok().as_deref() == Some("1");
     if !mark_if_new || primary_was_new {
-        crate::analysis::flow::pruning::cache::mark_path_children_unsafe(env, state, base_pc);
+        // Deeper bcidx base (NOT the INSNIDX goal anchor): the marking must
+        // reach pc521 for d53. See the split at the top of this fn.
+        crate::analysis::flow::pruning::cache::mark_path_children_unsafe(env, state, mark_base_pc);
     }
     true
 }

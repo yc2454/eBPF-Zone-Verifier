@@ -459,7 +459,11 @@ pub fn bcf_suffix_base_pc_and_cache_id(
                             }
                         }
                     }
-                    // Found the suffix base. Return its (pc, cache_id).
+                    // Found the suffix base. Return its (pc, cache_id) — the
+                    // kernel `base = st->parent` anchor (parent_loc). MUST use
+                    // the SAME target mask as `bcf_suffix_base_pc` (both via
+                    // `unreachable_target_regs`) or the two walks empty at
+                    // different insns and this returns None → base_cid lost.
                     let (pc, _) = parent_loc?;
                     let cid = current_parent_id?;
                     return Some((pc, cid));
@@ -481,6 +485,11 @@ pub fn bcf_suffix_base_pc(
     history_idx: usize,
     parent_cache_id: Option<u32>,
     target_regs: &[Reg],
+    // When true, return the kernel `base->insn_idx` anchor (parent_loc) at
+    // bt-empty (the faithful path-cond anchor). When false, return the deeper
+    // bcidx/legacy base (the EXCLUDE_BASE marking bound must reach pc521 for
+    // d53). Callers SPLIT: prove/goal uses `true`, marking uses `false`.
+    insnidx_anchor: bool,
 ) -> Option<usize> {
     let debug = std::env::var("ZOVIA_BCF_TRACK_DEBUG").is_ok();
     let probe = std::env::var("ZOVIA_DUMP_DISCHARGE").ok().as_deref() == Some("1");
@@ -600,6 +609,32 @@ pub fn bcf_suffix_base_pc(
                             "[bcf-track] bt empty at pc={} | parent_loc_pc={:?} grandparent_pc={:?} cur_parent_id={:?} gp_id={:?}",
                             step_pc, pl_pc, gp_pc, current_parent_id, parent_grandparent_id
                         );
+                    }
+                    // INSN-IDX BASE (2026-06-30, box #15 `base_insn` probe).
+                    // Kernel `backtrack_states` (verifier.c:24544): on bt-empty
+                    // while walking state `st`, `base = st->parent`; `bcf_track`
+                    // (24424) replays from `base->insn_idx`. `current_parent_id`/
+                    // `parent_loc` here IS `st->parent` (the parent cache of the
+                    // segment being walked at bt-empty), and its cache pc ==
+                    // `base->insn_idx`. VALIDATED vs box #15: pc274 base_insn
+                    // 190/207, pc748 base_insn 521 — all == parent_loc pc. The
+                    // bcidx/parent-hop/range-hop rules add an extra `.parent` hop
+                    // (a first_insn-vs-insn_idx confusion) and OVER-walk (pc274:
+                    // return grandparent 146; kernel base_insn 190/207). This
+                    // returns the faithful path-cond anchor directly. NOTE: this
+                    // is the ANCHOR only; the EXCLUDE_BASE marking bound wants the
+                    // DEEPER value (pc748/d53 must mark down to 521) — the caller
+                    // splits anchor vs marking. Gated default-OFF.
+                    if insnidx_anchor
+                        && let Some((pc, _)) = parent_loc
+                    {
+                        if debug || probe {
+                            eprintln!(
+                                "[bcf-track] insnidx-base: bt-empty@pc{} -> base={} (parent_loc/base->insn_idx)",
+                                step_pc, pc
+                            );
+                        }
+                        return Some(pc);
                     }
                     // BREADCRUMB-IDX BASE (2026-06-29, faithful kernel
                     // backtrack_states `base = st->parent`, VALIDATED vs box
