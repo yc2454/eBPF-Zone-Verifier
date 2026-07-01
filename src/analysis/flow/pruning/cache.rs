@@ -212,22 +212,25 @@ pub fn clean_verifier_state(env: &mut VerifierEnv, cid: u32) {
 /// suppresses pruning and explodes route enumeration. `None`
 /// (kernel `backtrack_states` -EFAULT keep-all) means no lower
 /// bound — mark the whole lineage (conservative).
-pub fn mark_path_children_unsafe(env: &mut VerifierEnv, cur: &State, base_pc: Option<usize>) {
+/// Kernel `bcf_refine` marks `parents[0..vstate_cnt-1]` children_unsafe
+/// (verifier.c:24684): the state chain `cur->parent .. st`, EXCLUDING
+/// `base = st->parent`. zovia's `parent_cache_id` chain IS that checkpoint
+/// chain, so this walks it from `cur.parent_cache_id` up to (but not
+/// including) `base_cache_id` and marks each cached state. This is the
+/// FAITHFUL bound — a bounded state chain, not a pc window — replacing the
+/// EXCLUDE_BASE / DEEP_UNSAFE / bcidx pc-bound approximations (which either
+/// under-marked, missing d53's pc521-covering states, or over-marked
+/// "everything below pc146", causing the pc274 re-exploration blowup).
+/// `base_cache_id == None` ⇒ backtrack didn't find a base (bt never emptied)
+/// ⇒ kernel marks the whole chain to entry; we do the same.
+pub fn mark_path_children_unsafe(
+    env: &mut VerifierEnv,
+    cur: &State,
+    base_cache_id: Option<u32>,
+) {
     let mut id = cur.parent_cache_id;
     let mut budget: usize = 16_384;
     let dump = std::env::var("ZOVIA_DUMP_DISCHARGE").ok().as_deref() == Some("1");
-    // EXPERIMENT (structural distinguisher): do not mark loop-header
-    // states children_unsafe. A loop header is a back-edge target — the
-    // state cached there is the loop's wide convergence subsumer. The
-    // kernel rebuilds it on each BCF retry; zovia's one-shot cascade
-    // would permanently invalidate it, collapsing the only state that
-    // subsumes the loop's R1×R8×R9 fan (accepted_entrypoint pc-170 OOM).
-    // calico_tc_main marks the same loop region but doesn't depend on it
-    // for coverage (its route obligations are straight-line, high-pc).
-    let skip_loop_hdr =
-        std::env::var("ZOVIA_EXP_SKIP_LOOP_HEADER_UNSAFE").ok().as_deref() == Some("1");
-    let mark_defs_only =
-        std::env::var("ZOVIA_EXP_MARK_DEFS_ONLY").ok().as_deref() == Some("1");
     let mut marked = 0usize;
     let mut first_pc: Option<usize> = None;
     let mut last_pc: Option<usize> = None;
@@ -236,44 +239,13 @@ pub fn mark_path_children_unsafe(env: &mut VerifierEnv, cur: &State, base_pc: Op
             break;
         }
         budget -= 1;
+        // Stop AT the base (excluded) — kernel's `parents[0..vstate_cnt-1]`.
+        if Some(cid) == base_cache_id {
+            break;
+        }
         let Some(&(pc, idx)) = env.cache_loc_by_id.get(&cid) else {
             break;
         };
-        // Kernel `bcf_refine` marks `parents[0..vstate_cnt-1]` where parents[]
-        // is built from `cur->parent` walking up to BUT NOT INCLUDING `base`
-        // (verifier.c:24570-24585), and the `- 1` also drops `cur`. So the
-        // kernel marks the chain EXCLUDING both the reject `cur` (zovia already
-        // starts at cur.parent) AND the suffix `base`. The base is the
-        // convergence point where the reject's reg_masks backtrack ends — the
-        // bottleneck shared by ALL paths to the reject. Leaving it prune-able
-        // lets paths CONVERGE there; marking it (zovia's old `pc < bp`) kills
-        // that convergence → the demux fan re-explores → route explosion
-        // (accepted_entrypoint pc274). ZOVIA_EXP_EXCLUDE_BASE mirrors the
-        // kernel: stop AT the base (`pc <= bp`), excluding it.
-        let exclude_base =
-            std::env::var("ZOVIA_EXP_EXCLUDE_BASE").ok().as_deref() == Some("1");
-        // DIAGNOSTIC (pm20): the kernel bounds the children_unsafe marking by
-        // how far the reject's reg_masks BACKTRACK reaches, not the suffix
-        // `base_pc`. For calico_tc_main pc748 the reg_masks include the
-        // protocol scalar spilled at fp-272 (pc746), whose backtrack continues
-        // to the proto-demux convergence at pc521 — BELOW base_pc=582. With the
-        // suffix bound the pc521 convergence cache stays prunable, so the
-        // w1!=6 arm is pruned there and the 6-hash pc748 family is never
-        // emitted. `ZOVIA_BCF_DEEP_UNSAFE=<pc>` overrides the lower bound to
-        // <pc> to test whether deepening to the reg_masks reach recovers them.
-        let deep_unsafe: Option<usize> = std::env::var("ZOVIA_BCF_DEEP_UNSAFE")
-            .ok()
-            .and_then(|s| s.parse().ok());
-        let effective_bp = match (base_pc, deep_unsafe) {
-            (Some(bp), Some(d)) => Some(bp.min(d)),
-            (b, None) => b,
-            (None, Some(d)) => Some(d),
-        };
-        if let Some(bp) = effective_bp
-            && (pc < bp || (exclude_base && deep_unsafe.is_none() && pc == bp))
-        {
-            break;
-        }
         let Some(s) = env
             .explored_states
             .get_mut(&pc)
@@ -281,52 +253,23 @@ pub fn mark_path_children_unsafe(env: &mut VerifierEnv, cur: &State, base_pc: Op
         else {
             break;
         };
-        if s.children_unsafe {
-            // Already marked by an EARLIER discharge — but do NOT stop:
-            // the kernel marks `parents[0..vstate_cnt-1]` UNCONDITIONALLY
-            // (verifier.c:24629). Each discharge's backtrack base differs;
-            // a shallow discharge (base 579) marks 579→cur, then a later
-            // DEEPER discharge (base 521/512/455) walks the same lineage
-            // and, hitting the already-marked 742/739 prefix, must keep
-            // going to mark the 521→578 segment BELOW it. The old
-            // `break` assumed "already-marked ⇒ rest done", which is false
-            // when bases vary: it capped the cumulative marked floor at the
-            // FIRST discharge's base (579), so the proto-demux convergences
-            // at pc521 (calico from_nat_fib) stayed prune-safe and the
-            // w1!=6 arm was pruned there → 2a94 never emitted. Continue up
-            // the lineage; the `pc < base_pc` bound above still stops it.
-            id = s.parent_cache_id;
-            continue;
+        let parent = s.parent_cache_id;
+        // Kernel marks unconditionally (idempotent); walk continues past
+        // already-marked states to reach the base each time.
+        if !s.children_unsafe {
+            s.children_unsafe = true;
+            marked += 1;
+            if first_pc.is_none() {
+                first_pc = Some(pc);
+            }
+            last_pc = Some(pc);
         }
-        if skip_loop_hdr && env.loop_header_pcs.contains(&pc) {
-            // EXPERIMENT: protect the loop-convergence subsumer; keep
-            // walking ancestors (the suffix continues past it).
-            id = s.parent_cache_id;
-            continue;
-        }
-        // EXPERIMENT (ZOVIA_EXP_MARK_DEFS_ONLY): skip marking the state cached
-        // at a branch pc. A branch is a USE, not a reg definition; its cached
-        // state is the convergence subsumer at that demux point. Marking it
-        // children_unsafe collapses pruning → route explosion
-        // (accepted_entrypoint pc256/267/272). The reg DEF-sites a reject's
-        // reg_masks depend on (assignments like pc521 `w1=0`, enabling pc748
-        // d53) are NOT branches, so they still get marked. Borrow `s` ends
-        // before the env read, so re-fetch is not needed (env.branch_pcs is a
-        // separate field).
-        if mark_defs_only && env.branch_pcs.contains(&pc) {
-            id = s.parent_cache_id;
-            continue;
-        }
-        s.children_unsafe = true;
-        marked += 1;
-        if first_pc.is_none() { first_pc = Some(pc); }
-        last_pc = Some(pc);
-        id = s.parent_cache_id;
+        id = parent;
     }
     if dump {
         eprintln!(
-            "[disc] marked {} ancestors  pc=[{:?}..{:?}]  base_pc={:?}",
-            marked, last_pc, first_pc, base_pc
+            "[disc] marked {} ancestors  pc=[{:?}..{:?}]  base_cid={:?}",
+            marked, last_pc, first_pc, base_cache_id
         );
     }
 }

@@ -85,8 +85,29 @@ pub struct State {
     /// Can be either Zone (DBM) or Interval domain based on config
     pub domain: NumericDomain,
 
-    /// Current Program Counter
+    /// Current Program Counter. Mirrors kernel `bpf_verifier_state.insn_idx`
+    /// (verifier.c:21050 `state->insn_idx = env->insn_idx`; :20515 a cached
+    /// checkpoint's `insn_idx` = the pc it was cached at). Faithful
+    /// `backtrack_states` uses this as the anchor/replay-start (`bcf_track`
+    /// replays from `base->insn_idx`, :24424).
     pub pc: usize,
+
+    /// Kernel `bpf_verifier_state.first_insn_idx` (verifier.c:20529
+    /// `cur->first_insn_idx = insn_idx`): the pc where this state's current
+    /// segment BEGAN = the pc of the PREVIOUS checkpoint on this path. Reset
+    /// to `pc` on the continuing state at each checkpoint (record_state); the
+    /// cached CLONE keeps the prior value (kernel copies it at :2073). Faithful
+    /// `backtrack_states` (verifier.c:24504) crosses `st=st->parent` using the
+    /// `[first_insn_idx, last_insn_idx]` range — replaces the breadcrumb-idx /
+    /// bcidx / parent-hop / range-hop heuristics.
+    pub first_insn_idx: usize,
+
+    /// Kernel `bpf_verifier_state.last_insn_idx` (verifier.c:21049
+    /// `state->last_insn_idx = env->prev_insn_idx`): the pc of the instruction
+    /// this state arrived FROM. Set to the producing state's `pc` on each
+    /// successor. `backtrack_states` uses it as `last_idx` when crossing into a
+    /// parent state (:24560).
+    pub last_insn_idx: usize,
 
     /// History Index (for history tracking, optional)
     pub history_idx: Option<usize>,
@@ -391,6 +412,12 @@ impl State {
             types: TypeState::new_not_init(),
             domain,
             pc,
+            // Kernel: entry state first_insn_idx = subprog start (:24259),
+            // last_insn_idx = -1 (:24260, no predecessor). Here the entry pc
+            // IS the subprog start; last has no prev so we seed it to pc (the
+            // faithful walk stops at the entry state via st->parent == None).
+            first_insn_idx: pc,
+            last_insn_idx: pc,
             history_idx: None,
             parent_cache_id: None,
             cache_id: None,

@@ -615,14 +615,13 @@ fn unreachable_target_regs(
     filter_live_unknown_targets(env, state, hidx, targets)
 }
 
-fn unreachable_base_pc(env: &VerifierEnv, state: &State, insnidx_anchor: bool) -> Option<usize> {
+fn unreachable_base_pc(env: &VerifierEnv, state: &State) -> Option<usize> {
     // Start the backtrack at the *rejecting* insn's breadcrumb (kernel
-    // `backtrack_states` `last_idx = cur->insn_idx` with skip_first).
-    // `insnidx_anchor`: true → kernel `base->insn_idx` anchor (goal/prove);
-    // false → deeper bcidx base (EXCLUDE_BASE marking, must reach pc521).
+    // `backtrack_states` `last_idx = cur->insn_idx` with skip_first), and
+    // return the faithful `base->insn_idx` (parent_loc at bt-empty).
     let hidx = env.current_step_idx.or(state.history_idx)?;
     let targets = unreachable_target_regs(env, state, Some(hidx));
-    let base = crate::analysis::flow::precision::bcf_suffix_base_pc(env, hidx, state.parent_cache_id, &targets, insnidx_anchor);
+    let base = crate::analysis::flow::precision::bcf_suffix_base_pc(env, hidx, state.parent_cache_id, &targets);
     if std::env::var("ZOVIA_DUMP_REGMASK").ok().as_deref() == Some("1") {
         let mut mask: u32 = 0;
         for &r in &targets { mask |= 1u32 << (r as u32); }
@@ -810,20 +809,13 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     if state.bcf.is_none() {
         return false;
     }
-    // SPLIT anchor vs marking (2026-06-30). The kernel's goal anchors at
-    // `base->insn_idx` (INSNIDX), but the EXCLUDE_BASE `children_unsafe`
-    // marking must reach the DEEPER bcidx base (d53/pc748 must mark down to
-    // pc521 to un-prune the w1!=6 arm). INSNIDX makes the base shallower →
-    // marking stops too high → the 4 deepest d53 hashes MISS (pc748 24/28).
-    // So: `base_pc` = the goal anchor (INSNIDX when enabled); `mark_base_pc`
-    // = always the deeper bcidx base. When INSNIDX is off they're identical
-    // (no behaviour change).
-    // DEFAULT-ON (kill-switch ZOVIA_BCF_INSNIDX_BASE=0): the faithful kernel
-    // `base->insn_idx` anchor. Replaces the anchor-union guess-sweep below.
-    let insnidx_on =
-        crate::common::config::bcf_mirror_knob("ZOVIA_BCF_INSNIDX_BASE", true);
-    let base_pc = unreachable_base_pc(env, state, insnidx_on);
-    let mark_base_pc = unreachable_base_pc(env, state, false);
+    // FAITHFUL base (Phase 2, 2026-07-01). The kernel's ONE `base` from
+    // backtrack_states gives BOTH the goal anchor (`base->insn_idx`, the
+    // replay start) AND the marking bound (parents[] = the chain up to base).
+    // `base_pc` = `base->insn_idx` (anchor, for the prove/goal calls). The
+    // marking below uses `base_cid_dbg` (the base cache_id) to mark exactly
+    // the `parents[]` chain — no split, no bcidx/EXCLUDE_BASE pc-window.
+    let base_pc = unreachable_base_pc(env, state);
     let loop_suffix_on =
         std::env::var("ZOVIA_EXP_LOOP_SUFFIX_BASE").ok().as_deref() == Some("1");
     let flag_skip_on =
@@ -1437,7 +1429,7 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     if !mark_if_new || primary_was_new {
         // Deeper bcidx base (NOT the INSNIDX goal anchor): the marking must
         // reach pc521 for d53. See the split at the top of this fn.
-        crate::analysis::flow::pruning::cache::mark_path_children_unsafe(env, state, mark_base_pc);
+        crate::analysis::flow::pruning::cache::mark_path_children_unsafe(env, state, base_cid_dbg);
     }
     true
 }

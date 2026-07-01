@@ -1064,7 +1064,23 @@ fn run_worklist(
                     outer_gate,
                 );
             }
+            // PHASE-1 VALIDATION (ZOVIA_DUMP_STATE_RANGE): the cached state's
+            // faithful (insn_idx, first, last) — compare to box #15 [ZK refine]
+            // base_insn/base_first/base_last. state.first_insn_idx here is still
+            // the CACHED (pre-reset) value; the reset below is for the successor.
+            if std::env::var("ZOVIA_DUMP_STATE_RANGE").ok().as_deref() == Some("1") {
+                eprintln!(
+                    "[srange] cid={} insn_idx={} first={} last={}",
+                    cache_id, state.pc, state.first_insn_idx, state.last_insn_idx
+                );
+            }
             state.parent_cache_id = Some(cache_id);
+            // Kernel `cur->first_insn_idx = insn_idx` (verifier.c:20529): the
+            // continuing state begins a NEW segment at this checkpoint pc. The
+            // cached clone above keeps the PRIOR segment start (copy_verifier_state
+            // :2073). last_insn_idx is unchanged (it's the arrival pc, set on
+            // this state at successor-creation).
+            state.first_insn_idx = state.pc;
             env.prev_jmps_processed = env.jmps_processed;
             env.prev_insn_processed = env.insn_processed;
             state.prev_jmp_at_cache = state.path_jmp_count;
@@ -1218,6 +1234,10 @@ fn run_worklist(
         // SCC: save fields needed after `state` is moved into transfer.
         let cur_dfs_depth = state.dfs_depth;
         let cur_parent_cache_id = state.parent_cache_id;
+        // Kernel `env->insn_idx` for this step: each successor arrives FROM
+        // this pc, so its `last_insn_idx` = this pc (verifier.c:21049
+        // `state->last_insn_idx = env->prev_insn_idx`).
+        let cur_insn_pc = state.pc;
         state.domain.set_current_pc(state.pc);
         // Kernel `env->jmps_processed++` (verifier.c L19553): bump on
         // JMP-class insn for the add_new_state sparse-cache heuristic.
@@ -1317,6 +1337,9 @@ fn run_worklist(
         let succ_count = successors.len();
         for mut succ in successors.into_iter() {
             succ.history_idx = current_step_idx;
+            // Kernel `state->last_insn_idx = env->prev_insn_idx` (verifier.c:21049):
+            // this successor arrived from the instruction just processed.
+            succ.last_insn_idx = cur_insn_pc;
             // SCC: child inherits its DFS depth from parent + 1, and its
             // initial branches=1 (this one in-flight path through succ).
             // The parent's branches gets bumped once per pushed successor
