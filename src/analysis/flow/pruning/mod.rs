@@ -46,9 +46,7 @@ fn zhit_seq(pc: usize, state: &State, prev: &State) {
     if !*ON.get_or_init(|| std::env::var("ZOVIA_ZHIT").is_ok()) {
         return;
     }
-    if !(380..=910).contains(&pc) {
-        return;
-    }
+
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let seq = SEQ.fetch_add(1, Ordering::Relaxed);
     use crate::analysis::machine::reg::Reg;

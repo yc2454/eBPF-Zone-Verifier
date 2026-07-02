@@ -82,7 +82,16 @@ pub fn compute_liveness(prog: &Program, env: &mut VerifierEnv) {
                 };
                 mask |= 1 << bit;
             }
-            eprintln!("[zlrb] {} 0x{:x}", pc, mask);
+            let mut slots: Vec<i16> =
+                env.insn_aux_data[pc].live_slots.iter().copied().collect();
+            slots.sort_unstable();
+            eprintln!(
+                "[zlrb] {} 0x{:x} pp={} slots={:?}",
+                pc,
+                mask,
+                env.insn_aux_data[pc].prune_point as u8,
+                slots
+            );
         }
     }
 }
