@@ -36,6 +36,43 @@ fn is_inf_loop_skip_pc(prog: &Program, pc: usize) -> bool {
     matches!(prog.instrs.get(pc), Some(Instr::Call { .. }))
 }
 
+/// DIAGNOSTIC (ZOVIA_ZHIT): print every prune HIT in insn window 380-910
+/// with a global sequence number, for diffing against the kernel's
+/// [ZK phit] sequence (same window, same fields).
+fn zhit_seq(pc: usize, state: &State, prev: &State) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var("ZOVIA_ZHIT").is_ok()) {
+        return;
+    }
+    if !(380..=910).contains(&pc) {
+        return;
+    }
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    use crate::analysis::machine::reg::Reg;
+    let r2t = state.types.get(Reg::R2);
+    let r2i = state.domain.get_interval(Reg::R2);
+    let mut diffs = String::new();
+    for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9] {
+        let ci = state.domain.get_interval(r);
+        let pi = prev.domain.get_interval(r);
+        if ci != pi || state.types.get(r) != prev.types.get(r) {
+            diffs.push_str(&format!(
+                " {:?}:cur={:?}[{}..{}]vs prev={:?}[{}..{}]p={}",
+                r, state.types.get(r), ci.0, ci.1,
+                prev.types.get(r), pi.0, pi.1,
+                prev.precise_regs.contains(&r)
+            ));
+        }
+    }
+    eprintln!(
+        "[zhit] seq={} pc={} curR2={:?}[{}..{}] DIFFS:{}",
+        seq, pc, r2t, r2i.0, r2i.1, diffs
+    );
+}
+
 /// DIAGNOSTIC (ZOVIA_DBG_SKIP_PC): tally children_unsafe prune-skips per pc;
 /// dump the top offenders every 50k skips. Finds the cached state(s) whose
 /// children_unsafe marking is collapsing convergence and exploding routes.
@@ -247,6 +284,7 @@ fn handle_loop_pruning(
             }
             match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
                 Ok(()) => {
+                    zhit_seq(pc, state, prev);
                     if crate::analysis::trace_pc_in_range(pc) {
                         let cr2 = state.domain.get_interval(crate::analysis::machine::reg::Reg::R2);
                         let pr2 = prev.domain.get_interval(crate::analysis::machine::reg::Reg::R2);
@@ -377,6 +415,7 @@ fn handle_standard_pruning(
                 iter_next_pc || crate::analysis::flow::scc::incomplete_read_marks(env, prev);
             match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
                 Ok(()) => {
+                    zhit_seq(pc, state, prev);
                     if crate::analysis::trace_pc_in_range(pc)
                         && state.types.get(crate::analysis::machine::reg::Reg::R2) == crate::analysis::machine::reg_types::RegType::ScalarValue
                         && state.domain.get_interval(crate::analysis::machine::reg::Reg::R2).1 == 65535

@@ -263,6 +263,9 @@ pub fn mark_path_children_unsafe(
                 first_pc = Some(pc);
             }
             last_pc = Some(pc);
+            if crate::analysis::trace_pc_in_range(pc) {
+                eprintln!("[disc-mark] pc={} idx={} cid={}", pc, idx, cid);
+            }
         }
         id = parent;
     }

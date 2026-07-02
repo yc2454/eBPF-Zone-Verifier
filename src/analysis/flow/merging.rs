@@ -118,6 +118,21 @@ pub fn record_state(
 
     let states = env.explored_states.entry(pc).or_default();
     let idx = states.len();
+    if crate::analysis::trace_pc_in_range(pc) {
+        use crate::analysis::machine::reg::Reg;
+        let r1t = state.types.get(Reg::R1);
+        let r1i = state.domain.get_interval(Reg::R1);
+        let r2t = state.types.get(Reg::R2);
+        let r2i = state.domain.get_interval(Reg::R2);
+        let r0t = state.types.get(Reg::R0);
+        let r9t = state.types.get(Reg::R9);
+        let r9i = state.domain.get_interval(Reg::R9);
+        eprintln!(
+            "[cache] pc={} idx={} cid={} parent={:?} r0={:?} r1={:?}[{}..{}] r2={:?}[{}..{}] r9={:?}[{}..{}]",
+            pc, idx, cache_id, state.parent_cache_id, r0t, r1t, r1i.0, r1i.1, r2t, r2i.0, r2i.1,
+            r9t, r9i.0, r9i.1
+        );
+    }
     states.push(state);
     env.cache_loc_by_id.insert(cache_id, (pc, idx));
 
