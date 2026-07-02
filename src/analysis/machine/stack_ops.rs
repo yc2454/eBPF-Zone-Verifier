@@ -24,6 +24,70 @@ impl State {
         let is_aligned = (offset % 8) == 0;
         let reg_type = self.types.get(reg);
 
+        // Kernel `check_stack_write_fixed_off` (verifier.c:5544) classification:
+        //   (a) aligned (off%8==0) SCALAR register store, ANY size → STACK_SPILL
+        //       with the value saved (small-spill support);
+        //   (c) spillable-pointer register store (necessarily aligned 8-byte;
+        //       partial pointer spills are EACCES upstream) → STACK_SPILL;
+        //   (d) everything else — an UNALIGNED register store — DESTROYS the
+        //       value: covered bytes become STACK_MISC (STACK_ZERO when the
+        //       source register is a known null, which the kernel also forces
+        //       precise).
+        // zovia previously recorded a value-carrying Spill slot for (d) too,
+        // so two paths the kernel keeps apart on byte kinds (SPILL vs MISC)
+        // subsumed each other (from_nat_fib pc619 fp-24: 8-byte spill @1648
+        // vs unaligned 4-byte store @1368 — the d53 first-divergence).
+        if !(is_aligned && (matches!(reg_type, RegType::ScalarValue) || size == MemSize::U64)) {
+            let is_null =
+                matches!(reg_type, RegType::ScalarValue) && self.domain.proven_zero(reg);
+            let kind = if is_null {
+                crate::analysis::machine::stack_state::StackSlotKind::Zero
+            } else {
+                crate::analysis::machine::stack_state::StackSlotKind::Misc
+            };
+            if is_null {
+                // Kernel: "force originating register to be precise to make
+                // STACK_ZERO correct for subsequent states". Local-state mark
+                // only; the backward chain walk happens at the usual
+                // precision sinks.
+                self.precise_regs.insert(reg);
+            }
+            let stack = &mut self.frames.get_mut(level).stack;
+            for i in 0..size.bytes() {
+                stack.insert(
+                    offset + i as i16,
+                    SpilledReg {
+                        source_reg: None,
+                        reg_type: RegType::ScalarValue,
+                        tnum: if is_null {
+                            Tnum::constant(0)
+                        } else {
+                            Tnum::unknown()
+                        },
+                        bounds: if is_null {
+                            ScalarBounds { min: 0, max: 0 }
+                        } else {
+                            ScalarBounds {
+                                min: i64::MIN,
+                                max: i64::MAX,
+                            }
+                        },
+                        size,
+                        ptr_bounds: None,
+                        scalar_id: None,
+                        precise: false,
+                        ptr_const_off: None,
+                        iterator: None,
+                        dynptr: None,
+                        irq_flag: None,
+                        bcf_expr: None,
+                        kind,
+                    },
+                );
+            }
+            return;
+        }
+
         // Only U64 stores at aligned offsets can preserve pointer types
         let preserved_type = if size == MemSize::U64 && is_aligned {
             reg_type
@@ -214,26 +278,37 @@ impl State {
             MemSize::U64 => imm,
         };
 
-        // For immediate stores, always track exact bounds since we know the value.
-        // The alignment check only affects whether we can reliably fill/restore,
-        // but we should still track the bounds for validation purposes.
-        let (tnum, bounds, _source_reg) = (
-            Tnum::constant(masked_imm as u64),
-            ScalarBounds {
-                min: masked_imm,
-                max: masked_imm,
-            },
-            if is_aligned { Some(Reg::R0) } else { None },
-        );
-
-        // Kernel `check_stack_write_fixed_off`: a constant-zero store marks the
-        // bytes STACK_ZERO; a non-zero constant is recorded as a known value
-        // (STACK_SPILL of a const fake_reg). Either way the byte is WRITTEN —
-        // never STACK_INVALID.
-        let store_kind = if masked_imm == 0 {
+        // Kernel `check_stack_write_fixed_off` (verifier.c:5544) for BPF_ST:
+        //   (b) ALIGNED const store → save_register_state of a known-const
+        //       fake reg = STACK_SPILL with the value (even for zero);
+        //   (d) UNALIGNED: imm==0 → STACK_ZERO; otherwise STACK_MISC with the
+        //       value DESTROYED (the kernel's else-branch keeps no constant).
+        let store_kind = if is_aligned {
+            crate::analysis::machine::stack_state::StackSlotKind::Spill
+        } else if masked_imm == 0 {
             crate::analysis::machine::stack_state::StackSlotKind::Zero
         } else {
-            crate::analysis::machine::stack_state::StackSlotKind::Spill
+            crate::analysis::machine::stack_state::StackSlotKind::Misc
+        };
+        let (tnum, bounds) = if matches!(
+            store_kind,
+            crate::analysis::machine::stack_state::StackSlotKind::Misc
+        ) {
+            (
+                Tnum::unknown(),
+                ScalarBounds {
+                    min: i64::MIN,
+                    max: i64::MAX,
+                },
+            )
+        } else {
+            (
+                Tnum::constant(masked_imm as u64),
+                ScalarBounds {
+                    min: masked_imm,
+                    max: masked_imm,
+                },
+            )
         };
 
         let slot_content = SpilledReg {
