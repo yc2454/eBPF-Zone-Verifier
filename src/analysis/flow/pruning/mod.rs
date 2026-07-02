@@ -396,6 +396,7 @@ fn handle_standard_pruning(
     // widened (unbounded) r7 reaches the access and is rejected. `iter_pc_slot`
     // is populated at every iter_next site by iter_next_fork.
     let iter_next_pc = env.iter_pc_slot.contains_key(&pc);
+    let mut ancestor_ids: Option<HashSet<u32>> = None;
     if let Some(prev_states) = env.explored_states.get(&pc) {
         for (i, prev) in prev_states.iter().enumerate() {
             // Kernel children_unsafe (bcf_refine, verifier.c:24580-81):
@@ -404,6 +405,32 @@ fn handle_standard_pruning(
             if prev.children_unsafe {
                 local_children_unsafe_skips += 1;
                 dbg_skip_pc(pc);
+                continue;
+            }
+            // Kernel `is_state_visited`: a cached state with branches>0
+            // NEVER subsumes a normal arrival (`if (sl->state.branches)
+            // ... goto miss`, verifier.c v6.15 L19024) — at EVERY prune
+            // point, not just loop heads. Same ancestors-only refinement
+            // as handle_loop_pruning's skip_active (see the long comment
+            // there): a co-active SIBLING under zovia's interleaved
+            // worklist is a state the kernel's strict DFS would have
+            // fully explored, so it may subsume; a true ANCESTOR on
+            // cur's own lineage must not (the kernel's rule — exposed at
+            // the pc18/619 outer-loop heads once slot cleaning became
+            // read-mark-driven: a descendant merged into its own
+            // still-active ancestor 365x where the kernel prunes 6x).
+            let skip_active = prev.dfs_paths > 0 && {
+                let anc = ancestor_ids
+                    .get_or_insert_with(|| collect_ancestor_ids(env, state));
+                prev.cache_id.is_none_or(|cid| anc.contains(&cid))
+            };
+            if skip_active {
+                if crate::analysis::trace_pc_in_range(pc) {
+                    eprintln!(
+                        "[SUBSUM_SKIP_ACTIVE] pc={} prev_idx={} prev.dfs_paths={} cache_id={:?} (standard)",
+                        pc, i, prev.dfs_paths, prev.cache_id,
+                    );
+                }
                 continue;
             }
             // Kernel-faithful force_exact (see matching block above for
@@ -599,20 +626,15 @@ pub fn should_prune(
     // unknown for that frame ⇒ DON'T skip (full compare — the sound
     // direction). Built once (cur's frame shape is fixed; old zips 1:1
     // by callsite).
+    // Kernel `stacksafe` has NO in-compare liveness skip: dead slots are
+    // removed from CACHED states by `clean_verifier_state` (now driven by
+    // the dynamic live-stack marks, see flow::live_stack); an uncleaned
+    // state (branches>0 / pending SCC backedges) is compared in FULL.
+    // The former static-live_slots skip here was an extra merge-enabler
+    // the kernel doesn't have (it hid per-byte slot-kind mismatches the
+    // kernel blocks on — from_nat_fib pc1375 fp-24 ZERO-vs-MISC).
     let nframes = state.frames.depth();
-    let frame_live_slots: Vec<Option<HashSet<i16>>> = (0..nframes)
-        .map(|i| {
-            let fpc = if i + 1 == nframes {
-                pc
-            } else {
-                state
-                    .frames
-                    .get(crate::analysis::machine::frame_stack::FrameLevel::from_index(i + 1))
-                    .return_pc
-            };
-            env.insn_aux_data.get(fpc).map(|a| a.live_slots.clone())
-        })
-        .collect();
+    let frame_live_slots: Vec<Option<HashSet<i16>>> = vec![None; nframes];
 
     // Kernel-faithful infinite-loop trap (verifier.c v6.15 L19114-L19127,
     // `is_state_visited`'s inf-loop check). For any cached state at this

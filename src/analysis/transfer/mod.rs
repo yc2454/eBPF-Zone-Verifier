@@ -708,6 +708,16 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         return cb_exit_propagate(env, state);
     }
 
+    // Kernel: `bpf_update_live_stack(env)` before `prepare_func_exit`
+    // (verifier.c:20664) — propagate the callee callchain's marks into
+    // the caller's instance while the pre-pop callchain still exists —
+    // and `bpf_reset_live_stack_callchain` (the write bracket no longer
+    // matches the state's callchain, so this insn must not commit).
+    {
+        let ls_key = crate::analysis::flow::live_stack::callchain_of(&state);
+        crate::analysis::flow::live_stack::update_live_stack(env, &ls_key);
+        crate::analysis::flow::live_stack::invalidate_write_bracket(env);
+    }
     if let Some(frame) = state.pop_frame() {
         // Save callee's R0 (the return value) before restoring caller state
         let ret_type = state.types.get(Reg::R0);

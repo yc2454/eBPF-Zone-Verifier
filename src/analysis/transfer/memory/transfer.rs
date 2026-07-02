@@ -374,6 +374,20 @@ pub(crate) fn transfer_store(
                     state.store_imm_to_stack_at(frame_level, *k, full_offset as i16, size);
                 }
             }
+            // Kernel `bpf_mark_stack_write` (check_stack_write_fixed_off,
+            // verifier.c:5599): only a FULL 8-byte aligned write marks the
+            // slot written — partial writes leave read propagation
+            // conservative (the slot stays live across them).
+            if full_offset % 8 == 0
+                && size == MemSize::U64
+                && let Some(spi) = crate::analysis::flow::live_stack::spi_of(full_offset)
+            {
+                crate::analysis::flow::live_stack::mark_stack_write(
+                    env,
+                    frame_level.index(),
+                    1u64 << spi,
+                );
+            }
             // Kernel `INSN_F_STACK_ACCESS` for a spill
             // (`check_stack_write_fixed_off`): a slot-aligned scalar /
             // BPF_ST-const / 8-byte-pointer register spill. zovia's

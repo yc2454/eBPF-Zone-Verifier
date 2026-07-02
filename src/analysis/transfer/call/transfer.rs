@@ -1136,6 +1136,13 @@ pub(crate) fn transfer_call_rel(
     mut state: State,
     target: usize,
 ) -> Vec<State> {
+    // Kernel `bpf_reset_live_stack_callchain` at frame push: the open
+    // per-insn write bracket belongs to the caller's callchain; a
+    // CallRel must not commit must_write at the callsite (the callsite's
+    // must_write comes from `propagate_to_outer_instance` at callee
+    // exit).
+    crate::analysis::flow::live_stack::invalidate_write_bracket(env);
+
     let pc = state.pc;
     // Kernel: `state->curframe + 1 >= MAX_CALL_FRAMES (8)` rejects when
     // the *new* frame's index would reach the limit. Our 1-based

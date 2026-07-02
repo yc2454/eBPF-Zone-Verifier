@@ -2,6 +2,7 @@ pub mod callback_analysis;
 pub mod cfg;
 pub mod precision;
 pub mod diag;
+pub mod live_stack;
 pub mod liveness;
 pub mod merging;
 pub mod pruning;

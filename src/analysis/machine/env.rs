@@ -170,6 +170,9 @@ impl SubsumptionMissReason {
 }
 
 pub struct VerifierEnv<'a> {
+    /// Live stack slots analysis (kernel/bpf/liveness.c mirror) — see
+    /// `flow::live_stack`. Initialized by `live_stack::init`.
+    pub live_stack: crate::analysis::flow::live_stack::LiveStack,
     pub ctx: &'a ExecContext,
     pub explored_states: HashMap<usize, Vec<State>>,
     /// Count of cached states evicted by the `max_states_per_pc` cap
@@ -416,6 +419,7 @@ impl<'a> VerifierEnv<'a> {
             bcf_path_unreachable: false,
             current_step_idx: None,
             replay_mode: false,
+            live_stack: Default::default(),
         }
     }
 

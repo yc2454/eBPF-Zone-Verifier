@@ -52,15 +52,20 @@ pub fn clean_verifier_state(env: &mut VerifierEnv, cid: u32) {
     // Snapshot the frame ips + their live sets BEFORE taking the
     // mutable borrow on explored_states (insn_aux_data lookup
     // borrows env immutably).
-    let frame_ips: Vec<usize> = {
+    let (frame_ips, ls_key, st_pc): (Vec<usize>, Vec<usize>, usize) = {
         let Some(st) = env.explored_states.get(&pc).and_then(|v| v.get(idx)) else {
             return;
         };
         if st.cleaned {
             return;
         }
+        // Kernel `clean_live_states` gate: a state whose SCC has pending
+        // backedges has incomplete read marks — don't clean it yet.
+        if crate::analysis::flow::scc::incomplete_read_marks(env, st) {
+            return;
+        }
         let n = st.frames.depth();
-        (0..n)
+        let ips = (0..n)
             .map(|i| {
                 if i + 1 == n {
                     st.pc
@@ -70,13 +75,28 @@ pub fn clean_verifier_state(env: &mut VerifierEnv, cid: u32) {
                         .return_pc
                 }
             })
-            .collect()
+            .collect();
+        (ips, crate::analysis::flow::live_stack::callchain_of(st), st.pc)
     };
-    let frame_live: Vec<(HashSet<Reg>, HashSet<i16>)> = frame_ips
+    // Registers stay on the STATIC live_regs (kernel `live_regs_before`,
+    // compute_live_registers). Stack slots use the DYNAMIC live-stack
+    // marks (kernel bpf_live_stack_query_init + bpf_stack_slot_alive).
+    let frame_live: Vec<(HashSet<Reg>, u64)> = frame_ips
         .iter()
-        .map(|&fip| match env.insn_aux_data.get(fip) {
-            Some(aux) => (aux.live_regs.clone(), aux.live_slots.clone()),
-            None => (HashSet::new(), HashSet::new()),
+        .enumerate()
+        .map(|(fi, &fip)| {
+            let regs = env
+                .insn_aux_data
+                .get(fip)
+                .map(|a| a.live_regs.clone())
+                .unwrap_or_default();
+            let alive = crate::analysis::flow::live_stack::frame_alive_mask(
+                &env.live_stack,
+                &ls_key,
+                st_pc,
+                fi,
+            );
+            (regs, alive)
         })
         .collect();
 
@@ -111,15 +131,20 @@ pub fn clean_verifier_state(env: &mut VerifierEnv, cid: u32) {
             }
         }
     }
-    for (i, (live_regs, live_slots)) in frame_live.iter().enumerate() {
+    for (i, (live_regs, alive_mask)) in frame_live.iter().enumerate() {
         let level = FrameLevel::from_index(i);
         let frame = st.frames.get_mut(level);
-        // Slot clean.
+        // Slot clean: a byte is dead iff its 8-byte slot (spi) is not
+        // alive per the dynamic live-stack query.
         let off_to_clean: Vec<i16> = frame
             .stack
             .slot_offsets()
             .into_iter()
-            .filter(|off| !live_slots.contains(off))
+            .filter(|&off| {
+                crate::analysis::flow::live_stack::spi_of(off as i64)
+                    .map(|spi| alive_mask & (1u64 << spi) == 0)
+                    .unwrap_or(false)
+            })
             .filter(|&off| {
                 if let Some(slot) = frame.stack.get_slot(off) {
                     slot.iterator.is_none()

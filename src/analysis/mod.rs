@@ -159,6 +159,7 @@ pub fn analyze_program_full(
 
     // Compute liveness information for all registers.
     liveness::compute_liveness(prog, &mut env);
+    flow::live_stack::init(&mut env, prog);
 
     // Compute SCCs over the CFG. Annotates `insn_aux_data[pc].scc_id`
     // (1+ for multi-vertex SCCs / singletons-with-self-edge, 0
@@ -515,6 +516,7 @@ pub fn analyze_exception_cb(
         return Some(VerificationError::CfgError(e));
     }
     liveness::compute_liveness(prog, &mut env);
+    flow::live_stack::init(&mut env, prog);
 
     // Seed initial state at the cb's entry PC. The kernel's
     // `btf_prepare_func_args` produces ARG_ANYTHING for the cookie arg;
@@ -910,6 +912,11 @@ fn run_worklist(
             }
             info!("Pruned state at pc {}", state.pc);
             prune_count += 1;
+            // Kernel process_bpf_exit: `bpf_update_live_stack` at every
+            // path death, BEFORE branch counts drop (so a state cleaned
+            // at branches==0 sees fully propagated read marks).
+            let ls_key = flow::live_stack::callchain_of(&state);
+            flow::live_stack::update_live_stack(env, &ls_key);
             // SCC: this DFS path is done (subsumed by a cached state).
             // Decrement parent.branches up the chain; if a parent's
             // branches hits 0 propagate its loop_entry to its parent.
@@ -1201,7 +1208,14 @@ fn run_worklist(
             env.jmps_processed += 1;
             state.path_jmp_count = state.path_jmp_count.saturating_add(1);
         }
+        // Kernel do_check: `bpf_reset_stack_write_marks(env, insn_idx)`
+        // before do_check_insn, `bpf_commit_stack_write_marks` after.
+        // The callchain snapshot also serves the path-death
+        // `bpf_update_live_stack` below (state is moved into transfer).
+        let ls_key = flow::live_stack::callchain_of(&state);
+        flow::live_stack::reset_stack_write_marks(env, &state, state.pc);
         let mut successors = transfer::transfer(env, state, instr);
+        flow::live_stack::commit_stack_write_marks(env);
         if diag_hit {
             let succ_dump: Vec<String> = successors
                 .iter()
@@ -1326,6 +1340,8 @@ fn run_worklist(
         }
         if succ_count == 0 {
             // No successors (e.g. Exit): this DFS path terminated.
+            // Kernel process_bpf_exit: propagate live-stack marks first.
+            flow::live_stack::update_live_stack(env, &ls_key);
             // Decrement parent chain analogously to the prune-hit path.
             crate::analysis::flow::scc::complete_dfs_branch(env, cur_parent_cache_id);
         }
