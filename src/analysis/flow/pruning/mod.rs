@@ -248,9 +248,16 @@ fn handle_loop_pruning(
             match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
                 Ok(()) => {
                     if crate::analysis::trace_pc_in_range(pc) {
+                        let cr2 = state.domain.get_interval(crate::analysis::machine::reg::Reg::R2);
+                        let pr2 = prev.domain.get_interval(crate::analysis::machine::reg::Reg::R2);
+                        let cp = state.precise_regs.contains(&crate::analysis::machine::reg::Reg::R2);
+                        let pp = prev.precise_regs.contains(&crate::analysis::machine::reg::Reg::R2);
+                        let live_r2 = live_regs.contains(&crate::analysis::machine::reg::Reg::R2);
                         eprintln!(
-                            "[SUBSUM_HIT] pc={} prev_idx={} prev.dfs_paths={} force_exact={}",
-                            pc, i, prev.dfs_paths, force_exact,
+                            "[SUBSUM_HIT] pc={} prev_idx={} force_exact={} | curR2={:?}[{}..{}]prec={} live={} <= prevR2={:?}[{}..{}]prec={}",
+                            pc, i, force_exact,
+                            state.types.get(crate::analysis::machine::reg::Reg::R2), cr2.0, cr2.1, cp, live_r2,
+                            prev.types.get(crate::analysis::machine::reg::Reg::R2), pr2.0, pr2.1, pp,
                         );
                     }
                     h = Some(i);
@@ -370,6 +377,22 @@ fn handle_standard_pruning(
                 iter_next_pc || crate::analysis::flow::scc::incomplete_read_marks(env, prev);
             match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
                 Ok(()) => {
+                    if crate::analysis::trace_pc_in_range(pc)
+                        && state.types.get(crate::analysis::machine::reg::Reg::R2) == crate::analysis::machine::reg_types::RegType::ScalarValue
+                        && state.domain.get_interval(crate::analysis::machine::reg::Reg::R2).1 == 65535
+                    {
+                        use crate::analysis::machine::reg::Reg;
+                        let mut diffs = String::new();
+                        for r in [Reg::R0,Reg::R1,Reg::R2,Reg::R3,Reg::R4,Reg::R5,Reg::R6,Reg::R7,Reg::R8,Reg::R9] {
+                            let ct = state.types.get(r); let pt = prev.types.get(r);
+                            let ci = state.domain.get_interval(r); let pi = prev.domain.get_interval(r);
+                            let clv = live_regs.contains(&r);
+                            if format!("{:?}{:?}", ct, ci) != format!("{:?}{:?}", pt, pi) {
+                                diffs.push_str(&format!(" {:?}: cur={:?}[{}..{}]live={} vs prev={:?}[{}..{}];", r, ct, ci.0, ci.1, clv, pt, pi.0, pi.1));
+                            }
+                        }
+                        eprintln!("[PORT_SUBSUMED] pc={} prev_idx={} DIFFS:{}", pc, i, diffs);
+                    }
                     hit_idx = Some(i);
                     break;
                 }
