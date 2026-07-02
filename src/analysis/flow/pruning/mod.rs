@@ -536,6 +536,30 @@ pub fn should_prune(
         return false;
     }
 
+    // Kernel `clean_live_states(env, insn_idx)` — called at the top of
+    // every `is_state_visited`: LAZILY clean any cached state at this pc
+    // whose subtree completed (branches==0) but which was skipped
+    // earlier (e.g. its SCC still had pending backedges at eager-clean
+    // time). Without the retry, states inside a long-running loop SCC
+    // are never cleaned and every later compare runs against the fat
+    // state (from_nat_fib pc2200: 1913 Stack misses vs kernel 76/78
+    // prune rate — the tail-call epilogue explosion).
+    {
+        let to_clean: Vec<u32> = env
+            .explored_states
+            .get(&pc)
+            .map(|v| {
+                v.iter()
+                    .filter(|s| !s.cleaned && s.branches == 0)
+                    .filter_map(|s| s.cache_id)
+                    .collect()
+            })
+            .unwrap_or_default();
+        for cid in to_clean {
+            crate::analysis::flow::pruning::cache::clean_verifier_state(env, cid);
+        }
+    }
+
     let is_on_path = state
         .history_idx
         .map(|idx| env.history.is_on_path(idx, pc))

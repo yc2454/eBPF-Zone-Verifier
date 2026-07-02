@@ -1333,8 +1333,12 @@ fn run_worklist(
             && let Some(&(ppc, pidx)) = env.cache_loc_by_id.get(&pcid)
             && let Some(p) = env.explored_states.get_mut(&ppc).and_then(|v| v.get_mut(pidx))
         {
-            p.branches = p.branches.saturating_add(succ_count as u32);
+            // Kernel push_stack: only the EXTRA fork alternatives bump
+            // the checkpoint's branches — the continuing path was
+            // already counted (branches=1 at record_state). Straight-
+            // line pops (succ_count==1) add nothing.
             if succ_count > 1 {
+                p.branches = p.branches.saturating_add((succ_count - 1) as u32);
                 p.dfs_paths = p.dfs_paths.saturating_add((succ_count - 1) as u32);
             }
         }

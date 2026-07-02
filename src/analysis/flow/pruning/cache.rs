@@ -44,6 +44,25 @@ use crate::analysis::machine::state::State;
 ///
 /// Idempotent: skipped on already-cleaned states (kernel L19542
 /// `sl->state.cleaned` guard).
+/// DIAGNOSTIC (ZOVIA_CLEAN_STATS): [0]=cleaned [1]=skipped-incomplete.
+pub fn clean_stat(which: usize) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var("ZOVIA_CLEAN_STATS").is_ok()) {
+        return;
+    }
+    static C: [AtomicU64; 2] = [AtomicU64::new(0), AtomicU64::new(0)];
+    let n = C[which].fetch_add(1, Ordering::Relaxed) + 1;
+    if n % 500 == 0 || n == 1 {
+        eprintln!(
+            "[clean_stats] cleaned={} skipped_incomplete={}",
+            C[0].load(Ordering::Relaxed),
+            C[1].load(Ordering::Relaxed)
+        );
+    }
+}
+
 pub fn clean_verifier_state(env: &mut VerifierEnv, cid: u32) {
     let Some(&(pc, idx)) = env.cache_loc_by_id.get(&cid) else {
         return;
@@ -62,8 +81,10 @@ pub fn clean_verifier_state(env: &mut VerifierEnv, cid: u32) {
         // Kernel `clean_live_states` gate: a state whose SCC has pending
         // backedges has incomplete read marks — don't clean it yet.
         if crate::analysis::flow::scc::incomplete_read_marks(env, st) {
+            clean_stat(1);
             return;
         }
+        clean_stat(0);
         let n = st.frames.depth();
         let ips = (0..n)
             .map(|i| {

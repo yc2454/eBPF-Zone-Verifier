@@ -89,12 +89,19 @@ pub fn record_state(
     let cache_id = env.next_cache_id;
     env.next_cache_id = env.next_cache_id.wrapping_add(1);
     state.cache_id = Some(cache_id);
-    // SCC bookkeeping: on cache, branches starts at 0 (no children yet
-    // pushed). dfs_depth was already set when the state was created (at
-    // worklist push time, parent.dfs_depth + 1). loop_entry inherited
-    // from the worklist state — typically None unless a back-edge
-    // detected on the way here.
-    state.branches = 0;
+    // SCC bookkeeping: kernel `add_new_state` invariant — a freshly
+    // cached state has branches == 1, the single in-flight path that
+    // just checkpointed here (verifier.c asserts exactly this:
+    // "verifier_bug_if(new->branches != 1)"). Forks under it add ONLY
+    // the extra alternatives (succ_count - 1, kernel push_stack); every
+    // path death decrements one (update_branch_counts). The old
+    // `branches = 0` + per-pop `+= succ_count` accounting inflated the
+    // counter by one per straight-line instruction in sparse-caching
+    // mode, so branches almost never returned to 0 and
+    // clean_verifier_state / maybe_exit_scc effectively NEVER ran
+    // (measured: 1 clean in a whole from_nat_fib run vs the kernel
+    // cleaning every completed state).
+    state.branches = 1;
     // Kernel-faithful "open paths" counter, parallel to `branches`. Init
     // 1 = the single in-flight cur path that just hit this checkpoint.
     // See State::dfs_paths doc comment for full semantics.

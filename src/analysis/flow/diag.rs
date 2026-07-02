@@ -78,6 +78,12 @@ pub fn dump_pc_visit_count(env: &VerifierEnv) {
     for (pc, n) in pairs.iter().take(100) {
         eprintln!("    pc={:<5} visits={}", pc, n);
     }
+    // Full machine-diffable table (pc order) for kernel [ZK visit] diffs.
+    let mut by_pc = pairs.clone();
+    by_pc.sort_by_key(|&(pc, _)| pc);
+    for (pc, n) in by_pc {
+        eprintln!("[zvisit] {} {}", pc, n);
+    }
 }
 
 /// Audit dump: per-PC subsumption-miss histogram + global totals.
