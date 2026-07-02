@@ -540,7 +540,21 @@ fn unreachable_target_regs(
         }
         targets.push(r);
     }
-    filter_live_unknown_targets(env, state, hidx, targets)
+    // NOTE 2026-07-02: the former `filter_live_unknown_targets` post-filter
+    // (drop dead fully-unknown scalars) is REMOVED. Kernel ground truth
+    // (box #38, from_nat_fib pc748): the auto-fill keeps ALL scalars —
+    // verifier.c:24610-18 has no liveness/constraint check — and the
+    // kernel's 0x277 mask includes the DEAD unknown R2=[0..255], whose
+    // backtrack (bt_empty=561, base=521) is what children_unsafe-marks the
+    // 584<-521 checkpoint and keeps the sponge-marking treadmill alive.
+    // The filter dropped that R2 (0x4e6, base=584 = the checkpoint itself,
+    // exclusive -> never marked -> the wide-R2 TCP-arm path merges at 584
+    // and the d53 arm discharges are never produced. The cont.20 pc735
+    // mask match that motivated the filter is explainable as a since-
+    // healed state divergence (kernel R2=PktEnd vs zovia unknown scalar),
+    // not a kernel mask rule.
+    let _ = hidx;
+    targets
 }
 
 fn unreachable_base_pc(env: &VerifierEnv, state: &State) -> Option<usize> {
