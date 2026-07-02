@@ -259,11 +259,10 @@ fn handle_loop_pruning(
             // inf-loop FA-safety is preserved by direction. Validated: FA=0
             // and 0 selftest regressions; calico-19 BCF bundles byte-identical
             // to the prior gated HEAD.
-            let skip_active = prev.dfs_paths > 0 && {
-                let anc = ancestor_ids
-                    .get_or_insert_with(|| collect_ancestor_ids(env, state));
-                prev.cache_id.is_none_or(|cid| anc.contains(&cid))
-            };
+            // Kernel blanket branches>0 gate — see the matching comment in
+            // handle_standard_pruning. (Ancestors-only was a carve-out for
+            // the broken branches accounting, repaired in ee5221c.)
+            let skip_active = prev.branches > 0;
             if skip_active {
                 if crate::analysis::trace_pc_in_range(pc) {
                     eprintln!(
@@ -419,16 +418,25 @@ fn handle_standard_pruning(
             // the pc18/619 outer-loop heads once slot cleaning became
             // read-mark-driven: a descendant merged into its own
             // still-active ancestor 365x where the kernel prunes 6x).
-            let skip_active = prev.dfs_paths > 0 && {
-                let anc = ancestor_ids
-                    .get_or_insert_with(|| collect_ancestor_ids(env, state));
-                prev.cache_id.is_none_or(|cid| anc.contains(&cid))
-            };
-            if skip_active {
+            // Kernel blanket gate: `if (sl->state.branches) ... goto miss`
+            // — a cached state whose subtree is still in flight NEVER
+            // subsumes a normal arrival, sibling or ancestor. The former
+            // ancestors-only carve-out was tuned under the broken
+            // dense-caching branches accounting (everything looked
+            // permanently active, so a blanket skip skipped everything);
+            // with kernel-shape branches (ee5221c) the blanket gate is
+            // the faithful rule. Divergence this closes (kernel #37/38):
+            // the 584<-521 R1=0 state is added ~100 insns before the
+            // TCP-arm wide-R2 arrival compares at 584; the kernel
+            // silently misses on branches>0 (zero [ZK sv584] compares
+            // against it), zovia's sibling carve-out let the compare run
+            // -> imprecise-R2 free-pass -> the sponge-subtree's R2 died
+            // at 584 instead of reaching 748.
+            if prev.branches > 0 {
                 if crate::analysis::trace_pc_in_range(pc) {
                     eprintln!(
-                        "[SUBSUM_SKIP_ACTIVE] pc={} prev_idx={} prev.dfs_paths={} cache_id={:?} (standard)",
-                        pc, i, prev.dfs_paths, prev.cache_id,
+                        "[SUBSUM_SKIP_ACTIVE] pc={} prev_idx={} prev.branches={} cache_id={:?} (standard)",
+                        pc, i, prev.branches, prev.cache_id,
                     );
                 }
                 continue;
