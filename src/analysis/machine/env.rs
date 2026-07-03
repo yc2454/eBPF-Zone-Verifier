@@ -299,6 +299,21 @@ pub struct VerifierEnv<'a> {
     /// referenced by a `parent_cache_id` chain.
     pub cache_loc_by_id: HashMap<u32, (usize, usize)>,
 
+    /// Kernel `env->free_list` analog (verifier.c: "struct
+    /// bpf_verifier_state->parent refers to states that are in either of
+    /// env->{explored_states,free_list}"). States evicted from the per-pc
+    /// pruning lists (FIFO cap drain or the adaptive miss/hit eviction)
+    /// but still referenced by live descendants' `parent_cache_id` chains.
+    /// The kernel keeps evictees allocated until `branches == 0`
+    /// (`maybe_free_verifier_state`); destroying them at eviction time
+    /// dangles every parent-chain walk: branches accounting
+    /// (`complete_dfs_branch`), bcf backtrack base (`bcf_suffix_base_pc`
+    /// returned None → base-less goal, from_l3_fib_no_log pc222 miss
+    /// 0x94363000a66f1a84), `mark_path_children_unsafe` (truncated walk),
+    /// precision backprop, and the replay base fetch.
+    /// Keyed by cache_id, value = (cache pc, the retired State).
+    pub retired_states: HashMap<u32, (usize, Box<State>)>,
+
     /// Collected BCF refinement proofs from this verification run. Each
     /// entry carries the canonical hash of the refinement-condition root,
     /// the goal-expression table the kernel needs for `expr_equiv` +
@@ -412,6 +427,7 @@ impl<'a> VerifierEnv<'a> {
             analyzing_exception_cb: false,
             next_cache_id: 0,
             cache_loc_by_id: HashMap::new(),
+            retired_states: HashMap::new(),
             precise_pcs: HashSet::new(),
             scc_visits: crate::analysis::flow::scc::SccVisitMap::new(),
             bcf_proofs: Vec::new(),
@@ -486,8 +502,7 @@ impl<'a> VerifierEnv<'a> {
     /// isn't found, or the cached state has no history breadcrumb, or
     /// the breadcrumb is the first (no parent step).
     pub fn cached_prev_insn_pc(&self, cache_id: u32) -> Option<usize> {
-        let (pc, idx) = *self.cache_loc_by_id.get(&cache_id)?;
-        let cached = self.explored_states.get(&pc)?.get(idx)?;
+        let (_, cached) = self.state_by_cache_id(cache_id)?;
         let hidx = cached.history_idx?;
         // `cached.history_idx` already points at the breadcrumb for the
         // IMMEDIATELY PRECEDING insn: cache events fire BEFORE the current
@@ -504,5 +519,60 @@ impl<'a> VerifierEnv<'a> {
         // from the kernel's. Verified 2026-05-23: closes calico anchor
         // (-EACCES → 7/7 loaded), no c17 regression.
         Some(self.history.get(hidx)?.pc)
+    }
+
+    /// Resolve a cache_id to its state — live (`explored_states`) first,
+    /// then retired (`retired_states`, the kernel free_list analog).
+    /// Kernel parent-chain walks (`st->parent`) never dangle because
+    /// evicted states stay allocated until `branches == 0`; every zovia
+    /// chain walk must resolve through this instead of raw
+    /// `cache_loc_by_id` + `explored_states`.
+    pub fn state_by_cache_id(&self, cid: u32) -> Option<(usize, &State)> {
+        if let Some(&(pc, idx)) = self.cache_loc_by_id.get(&cid) {
+            return self
+                .explored_states
+                .get(&pc)
+                .and_then(|v| v.get(idx))
+                .map(|s| (pc, s));
+        }
+        self.retired_states.get(&cid).map(|(pc, s)| (*pc, s.as_ref()))
+    }
+
+    /// Mutable variant of [`Self::state_by_cache_id`].
+    pub fn state_by_cache_id_mut(&mut self, cid: u32) -> Option<(usize, &mut State)> {
+        if let Some(&(pc, idx)) = self.cache_loc_by_id.get(&cid) {
+            return self
+                .explored_states
+                .get_mut(&pc)
+                .and_then(|v| v.get_mut(idx))
+                .map(|s| (pc, s));
+        }
+        self.retired_states
+            .get_mut(&cid)
+            .map(|(pc, s)| (*pc, s.as_mut()))
+    }
+
+    /// Kernel eviction semantics (verifier.c is_state_visited L20455-64):
+    /// on miss/hit-ratio eviction the state moves to `env->free_list`
+    /// (`sl->in_free_list = true; list_add(&env->free_list)`) followed by
+    /// `maybe_free_verifier_state`, which frees ONLY when `branches == 0`.
+    /// zovia analog: drop immediately when no live descendants reference
+    /// it, otherwise park it in `retired_states` for parent-chain walks.
+    pub fn retire_state(&mut self, cid: u32, pc: usize, state: State) {
+        if state.branches == 0 {
+            return; // kernel maybe_free_verifier_state at eviction site
+        }
+        self.retired_states.insert(cid, (pc, Box::new(state)));
+    }
+
+    /// Kernel `maybe_free_verifier_state` from `update_branch_counts`:
+    /// once a retired state's last live descendant completes
+    /// (`branches == 0`), free it.
+    pub fn maybe_free_retired(&mut self, cid: u32) {
+        if let Some((_, s)) = self.retired_states.get(&cid)
+            && s.branches == 0
+        {
+            self.retired_states.remove(&cid);
+        }
     }
 }

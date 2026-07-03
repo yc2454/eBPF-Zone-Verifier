@@ -642,8 +642,9 @@ fn try_prove_unreachable_via_replay(
 
     let empty = Vec::new();
     // 1. Retrieve the cached base State (with its register/domain state).
-    let Some((bpc, bidx)) = env.cache_loc_by_id.get(&base_cid).copied() else { return empty };
-    let Some(base_state) = env.explored_states.get(&bpc).and_then(|v| v.get(bidx)).cloned()
+    //    Live-then-retired: the kernel's bcf_track base (`st->parent`)
+    //    may be an evicted (free_list) state.
+    let Some(base_state) = env.state_by_cache_id(base_cid).map(|(_, s)| s.clone())
         else { return empty };
     let base_hidx = base_state.history_idx;
 
@@ -1047,14 +1048,13 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
         let mut depth = 0;
         while depth < max_ancestor_depth {
             let Some(cur_cid) = cur_cid_opt else { break };
-            let Some(&(cur_pc, cur_idx)) = env.cache_loc_by_id.get(&cur_cid) else { break };
+            // Live-then-retired: an evicted mid-chain ancestor must not
+            // truncate the chain-discharge walk.
             let Some(parent_cid) = env
-                .explored_states
-                .get(&cur_pc)
-                .and_then(|v| v.get(cur_idx))
-                .and_then(|s| s.parent_cache_id)
+                .state_by_cache_id(cur_cid)
+                .and_then(|(_, s)| s.parent_cache_id)
             else { break };
-            let Some(&(ancestor_pc, _)) = env.cache_loc_by_id.get(&parent_cid) else { break };
+            let Some((ancestor_pc, _)) = env.state_by_cache_id(parent_cid) else { break };
             let ancestor_prev_pc = env.cached_prev_insn_pc(parent_cid);
             // Per-ancestor PC-suffix discharges (rewrite + no-rewrite).
             // Register-filtered discharges are PC-independent and emitted

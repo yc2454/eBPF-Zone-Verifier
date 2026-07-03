@@ -108,12 +108,8 @@ fn collect_ancestor_ids(env: &VerifierEnv, state: &State) -> HashSet<u32> {
             break;
         }
         budget -= 1;
-        match env
-            .cache_loc_by_id
-            .get(&cid)
-            .and_then(|&(p, i)| env.explored_states.get(&p).and_then(|v| v.get(i)))
-        {
-            Some(st) => next = st.parent_cache_id,
+        match env.state_by_cache_id(cid) {
+            Some((_, st)) => next = st.parent_cache_id,
             None => break,
         }
     }
@@ -779,10 +775,8 @@ pub fn should_prune(
                     }
                     steps += 1;
                     cur_anc = env
-                        .cache_loc_by_id
-                        .get(&cid)
-                        .and_then(|(p, i)| env.explored_states.get(p)?.get(*i))
-                        .and_then(|s| s.parent_cache_id);
+                        .state_by_cache_id(cid)
+                        .and_then(|(_, s)| s.parent_cache_id);
                 }
                 found
             };
@@ -973,19 +967,19 @@ fn record_pruning_misses(env: &mut VerifierEnv, pc: usize, miss_idxs: &[usize]) 
     }
     // Sort descending so removals don't shift later indices.
     to_evict.sort_unstable_by(|a, b| b.cmp(a));
-    // Collect cache_ids of evicted entries for cache_loc_by_id cleanup.
-    let evicted_ids: Vec<u32> = if let Some(states) = env.explored_states.get(&pc) {
-        to_evict
-            .iter()
-            .filter_map(|&i| states.get(i).and_then(|s| s.cache_id))
-            .collect()
-    } else {
-        Vec::new()
-    };
+    // Kernel is_state_visited L20455-64: eviction moves the state to
+    // env->free_list (it stays resolvable through descendants'
+    // st->parent until branches == 0), it is NOT destroyed. Retire the
+    // evicted State objects so parent-chain walks (branches accounting,
+    // bcf backtrack base, children_unsafe marking, replay base fetch)
+    // keep working — destroying them here was the from_l3_fib_no_log
+    // pc222 0x94363000 miss (base state evicted → bcf_suffix_base_pc
+    // None → base-less goal).
+    let mut evicted: Vec<State> = Vec::new();
     if let Some(states) = env.explored_states.get_mut(&pc) {
         for &i in &to_evict {
             if i < states.len() {
-                states.remove(i);
+                evicted.push(states.remove(i));
             }
         }
     }
@@ -996,10 +990,14 @@ fn record_pruning_misses(env: &mut VerifierEnv, pc: usize, miss_idxs: &[usize]) 
             }
         }
     }
-    // cache_loc_by_id cleanup: drop evicted ids, re-index survivors. Same
-    // invariant as the FIFO drain in `merging::record_state`.
-    for id in evicted_ids {
-        env.cache_loc_by_id.remove(&id);
+    // cache_loc_by_id cleanup: drop evicted ids (they resolve through
+    // retired_states from now on), re-index survivors. Same invariant
+    // as the FIFO drain in `merging::record_state`.
+    for s in evicted {
+        if let Some(id) = s.cache_id {
+            env.cache_loc_by_id.remove(&id);
+            env.retire_state(id, pc, s);
+        }
     }
     if let Some(states) = env.explored_states.get(&pc) {
         for (new_idx, s) in states.iter().enumerate() {

@@ -289,14 +289,12 @@ pub fn mark_path_children_unsafe(
         if Some(cid) == base_cache_id {
             break;
         }
-        let Some(&(pc, idx)) = env.cache_loc_by_id.get(&cid) else {
-            break;
-        };
-        let Some(s) = env
-            .explored_states
-            .get_mut(&pc)
-            .and_then(|v| v.get_mut(idx))
-        else {
+        // Live-then-retired: an evicted mid-chain ancestor must not
+        // truncate the walk (kernel parents[] are pointers — free_list
+        // membership is invisible to the marking loop). Marking a
+        // retired state is a no-op for pruning (it's out of the
+        // candidate lists) but the walk continues to live ancestors.
+        let Some((pc, s)) = env.state_by_cache_id_mut(cid) else {
             break;
         };
         let parent = s.parent_cache_id;
@@ -310,7 +308,7 @@ pub fn mark_path_children_unsafe(
             }
             last_pc = Some(pc);
             if crate::analysis::trace_pc_in_range(pc) {
-                eprintln!("[disc-mark] pc={} idx={} cid={}", pc, idx, cid);
+                eprintln!("[disc-mark] pc={} cid={}", pc, cid);
             }
         }
         id = parent;

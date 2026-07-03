@@ -157,22 +157,24 @@ pub fn record_state(
     // surviving entries shift left by `excess`, so update their idx.
     if max_states_per_pc > 0 && states.len() > max_states_per_pc {
         let excess = states.len() - max_states_per_pc;
-        // Collect cache_ids of evicted (front) and surviving entries.
-        let evicted_ids: Vec<u32> = states
-            .iter()
-            .take(excess)
-            .filter_map(|s| s.cache_id)
-            .collect();
         let surviving_ids: Vec<u32> = states
             .iter()
             .skip(excess)
             .filter_map(|s| s.cache_id)
             .collect();
         env.cache_evictions += excess as u64;
-        states.drain(0..excess);
+        // Kernel free_list semantics: evicted states leave the pruning
+        // list but stay resolvable via `parent_cache_id` chains until
+        // `branches == 0` (env.retire_state). Destroying them here
+        // dangles branches accounting / bcf backtrack bases /
+        // children_unsafe marking.
+        let evicted: Vec<State> = states.drain(0..excess).collect();
         metrics.drain(0..excess);
-        for id in evicted_ids {
-            env.cache_loc_by_id.remove(&id);
+        for s in evicted {
+            if let Some(id) = s.cache_id {
+                env.cache_loc_by_id.remove(&id);
+                env.retire_state(id, pc, s);
+            }
         }
         for (new_idx, id) in surviving_ids.iter().enumerate() {
             env.cache_loc_by_id.insert(*id, (pc, new_idx));

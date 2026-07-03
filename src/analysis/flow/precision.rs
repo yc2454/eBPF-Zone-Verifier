@@ -89,22 +89,15 @@ pub fn mark_chain_precision_backward(
     // parent cached state (not all cached states at that PC). This
     // is the per-path equivalent of kernel `st->parent` chain walk.
     'outer: loop {
-        // Resolve the current parent's location and metadata.
-        let parent_loc = current_parent_id
-            .and_then(|id| env.cache_loc_by_id.get(&id).copied());
-        let (parent_history_stop, parent_grandparent_id) =
-            if let Some((pc, idx)) = parent_loc {
-                let s = env
-                    .explored_states
-                    .get(&pc)
-                    .and_then(|v| v.get(idx));
-                (
-                    s.and_then(|s| s.history_idx),
-                    s.and_then(|s| s.parent_cache_id),
-                )
-            } else {
-                (None, None)
-            };
+        // Resolve the current parent's metadata (live-then-retired:
+        // kernel st->parent pointers include free_list states).
+        let (parent_history_stop, parent_grandparent_id) = {
+            let s = current_parent_id.and_then(|id| env.state_by_cache_id(id));
+            (
+                s.and_then(|(_, s)| s.history_idx),
+                s.and_then(|(_, s)| s.parent_cache_id),
+            )
+        };
 
         // Walk instructions back through current's local history,
         // stopping when we cross the parent's boundary.
@@ -244,8 +237,14 @@ pub fn mark_chain_precision_backward(
 
         // Mark precise on the parent cached state with the
         // frontier we've evolved back to its perspective. Per-path:
-        // only this cached state, not all states at its PC.
-        if let Some((pc, idx)) = parent_loc {
+        // only this cached state, not all states at its PC
+        // (live-then-retired — precision marks on a retired state
+        // still matter: it can return to relevance via the
+        // parent-chain of a later reject/backedge walk).
+        if let Some(pc) = current_parent_id
+            .and_then(|id| env.state_by_cache_id(id))
+            .map(|(pc, _)| pc)
+        {
             // Linked-scalar precision propagation: marking a scalar
             // precise also marks every reg sharing its scalar id IN
             // THIS cached state precise. Mirrors kernel
@@ -262,8 +261,8 @@ pub fn mark_chain_precision_backward(
             // id-class propagation; collect the resulting set so the
             // eviction-resistant `precise_pcs` mirror stays consistent.
             let mut marked: Vec<Reg> = Vec::new();
-            if let Some(states) = env.explored_states.get_mut(&pc)
-                && let Some(s) = states.get_mut(idx)
+            if let Some((_, s)) =
+                current_parent_id.and_then(|id| env.state_by_cache_id_mut(id))
             {
                 for &r in &frontier {
                     s.mark_reg_precise(r);
@@ -368,21 +367,14 @@ pub fn bcf_suffix_base_pc_and_cache_id(
     let mut skip_first = true;
 
     loop {
-        let parent_loc = current_parent_id
-            .and_then(|id| env.cache_loc_by_id.get(&id).copied());
-        let (parent_history_stop, parent_grandparent_id) =
-            if let Some((pc, idx)) = parent_loc {
-                let s = env
-                    .explored_states
-                    .get(&pc)
-                    .and_then(|v| v.get(idx));
-                (
-                    s.and_then(|s| s.history_idx),
-                    s.and_then(|s| s.parent_cache_id),
-                )
-            } else {
-                (None, None)
-            };
+        // Live-then-retired resolution (kernel st->parent includes
+        // free_list states).
+        let parent_state = current_parent_id.and_then(|id| env.state_by_cache_id(id));
+        let parent_pc = parent_state.map(|(pc, _)| pc);
+        let (parent_history_stop, parent_grandparent_id) = (
+            parent_state.and_then(|(_, s)| s.history_idx),
+            parent_state.and_then(|(_, s)| s.parent_cache_id),
+        );
 
         while let Some(idx) = current_history {
             if budget == 0 {
@@ -407,11 +399,11 @@ pub fn bcf_suffix_base_pc_and_cache_id(
                 }
                 if bt.is_empty() {
                     // Found the suffix base. Return its (pc, cache_id) — the
-                    // kernel `base = st->parent` anchor (parent_loc). MUST use
+                    // kernel `base = st->parent` anchor. MUST use
                     // the SAME target mask as `bcf_suffix_base_pc` (both via
                     // `unreachable_target_regs`) or the two walks empty at
                     // different insns and this returns None → base_cid lost.
-                    let (pc, _) = parent_loc?;
+                    let pc = parent_pc?;
                     let cid = current_parent_id?;
                     return Some((pc, cid));
                 }
@@ -470,21 +462,16 @@ pub fn bcf_suffix_base_pc(
     let mut first_pc_walked: Option<usize> = None;
 
     'outer: loop {
-        let parent_loc = current_parent_id
-            .and_then(|id| env.cache_loc_by_id.get(&id).copied());
-        let (parent_history_stop, parent_grandparent_id) =
-            if let Some((pc, idx)) = parent_loc {
-                let s = env
-                    .explored_states
-                    .get(&pc)
-                    .and_then(|v| v.get(idx));
-                (
-                    s.and_then(|s| s.history_idx),
-                    s.and_then(|s| s.parent_cache_id),
-                )
-            } else {
-                (None, None)
-            };
+        // Live-then-retired resolution (kernel st->parent includes
+        // free_list states; an evicted base must still resolve or the
+        // suffix base degrades to None → base-less goal — the
+        // from_l3_fib_no_log pc222 0x94363000 miss).
+        let parent_state = current_parent_id.and_then(|id| env.state_by_cache_id(id));
+        let parent_pc = parent_state.map(|(pc, _)| pc);
+        let (parent_history_stop, parent_grandparent_id) = (
+            parent_state.and_then(|(_, s)| s.history_idx),
+            parent_state.and_then(|(_, s)| s.parent_cache_id),
+        );
 
         while let Some(idx) = current_history {
             if budget == 0 {
@@ -533,12 +520,11 @@ pub fn bcf_suffix_base_pc(
                 }
                 if bt.is_empty() {
                     if debug || probe {
-                        let pl_pc = parent_loc.map(|(pc, _)| pc);
                         let gp_pc = parent_grandparent_id
-                            .and_then(|id| env.cache_loc_by_id.get(&id).map(|(pc, _)| *pc));
+                            .and_then(|id| env.state_by_cache_id(id).map(|(pc, _)| pc));
                         eprintln!(
                             "[bcf-track] bt empty at pc={} | parent_loc_pc={:?} grandparent_pc={:?} cur_parent_id={:?} gp_id={:?}",
-                            step_pc, pl_pc, gp_pc, current_parent_id, parent_grandparent_id
+                            step_pc, parent_pc, gp_pc, current_parent_id, parent_grandparent_id
                         );
                     }
                     // Kernel `backtrack_states` (verifier.c:24544): on
@@ -550,10 +536,10 @@ pub fn bcf_suffix_base_pc(
                     // the bcidx/parent-hop/range-hop/faithful-base heuristics
                     // (an extra `.parent` over-hop) are deleted.
                     // Kernel `backtrack_states` L24578-L24584 on
-                    // bt_empty: `base = st->parent`. zovia's legacy analog
-                    // is `parent_loc` (the cached state at the current
-                    // parent_cache_id). Return its PC.
-                    return parent_loc.map(|(pc, _)| pc);
+                    // bt_empty: `base = st->parent`. zovia's analog
+                    // is the cached (live or retired) state at the
+                    // current parent_cache_id. Return its PC.
+                    return parent_pc;
                 }
             } else if debug {
                 eprintln!(

@@ -1330,8 +1330,7 @@ fn run_worklist(
         // trap gate (`prev.dfs_paths == 0` skip).
         if succ_count > 0
             && let Some(pcid) = cur_parent_cache_id
-            && let Some(&(ppc, pidx)) = env.cache_loc_by_id.get(&pcid)
-            && let Some(p) = env.explored_states.get_mut(&ppc).and_then(|v| v.get_mut(pidx))
+            && let Some((_, p)) = env.state_by_cache_id_mut(pcid)
         {
             // Kernel push_stack: only the EXTRA fork alternatives bump
             // the checkpoint's branches — the continuing path was
