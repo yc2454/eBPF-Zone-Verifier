@@ -815,6 +815,19 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
         eprintln!("[disc] reject@pc={} base_pc={:?} prev_insn_pc={:?} parent_cid={:?} base_cid={:?}",
                   state.pc, base_pc, prev_insn_pc, state.parent_cache_id, base_cid_dbg);
     }
+    // LEAN-EMISSION EXPERIMENT (ZOVIA_BCF_LEAN=1, default-OFF, diagnosis-only
+    // per the census arc — see memory project_over_emission_census_2026-07-04):
+    // emit ONLY the measured-useful classes (replay_base all rungs +
+    // replay_anc depth 0). The 2026-07-04 census over fresh kernel-queried
+    // sets (fnf/l3/twep/to_hep whole-object loads, 338 hashes) found every
+    // other class — natural/no_rw/legacy_fold/traj*/regfilter*/anc_* recon +
+    // replay_anc depth>=1 — has ZERO exclusive utility. Control flow, cvc5
+    // proving of the natural goal (gates the return value), and
+    // mark_path_children_unsafe are UNCHANGED; only bundle pushes are
+    // skipped. Validation = fresh native build + whole-object VM gate (q2:
+    // no hash-set reasoning). Resolution after the gate: delete the dead
+    // classes outright (heuristic removal) and drop this env check.
+    let lean = std::env::var("ZOVIA_BCF_LEAN").ok().as_deref() == Some("1");
     // Faithful base→reject replay (ZOVIA_BCF_REPLAY=1), ADDITIVE: push the
     // replay-derived entry alongside the reconstruction discharges (merge
     // dedups by cond_hash). Lets us validate replay coverage without
@@ -871,6 +884,38 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
             "natural", state.pc, -1, -1, entry.cond_hash,
             env.bcf_proofs.iter().any(|e| e.cond_hash == entry.cond_hash),
         );
+    }
+    if lean {
+        // Lean mode: the natural prove above still gates the return value
+        // (and thus parent marking) exactly as before, but its entry and all
+        // reconstruction twins below stay out of the bundle; the ancestor
+        // walk runs only the depth-0 replay.
+        if let Ok(flush_path) = std::env::var("ZOVIA_BCF_EAGER_FLUSH") {
+            let tmp = format!("{}.tmp", flush_path);
+            if crate::refinement::bundle::write_bundle(std::path::Path::new(&tmp), &env.bcf_proofs).is_ok() {
+                let _ = std::fs::rename(&tmp, &flush_path);
+            }
+        }
+        if let Some(cid) = base_cid_dbg {
+            if let Some(parent_cid) = env
+                .state_by_cache_id(cid)
+                .and_then(|(_, s)| s.parent_cache_id)
+            {
+                for (rung, rok) in try_prove_unreachable_via_replay(env, state, parent_cid) {
+                    let rentry = RefineEntry::new(
+                        rok.goal_root, rok.sym.exprs, rok.proof_bytes,
+                        BCF_BUNDLE_KIND_UNREACHABLE,
+                    );
+                    let ra_dup = env.bcf_proofs.iter().any(|e| e.cond_hash == rentry.cond_hash);
+                    census_log("replay_anc", state.pc, 0, rung, rentry.cond_hash, ra_dup);
+                    if !ra_dup {
+                        env.bcf_proofs.push(rentry);
+                    }
+                }
+            }
+        }
+        crate::analysis::flow::pruning::cache::mark_path_children_unsafe(env, state, base_cid_dbg);
+        return true;
     }
     if let Ok(prefix) = std::env::var("ZOVIA_BCF_DUMP_PROOF") {
         let idx = env.bcf_proofs.len();
