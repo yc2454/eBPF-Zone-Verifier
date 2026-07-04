@@ -89,22 +89,15 @@ pub fn mark_chain_precision_backward(
     // parent cached state (not all cached states at that PC). This
     // is the per-path equivalent of kernel `st->parent` chain walk.
     'outer: loop {
-        // Resolve the current parent's location and metadata.
-        let parent_loc = current_parent_id
-            .and_then(|id| env.cache_loc_by_id.get(&id).copied());
-        let (parent_history_stop, parent_grandparent_id) =
-            if let Some((pc, idx)) = parent_loc {
-                let s = env
-                    .explored_states
-                    .get(&pc)
-                    .and_then(|v| v.get(idx));
-                (
-                    s.and_then(|s| s.history_idx),
-                    s.and_then(|s| s.parent_cache_id),
-                )
-            } else {
-                (None, None)
-            };
+        // Resolve the current parent's metadata (live-then-retired:
+        // kernel st->parent pointers include free_list states).
+        let (parent_history_stop, parent_grandparent_id) = {
+            let s = current_parent_id.and_then(|id| env.state_by_cache_id(id));
+            (
+                s.and_then(|(_, s)| s.history_idx),
+                s.and_then(|(_, s)| s.parent_cache_id),
+            )
+        };
 
         // Walk instructions back through current's local history,
         // stopping when we cross the parent's boundary.
@@ -244,8 +237,14 @@ pub fn mark_chain_precision_backward(
 
         // Mark precise on the parent cached state with the
         // frontier we've evolved back to its perspective. Per-path:
-        // only this cached state, not all states at its PC.
-        if let Some((pc, idx)) = parent_loc {
+        // only this cached state, not all states at its PC
+        // (live-then-retired — precision marks on a retired state
+        // still matter: it can return to relevance via the
+        // parent-chain of a later reject/backedge walk).
+        if let Some(pc) = current_parent_id
+            .and_then(|id| env.state_by_cache_id(id))
+            .map(|(pc, _)| pc)
+        {
             // Linked-scalar precision propagation: marking a scalar
             // precise also marks every reg sharing its scalar id IN
             // THIS cached state precise. Mirrors kernel
@@ -262,8 +261,8 @@ pub fn mark_chain_precision_backward(
             // id-class propagation; collect the resulting set so the
             // eviction-resistant `precise_pcs` mirror stays consistent.
             let mut marked: Vec<Reg> = Vec::new();
-            if let Some(states) = env.explored_states.get_mut(&pc)
-                && let Some(s) = states.get_mut(idx)
+            if let Some((_, s)) =
+                current_parent_id.and_then(|id| env.state_by_cache_id_mut(id))
             {
                 for &r in &frontier {
                     s.mark_reg_precise(r);
@@ -368,21 +367,14 @@ pub fn bcf_suffix_base_pc_and_cache_id(
     let mut skip_first = true;
 
     loop {
-        let parent_loc = current_parent_id
-            .and_then(|id| env.cache_loc_by_id.get(&id).copied());
-        let (parent_history_stop, parent_grandparent_id) =
-            if let Some((pc, idx)) = parent_loc {
-                let s = env
-                    .explored_states
-                    .get(&pc)
-                    .and_then(|v| v.get(idx));
-                (
-                    s.and_then(|s| s.history_idx),
-                    s.and_then(|s| s.parent_cache_id),
-                )
-            } else {
-                (None, None)
-            };
+        // Live-then-retired resolution (kernel st->parent includes
+        // free_list states).
+        let parent_state = current_parent_id.and_then(|id| env.state_by_cache_id(id));
+        let parent_pc = parent_state.map(|(pc, _)| pc);
+        let (parent_history_stop, parent_grandparent_id) = (
+            parent_state.and_then(|(_, s)| s.history_idx),
+            parent_state.and_then(|(_, s)| s.parent_cache_id),
+        );
 
         while let Some(idx) = current_history {
             if budget == 0 {
@@ -406,61 +398,12 @@ pub fn bcf_suffix_base_pc_and_cache_id(
                     return None;
                 }
                 if bt.is_empty() {
-                    // FAITHFUL BASE (mirror of bcf_suffix_base_pc): walk
-                    // the continuous history back to the nearest jmp_point
-                    // (CFG join / branch target = kernel st->parent), and
-                    // return a CACHED state AT that pc so prev_insn_pc is
-                    // consistent with the base_pc the other walker returns.
-                    if std::env::var("ZOVIA_BCF_FAITHFUL_BASE").ok().as_deref()
-                        == Some("1")
-                    {
-                        let mut wi = idx;
-                        loop {
-                            let Some(s) = env.history.get(wi) else { break };
-                            if env
-                                .insn_aux_data
-                                .get(s.pc)
-                                .map(|a| a.jmp_point)
-                                .unwrap_or(false)
-                            {
-                                // The reject's ARRIVAL EDGE into this merge
-                                // = the pc of the history step just before
-                                // the jmp_point (530 for the proto≥7 arm,
-                                // 509 for ≤5, 538 for ==6, …). The kernel
-                                // anchors per-arrival, so pick the cache at
-                                // this pc whose prev_insn matches THIS
-                                // reject's arrival edge — that retains the
-                                // arm-distinguishing branch (e.g. JNE6 @530
-                                // for 618296). Falls back to any cache here.
-                                let arrival_edge = s
-                                    .parent_idx
-                                    .and_then(|p| env.history.get(p))
-                                    .map(|ps| ps.pc);
-                                let pc = s.pc;
-                                let states = env.explored_states.get(&pc);
-                                let pick = states.and_then(|v| {
-                                    // Prefer the cache whose prev_insn ==
-                                    // arrival_edge.
-                                    v.iter()
-                                        .filter_map(|st| st.cache_id)
-                                        .find(|&cid| {
-                                            env.cached_prev_insn_pc(cid) == arrival_edge
-                                        })
-                                        .or_else(|| v.iter().find_map(|st| st.cache_id))
-                                });
-                                if let Some(cid) = pick {
-                                    return Some((pc, cid));
-                                }
-                                break;
-                            }
-                            match s.parent_idx {
-                                Some(p) => wi = p,
-                                None => break,
-                            }
-                        }
-                    }
-                    // Found the suffix base. Return its (pc, cache_id).
-                    let (pc, _) = parent_loc?;
+                    // Found the suffix base. Return its (pc, cache_id) — the
+                    // kernel `base = st->parent` anchor. MUST use
+                    // the SAME target mask as `bcf_suffix_base_pc` (both via
+                    // `unreachable_target_regs`) or the two walks empty at
+                    // different insns and this returns None → base_cid lost.
+                    let pc = parent_pc?;
                     let cid = current_parent_id?;
                     return Some((pc, cid));
                 }
@@ -519,21 +462,16 @@ pub fn bcf_suffix_base_pc(
     let mut first_pc_walked: Option<usize> = None;
 
     'outer: loop {
-        let parent_loc = current_parent_id
-            .and_then(|id| env.cache_loc_by_id.get(&id).copied());
-        let (parent_history_stop, parent_grandparent_id) =
-            if let Some((pc, idx)) = parent_loc {
-                let s = env
-                    .explored_states
-                    .get(&pc)
-                    .and_then(|v| v.get(idx));
-                (
-                    s.and_then(|s| s.history_idx),
-                    s.and_then(|s| s.parent_cache_id),
-                )
-            } else {
-                (None, None)
-            };
+        // Live-then-retired resolution (kernel st->parent includes
+        // free_list states; an evicted base must still resolve or the
+        // suffix base degrades to None → base-less goal — the
+        // from_l3_fib_no_log pc222 0x94363000 miss).
+        let parent_state = current_parent_id.and_then(|id| env.state_by_cache_id(id));
+        let parent_pc = parent_state.map(|(pc, _)| pc);
+        let (parent_history_stop, parent_grandparent_id) = (
+            parent_state.and_then(|(_, s)| s.history_idx),
+            parent_state.and_then(|(_, s)| s.parent_cache_id),
+        );
 
         while let Some(idx) = current_history {
             if budget == 0 {
@@ -581,64 +519,27 @@ pub fn bcf_suffix_base_pc(
                     );
                 }
                 if bt.is_empty() {
-                    if debug {
-                        eprintln!("[bcf-track] bt empty at pc={}", step_pc);
+                    if debug || probe {
+                        let gp_pc = parent_grandparent_id
+                            .and_then(|id| env.state_by_cache_id(id).map(|(pc, _)| pc));
+                        eprintln!(
+                            "[bcf-track] bt empty at pc={} | parent_loc_pc={:?} grandparent_pc={:?} cur_parent_id={:?} gp_id={:?}",
+                            step_pc, parent_pc, gp_pc, current_parent_id, parent_grandparent_id
+                        );
                     }
-                    // FAITHFUL BASE (no_log lean-bundle, 2026-05-30):
-                    // the kernel's `base = st->parent` is the parent
-                    // verifier STATE — created at a fork (branch target /
-                    // CFG join / prune point). zovia's `parent_loc` is the
-                    // sparse parent CACHE, which lands at the wrong PC
-                    // (mid-block 565, or a too-deep ancestor 530) because
-                    // zovia's caching ≠ the kernel's per-branch state
-                    // graph. Instead, walk the CONTINUOUS jmp_history back
-                    // from the bt-empty insn to the nearest PRUNE-POINT
-                    // (zovia's CFG marks branch targets / joins as prune
-                    // points — the kernel's fork sites). That PC IS the
-                    // kernel's st->parent->insn_idx (proto≥7 reject: 565→
-                    // 559; a115676: 552→545) — WITHOUT the force-ckpt hack,
-                    // and it removes the need for the ancestor shotgun.
-                    // Gated; falls back to parent_loc when off / no
-                    // prune-point found.
-                    if std::env::var("ZOVIA_BCF_FAITHFUL_BASE").ok().as_deref()
-                        == Some("1")
-                    {
-                        let mut wi = idx;
-                        loop {
-                            let Some(s) = env.history.get(wi) else { break };
-                            // Use jmp_point (branch TARGET / post-call
-                            // fallthrough = CFG join), NOT prune_point —
-                            // prune_point also marks conditional-jump
-                            // SELVES (e.g. the verdict branch pc562),
-                            // which are single-predecessor and NOT where
-                            // the kernel checkpoints. jmp_point isolates
-                            // the true join/fork sites (pc559 merge, pc545
-                            // ==0x11 target) = the kernel's st->parent.
-                            if env
-                                .insn_aux_data
-                                .get(s.pc)
-                                .map(|a| a.jmp_point)
-                                .unwrap_or(false)
-                            {
-                                if debug {
-                                    eprintln!(
-                                        "[bcf-track] faithful-base: nearest prune_point pc={} (bt-empty was {})",
-                                        s.pc, step_pc
-                                    );
-                                }
-                                return Some(s.pc);
-                            }
-                            match s.parent_idx {
-                                Some(p) => wi = p,
-                                None => break,
-                            }
-                        }
-                    }
+                    // Kernel `backtrack_states` (verifier.c:24544): on
+                    // bt-empty while walking state `st`, `base = st->parent`.
+                    // `parent_loc` (the cache at `current_parent_id`) IS
+                    // `st->parent`; its cache pc == `base->insn_idx`, the
+                    // `bcf_track` replay start (:24424). VALIDATED vs box #15
+                    // (pc274 190/207, pc748 521). This is the FAITHFUL base —
+                    // the bcidx/parent-hop/range-hop/faithful-base heuristics
+                    // (an extra `.parent` over-hop) are deleted.
                     // Kernel `backtrack_states` L24578-L24584 on
-                    // bt_empty: `base = st->parent`. zovia's legacy analog
-                    // is `parent_loc` (the cached state at the current
-                    // parent_cache_id). Return its PC.
-                    return parent_loc.map(|(pc, _)| pc);
+                    // bt_empty: `base = st->parent`. zovia's analog
+                    // is the cached (live or retired) state at the
+                    // current parent_cache_id. Return its PC.
+                    return parent_pc;
                 }
             } else if debug {
                 eprintln!(
@@ -653,6 +554,7 @@ pub fn bcf_suffix_base_pc(
         if parent_grandparent_id.is_none() {
             break;
         }
+        // Cross into the parent state (kernel `st = st->parent`).
         current_parent_id = parent_grandparent_id;
         current_history = parent_history_stop;
     }

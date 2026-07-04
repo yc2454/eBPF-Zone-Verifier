@@ -469,9 +469,10 @@ fn try_bcf_refine_map(
         // returns None and refine uses keep-all (kernel-faithful too:
         // kernel returns bcf_prove_unreachable in this branch).
     }
-    let base_pc = state
+    let landed = state
         .history_idx
-        .and_then(|hidx| crate::analysis::flow::precision::bcf_suffix_base_pc(env, hidx, state.parent_cache_id, &target_regs));
+        .and_then(|hidx| crate::analysis::flow::precision::bcf_suffix_base_pc_and_cache_id(env, hidx, state.parent_cache_id, &target_regs));
+    let base_pc = landed.map(|(pc, _)| pc);
     if bcf_debug {
         eprintln!("[REFINE] pc={} base={:?} insn_off={} size={} limit={} size_reg={:?} base_pc={:?} parent_cid={:?} history_idx={:?}",
                   state.pc, base, insn_off, size, map_limit, size_reg, base_pc,
@@ -519,7 +520,7 @@ fn try_bcf_refine_map(
     // gets subsumed there — the kernel sets `children_unsafe=1` and
     // exempts it from subsumption, so path A continues to PC 142 and
     // emits its own discharge with hash 0x6eb7).
-    crate::analysis::flow::pruning::cache::mark_path_children_unsafe(env, state, base_pc);
+    crate::analysis::flow::pruning::cache::mark_path_children_unsafe(env, state, landed.map(|(_, cid)| cid));
     true
 }
 

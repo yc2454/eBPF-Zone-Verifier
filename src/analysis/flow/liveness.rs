@@ -60,6 +60,40 @@ pub fn compute_liveness(prog: &Program, env: &mut VerifierEnv) {
     // For each CallRel, propagate callee-saved registers that are live in the
     // caller's continuation into the callee's body. Iterate to handle nested calls.
     propagate_cross_frame_liveness(prog, env, &subprogs);
+
+    // Diagnostic: dump live_regs per pc in the kernel's bit convention
+    // (bit j = Rj) for diffing against the kernel's live_regs_before.
+    if std::env::var("ZOVIA_DUMP_LIVENESS").is_ok() {
+        for pc in 0..env.insn_aux_data.len() {
+            let mut mask: u16 = 0;
+            for r in &env.insn_aux_data[pc].live_regs {
+                let bit = match r {
+                    Reg::R0 => 0,
+                    Reg::R1 => 1,
+                    Reg::R2 => 2,
+                    Reg::R3 => 3,
+                    Reg::R4 => 4,
+                    Reg::R5 => 5,
+                    Reg::R6 => 6,
+                    Reg::R7 => 7,
+                    Reg::R8 => 8,
+                    Reg::R9 => 9,
+                    _ => continue,
+                };
+                mask |= 1 << bit;
+            }
+            let mut slots: Vec<i16> =
+                env.insn_aux_data[pc].live_slots.iter().copied().collect();
+            slots.sort_unstable();
+            eprintln!(
+                "[zlrb] {} 0x{:x} pp={} slots={:?}",
+                pc,
+                mask,
+                env.insn_aux_data[pc].prune_point as u8,
+                slots
+            );
+        }
+    }
 }
 
 // ---------- Phase 2: Cross-Frame Propagation ----------
@@ -509,12 +543,24 @@ fn get_use_def(instr: &Instr, alias: &AliasMap) -> UseDef {
         }
 
         Instr::Call { .. } => {
-            // Helper calls: use R1-R5 as arguments, clobber R0-R5 on return.
-            for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
-                ud.use_regs.insert(r);
-            }
+            // Helper/kfunc calls clobber caller-saved R0-R5 on return.
             for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
                 ud.def_regs.insert(r);
+            }
+            // USES: mark all of R1-R5 read. This is a SOUND over-approximation,
+            // NOT faithful. The kernel reads only the call's ACTUAL argument
+            // registers (proto->arg_type[0..nargs]; trailing/unused = DontCare),
+            // so a dead arg reg (e.g. R3 across a 2-arg helper) is
+            // clobbered-without-read and should go dead. Marking only the real
+            // args is the faithful set — but in ISOLATION it regressed coverage
+            // 24->12/28 (ZOVIA_FAITHFUL_HELPER_ARGS, falsified & removed
+            // 2026-07-01): a compensating divergence in zovia's subsumption
+            // means precise call-liveness can't be adopted on its own. Kept as
+            // the sound over-approximation; the faithful fix is precise
+            // call-liveness together with that subsumption divergence, not one
+            // alone. See HANDOFF_from_nat_fib_pc521.
+            for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+                ud.use_regs.insert(r);
             }
         }
 

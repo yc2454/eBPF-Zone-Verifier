@@ -121,122 +121,6 @@ pub fn try_prove_unreachable_fold_legacy(
     r
 }
 
-/// Loop-suffix-base variant: re-anchors the goal at the loop exit when the
-/// reject's recorded path crossed an unrolled bounded loop (see the filter in
-/// `try_prove_unreachable_inner`). Emitted ADDITIVELY by the caller (deduped),
-/// so it only ADDS the kernel's post-loop obligation (accepted_entrypoint
-/// 0x11cc); returns `None` if the path crossed no loop / the filter is a no-op.
-pub fn try_prove_unreachable_loop_suffix(
-    state: &State,
-    base_pc: Option<usize>,
-    prev_insn_pc: Option<usize>,
-) -> Option<UnreachableOk> {
-    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, false, None, true, None, None, false)
-}
-
-/// Flag-skip-base variant: re-anchors the goal at the first foldable
-/// (narrowed-const) branch AFTER an unrolled loop's exit — the calico
-/// proto-switch "flag" branch `If R1==0` on its flag-clear (`0==0`) side.
-/// Drops both the loop and the flag's `!=0x400` conjunct, reproducing the
-/// kernel's flag-bypass obligations (accepted_entrypoint 0x2f5796f3… family).
-/// Emitted ADDITIVELY by the caller (deduped); returns `None` when the path
-/// crossed no loop or has no post-loop foldable branch. See the filter in
-/// `try_prove_unreachable_inner`.
-pub fn try_prove_unreachable_flag_skip(
-    state: &State,
-    base_pc: Option<usize>,
-    prev_insn_pc: Option<usize>,
-) -> Option<UnreachableOk> {
-    try_prove_unreachable_inner(state, base_pc, prev_insn_pc, false, None, false, Some(usize::MAX), None, false)
-}
-
-/// Multi-anchor flag-skip: emit one flag-skip obligation per DISTINCT
-/// post-loop foldable (narrowed-const) branch pc — each proto-switch arm's
-/// flag-clear route anchors at a different such branch, so the single-anchor
-/// [`try_prove_unreachable_flag_skip`] only reproduces the arm whose foldable
-/// branch comes first. Returns the cvc5-proven obligations (ADDITIVE, caller
-/// dedups by cond_hash). Empty when the path crossed no loop / has none.
-pub fn try_prove_unreachable_flag_skip_multi(
-    state: &State,
-    base_pc: Option<usize>,
-    prev_insn_pc: Option<usize>,
-) -> Vec<UnreachableOk> {
-    let Some(bcf) = state.bcf.as_ref() else {
-        return Vec::new();
-    };
-    // loop exit (same back-edge detection as the filter)
-    use std::collections::HashMap;
-    let mut cnt: HashMap<usize, usize> = HashMap::new();
-    for i in 0..bcf.path_cond_pcs.len() {
-        if bcf.path_cond_is_branch[i] {
-            *cnt.entry(bcf.path_cond_pcs[i]).or_insert(0) += 1;
-        }
-    }
-    let exit = match cnt.iter().filter(|&(_p, &c)| c > 1).map(|(&p, _)| p).max() {
-        Some(s) => s + 1,
-        None => return Vec::new(),
-    };
-    // distinct post-exit foldable branch pcs = the candidate anchors
-    let mut anchors: Vec<usize> = (0..bcf.path_cond_pcs.len())
-        .filter(|&i| {
-            bcf.path_cond_is_branch[i]
-                && bcf.path_cond_pcs[i] >= exit
-                && bcf.path_cond_narrowed_const[i].is_some()
-        })
-        .map(|i| bcf.path_cond_pcs[i])
-        .collect();
-    anchors.sort_unstable();
-    anchors.dedup();
-    anchors
-        .into_iter()
-        .filter_map(|pc| {
-            try_prove_unreachable_inner(
-                state, base_pc, prev_insn_pc, false, None, false, Some(pc), None, false,
-            )
-        })
-        .collect()
-}
-
-/// Loop-entry-base multi-anchor: for each loop-header pc in `header_pcs` that
-/// is a recorded branch in this reject's trajectory, emit one obligation
-/// re-anchored at that header (the zero-iteration loop route — keeps the
-/// `0 u>= ...` bound check + proto suffix, no fold, no loop conds). Reproduces
-/// the kernel's `u>=`-anchored proto-switch obligations. ADDITIVE; caller
-/// dedups by cond_hash.
-pub fn try_prove_unreachable_loop_entry_multi(
-    state: &State,
-    base_pc: Option<usize>,
-    prev_insn_pc: Option<usize>,
-    header_pcs: &std::collections::HashSet<usize>,
-) -> Vec<UnreachableOk> {
-    let Some(bcf) = state.bcf.as_ref() else {
-        return Vec::new();
-    };
-    let mut anchors: Vec<usize> = (0..bcf.path_cond_pcs.len())
-        .filter(|&i| bcf.path_cond_is_branch[i] && header_pcs.contains(&bcf.path_cond_pcs[i]))
-        .map(|i| bcf.path_cond_pcs[i])
-        .collect();
-    anchors.sort_unstable();
-    anchors.dedup();
-    // Per anchor emit BOTH variants (ADDITIVE, caller dedups by cond_hash):
-    //  - no-fold  → keeps `0 u>= zext(R1)` (kernel's symbolic-bound family);
-    //  - fold     → `0 u>= 0` literal (kernel's const-bound family). cvc5 drops
-    //    the fold on symbolic routes (constraint removed → not unsat).
-    // A global do_fresh_var_rewrite=true would instead regress the no-fold
-    // group (re-materializes all suffix regs), so the fold is targeted here.
-    let mut out = Vec::new();
-    for pc in anchors {
-        for fold in [false, true] {
-            if let Some(ok) = try_prove_unreachable_inner(
-                state, base_pc, prev_insn_pc, false, None, false, None, Some(pc), fold,
-            ) {
-                out.push(ok);
-            }
-        }
-    }
-    out
-}
-
 /// Register-filtered discharge: like [`try_prove_unreachable`] but, after
 /// the base_pc suffix filter, also restricts the path_conds to a small
 /// register set computed via VAR→reg provenance def-use closure (mirrors
@@ -778,7 +662,8 @@ fn try_prove_unreachable_inner(
             // OPPOSITE bound-timing under one window, so no single rule serves
             // both. (Reverted a const-distinguisher that fixed r0 but
             // regressed w2's umax 0xff→5.)
-            let use_pre = prenarrow_on && base_pc.map(|bp| pc >= bp).unwrap_or(false);
+            let use_pre = prenarrow_on
+                && base_pc.map(|bp| pc >= bp).unwrap_or(false);
             let mat_bounds = if use_pre { &pre_bounds } else { &lhs_bounds };
             // Re-mint cache key: under the flag, key by (reg, materialize_pc)
             // so a redefined reg (call/reload between references) gets a fresh
@@ -1243,6 +1128,14 @@ fn try_prove_unreachable_inner(
             sym.add_conj(pcs)
         }
     };
+
+    if std::env::var("ZOVIA_GOAL_MODE").is_ok() {
+        let h = crate::refinement::canonical_hash::hash_expr(goal_root, &sym.exprs);
+        eprintln!(
+            "[goalmode] hash=0x{:016x} fresh_rewrite={} faithful_fold={} base_pc={:?}",
+            h, do_fresh_var_rewrite, faithful_fold, base_pc
+        );
+    }
 
     // Don't set sym.refine_cond — leaving it None makes smtlib::encode
     // emit `(assert <path_conds>)` directly (no nested CONJ with a

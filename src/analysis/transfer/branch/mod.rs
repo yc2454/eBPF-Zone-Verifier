@@ -21,7 +21,7 @@ use self::constraints::apply_jmp_constraints;
 use self::interval_packet::refine_packet_bounds_on_branch;
 use self::outcome::condition_outcome;
 use self::refinement::{propagate_scalar_links, refine_branch};
-use super::common::{check_operand_readable, check_reg_readable};
+use super::common::check_operand_readable;
 
 /// Map an AST `CmpOp` to the (taken, not-taken) BCF/BPF jump-op byte pair.
 /// Returns `None` for ops we don't yet symbolically model (JSET — encoded
@@ -116,7 +116,19 @@ fn record_path_cond_for_side(
     // materializes (see K==K rewrite gate in
     // feedback_kernel_probe_record_path_cond_2026-05-23.md).
     let lhs_materialize_pc: Option<usize> = bcf.get_reg_pc(l_idx);
+    // PATH B: was the LHS reg uncached entering THIS branch? (kernel
+    // `bcf_pre == -1` → `bcf_bound_reg` emits its bound conjuncts; cached →
+    // none). Captured before reg_expr materializes it.
+    let lhs_was_uncached = lhs_materialize_pc.is_none();
+    // Kernel `bcf_reg_expr` materializes an operand's VAR + bounds from its
+    // bounds AT first reference; there is no op-type-dependent pre/post-narrow
+    // rule, so the LHS always materializes from its current (`lhs_bounds`) range.
     let cmp_l = bcf.reg_expr(l_idx, &lhs_bounds, jmp32);
+    let rhs_idx: Option<usize> = match right {
+        Operand::Reg(r) => r.bcf_idx(),
+        _ => None,
+    };
+    let rhs_was_uncached = rhs_idx.map(|ri| bcf.get_reg_pc(ri).is_none()).unwrap_or(false);
     let cmp_r = match right {
         Operand::Imm(c) => {
             let v = if jmp32 { (*c as u32) as u64 } else { *c as u64 };
@@ -127,6 +139,35 @@ fn record_path_cond_for_side(
             None => bcf.add_val(0, jmp32),
         },
     };
+    // PATH B (ZOVIA_BCF_REPLAY): mirror the kernel's `bcf_bound_reg`, which
+    // emits an operand's bound conjuncts INSIDE `record_path_cond` — BEFORE the
+    // branch cond is pushed, in umin/umax/smin/smax order, and ONLY when the reg
+    // was freshly materialized this branch (`bcf_pre == -1`). Emitting the block
+    // here (before `add_cond_at_narrowed`) reproduces the kernel's
+    // [u>=K, u<=M, …] block-then-branch ORDER and per-reg first-ref dedup that
+    // the post-branch replay arm (and the recording BOUND_SYNC arm) get wrong.
+    // calico from_nat_fib pc748 d53387e3: V0's [u>=6, u<=0xff] precede `s>5`.
+    // Const-materialized operands carry no VAR → no bound block (their value is
+    // emitted directly via the K==K rewrite).
+    // ZOVIA_BCF_REPLAY_FIRSTREF (default-ON) disables this deferred (branch-only)
+    // arm — bounds are emitted at first materialization in materialize_reg
+    // instead (kernel bcf_reg_expr→bcf_bound_reg, read OR branch).
+    let replay_firstref = crate::common::config::bcf_mirror_knob("ZOVIA_BCF_REPLAY_FIRSTREF", true);
+    if bcf.replay_emit_bounds && !replay_firstref {
+        if lhs_was_uncached && lhs_bounds.const_val.is_none() {
+            for bp in bcf.bound_reg_emit_preds(cmp_l, &lhs_bounds, jmp32) {
+                bcf.add_cond(bp);
+            }
+        }
+        if rhs_was_uncached
+            && let Some(rb) = rhs_bounds.as_ref()
+            && rb.const_val.is_none()
+        {
+            for bp in bcf.bound_reg_emit_preds(cmp_r, rb, jmp32) {
+                bcf.add_cond(bp);
+            }
+        }
+    }
     let pred = if op != CmpOp::Test {
         bcf.add_pred(op_byte_for_side, cmp_l, cmp_r)
     } else {
@@ -155,8 +196,12 @@ pub(crate) fn transfer_if(
     right: Operand,
     target: usize,
 ) -> Vec<State> {
-    // Check operand readability
-    if !check_reg_readable(env, &mut state, left) {
+    if !crate::analysis::transfer::common::check_reg_readable_ex(
+        env,
+        &mut state,
+        left,
+        true,
+    ) {
         return vec![];
     }
     if !check_operand_readable(env, &mut state, &right) {
@@ -443,7 +488,20 @@ pub(crate) fn transfer_if(
 /// path_cond goal carries spurious leading conditions (from its full
 /// abstract-interpretation path) and its canonical hash misses the
 /// kernel's bundle lookup. `None` ⇒ keep all (sound, just not as tight).
-fn unreachable_base_pc(env: &VerifierEnv, state: &State) -> Option<usize> {
+/// Kernel `bcf_refine` auto-fill `reg_masks` (verifier.c:24611-24620): the
+/// live, non-const registers a reject backtracks to find its base. Shared by
+/// `unreachable_base_pc` (base/anchor) AND the prev/cache-id computation so
+/// the two `bcf_suffix_base_pc*` walks use an IDENTICAL mask. A drift here is
+/// fatal: with the `pkt_const_off` exclusion missing on one side (pc274 keeps
+/// R2=pkt → mask 0x2f6→wider), that walk empties at a DIFFERENT insn (pc99 vs
+/// 207) → `parent_loc=None` → `base_cid=None` → the faithful REPLAY is skipped
+/// and the 190-path family MISSes. See the per-clause rationale (PtrToCtx R9
+/// drain, pkt_const_off) inline below.
+fn unreachable_target_regs(
+    env: &VerifierEnv,
+    state: &State,
+    hidx: Option<usize>,
+) -> Vec<Reg> {
     use crate::analysis::machine::reg_types::RegType;
     const VARREGS: [Reg; 10] = [
         Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4,
@@ -455,74 +513,64 @@ fn unreachable_base_pc(env: &VerifierEnv, state: &State) -> Option<usize> {
         if matches!(ty, RegType::NotInit) {
             continue;
         }
-        // Kernel `bcf_refine` auto-fill (verifier.c): skip every reg with
-        // `type != SCALAR_VALUE && tnum_is_const(reg->var_off)` — i.e. a
-        // non-scalar whose *offset* has no variable component. The kernel
-        // models that offset uniformly in `reg->var_off`; zovia splits it
-        // across the `RegType` enum, so the faithful mirror is
-        // per-representation: most pointer offsets ride the value-tnum
-        // (`get_tnum().is_const()` already captures them), but a
-        // `PtrToMapValue` carries its constant offset in the *type*
-        // (`offset: Some(k)`, with `None` = unknown/variable), and a
-        // `*OrNull` map pointer is offset-0 by construction — neither is
-        // reflected in the value-tnum. Without these, a constant-offset
-        // map_value pointer (kernel-excluded) is wrongly backtracked,
-        // exploding the precision suffix (calico_tc_main R7 = map_value
-        // +0x4c → ~115-clause over-walk vs the kernel's 9). This is
-        // additive: it only ever *excludes* more, tightening toward the
-        // kernel's reg_masks — never widens the tracked set.
-        // Per-pointer-kind const-offset detection. Kernel's
-        // `tnum_is_const(reg->var_off)` captures every fresh non-scalar
-        // pointer because the kernel uses a single `var_off` field for
-        // offset across all ptr types. Zovia splits that representation
-        // across the `RegType` enum; for kernel-faithful exclusion we
-        // need an explicit case per ptr kind whose offset is structurally
-        // constant (i.e. not modeled in the value-tnum). Calico-trace
-        // 2026-05-20: missing `PtrToCtx` here caused R9 to leak into
-        // `target_regs` at every BCF discharge, the walker could never
-        // drain R9 (its definition is the caller's frame, not any
-        // in-program insn), and `bcf_suffix_base_pc` always returned
-        // `None` → full-lineage `children_unsafe` marking → 26× cache
-        // invalidation → 1M-insn TIMEOUT. The kernel-side `[ZK]` probe
-        // confirmed kernel `reg_masks=0x73` (excludes R9=PtrToCtx);
-        // matching it brings the suffix base from None to a tight pc.
-        let const_offset = state.get_tnum(r).is_const()
-            || matches!(ty, RegType::PtrToMapValue { offset: Some(_), .. })
-            || matches!(ty, RegType::PtrToMapValueOrNull { .. })
-            // Below: ptr types whose "offset" component is structurally 0
-            // (no variable-offset arithmetic possible in normal use).
-            // PtrToPacket is the only ptr type with variable offset
-            // (`ptr += scalar`) and is deliberately NOT excluded.
-            || matches!(ty, RegType::PtrToCtx)
-            || matches!(ty, RegType::PtrToPacketEnd)
-            || matches!(ty, RegType::PtrToSocket { .. })
-            || matches!(ty, RegType::PtrToSocketOrNull { .. })
-            || matches!(ty, RegType::PtrToSockCommon { .. })
-            || matches!(ty, RegType::PtrToSockCommonOrNull { .. })
-            || matches!(ty, RegType::PtrToTcpSock { .. })
-            || matches!(ty, RegType::PtrToTcpSockOrNull { .. })
-            || matches!(ty, RegType::PtrToCpumask { .. })
-            || matches!(ty, RegType::PtrToCpumaskOrNull { .. })
-            || matches!(ty, RegType::PtrToArena { .. })
-            || matches!(ty, RegType::PtrToArenaOrNull { .. })
-            || matches!(ty, RegType::PtrToCgroup { .. })
-            || matches!(ty, RegType::PtrToCgroupOrNull { .. })
-            || matches!(ty, RegType::PtrToBtfId { .. })
-            || matches!(ty, RegType::PtrToOwnedKptr { .. })
-            || matches!(ty, RegType::PtrToMapKptr { .. });
-        if !matches!(ty, RegType::ScalarValue) && const_offset {
+        // Faithful port of the kernel's `bcf_refine` reg_masks==0 auto-fill
+        // (verifier.c:24611-24620): skip a register that is
+        // `type != SCALAR_VALUE && tnum_is_const(reg->var_off)`.
+        //
+        // zovia has no single per-register var_off tnum, but the interval
+        // domain carries the faithful analog on `PtrOffset.var_off` (its doc:
+        // "kernel tnum_range(reg->var_off)"): `tnum_is_const(var_off)` holds
+        // iff the pointer's offset range is a single point (`min == max`), or
+        // there is no `ptr_offset` at all (types that can't hold a variable
+        // offset — they demote to scalar on `ptr += reg`, or track only a const
+        // embedded offset). This is the SAME reliable analog the refine-target
+        // selection uses (memory/map.rs); `var_off_contributor` is NOT reliable
+        // (spill/fill doesn't always clear it). One uniform rule replaces the
+        // former per-RegType-variant enumeration and the PtrToPacket /
+        // PtrToPacketEnd env-gated special cases (`ZOVIA_BCF_PKT_CONST_REGMASK`,
+        // `ZOVIA_BCF_EXCLUDE_PKT_END`, both deleted). See
+        // reference_var_off_faithful_analog.md.
+        let var_off_const = state
+            .domain
+            .as_interval()
+            .and_then(|iv| iv.get_ptr_offset(r))
+            .is_none_or(|po| po.min_offset() == po.max_offset());
+        if !matches!(ty, RegType::ScalarValue) && var_off_const {
             continue;
         }
         targets.push(r);
     }
+    // NOTE 2026-07-02: the former `filter_live_unknown_targets` post-filter
+    // (drop dead fully-unknown scalars) is REMOVED. Kernel ground truth
+    // (box #38, from_nat_fib pc748): the auto-fill keeps ALL scalars —
+    // verifier.c:24610-18 has no liveness/constraint check — and the
+    // kernel's 0x277 mask includes the DEAD unknown R2=[0..255], whose
+    // backtrack (bt_empty=561, base=521) is what children_unsafe-marks the
+    // 584<-521 checkpoint and keeps the sponge-marking treadmill alive.
+    // The filter dropped that R2 (0x4e6, base=584 = the checkpoint itself,
+    // exclusive -> never marked -> the wide-R2 TCP-arm path merges at 584
+    // and the d53 arm discharges are never produced. The cont.20 pc735
+    // mask match that motivated the filter is explainable as a since-
+    // healed state divergence (kernel R2=PktEnd vs zovia unknown scalar),
+    // not a kernel mask rule.
+    let _ = hidx;
+    targets
+}
+
+fn unreachable_base_pc(env: &VerifierEnv, state: &State) -> Option<usize> {
     // Start the backtrack at the *rejecting* insn's breadcrumb (kernel
-    // `backtrack_states` `last_idx = cur->insn_idx` with skip_first),
-    // not the in-flight state's parent `history_idx` — the latter skips
-    // one insn too early (fatal when the skipped predecessor is a
-    // helper-call argument's only definition).
+    // `backtrack_states` `last_idx = cur->insn_idx` with skip_first), and
+    // return the faithful `base->insn_idx` (parent_loc at bt-empty).
     let hidx = env.current_step_idx.or(state.history_idx)?;
-    let targets = filter_live_unknown_targets(env, state, Some(hidx), targets);
-    crate::analysis::flow::precision::bcf_suffix_base_pc(env, hidx, state.parent_cache_id, &targets)
+    let targets = unreachable_target_regs(env, state, Some(hidx));
+    let base = crate::analysis::flow::precision::bcf_suffix_base_pc(env, hidx, state.parent_cache_id, &targets);
+    if std::env::var("ZOVIA_DUMP_REGMASK").ok().as_deref() == Some("1") {
+        let mut mask: u32 = 0;
+        for &r in &targets { mask |= 1u32 << (r as u32); }
+        eprintln!("[regmask] reject_pc={} mask=0x{:x} targets={:?} base={:?}",
+            state.pc, mask, targets, base);
+    }
+    base
 }
 
 /// Kernel-faithful `reg_masks` tightening (cont.20): drop a reject `reg_masks`
@@ -590,87 +638,104 @@ fn try_prove_unreachable_via_replay(
     env: &mut VerifierEnv,
     reject_state: &State,
     base_cid: u32,
-) -> Option<crate::refinement::refine_unreachable::UnreachableOk> {
+) -> Vec<crate::refinement::refine_unreachable::UnreachableOk> {
 
+    let empty = Vec::new();
     // 1. Retrieve the cached base State (with its register/domain state).
-    let (bpc, bidx) = env.cache_loc_by_id.get(&base_cid).copied()?;
-    let base_state = env.explored_states.get(&bpc)?.get(bidx)?.clone();
+    //    Live-then-retired: the kernel's bcf_track base (`st->parent`)
+    //    may be an evicted (free_list) state.
+    let Some(base_state) = env.state_by_cache_id(base_cid).map(|(_, s)| s.clone())
+        else { return empty };
     let base_hidx = base_state.history_idx;
 
     // 2. Recover the forward base→reject instruction path by walking the
-    //    Breadcrumb parent chain from the reject insn's breadcrumb
-    //    (env.current_step_idx) back to (exclusive) the base's breadcrumb.
-    let reject_bc = env.current_step_idx?;
+    //    Breadcrumb parent chain from the reject insn's breadcrumb.
+    let Some(reject_bc) = env.current_step_idx else { return empty };
     let mut path: Vec<(usize, Instr)> = Vec::new();
     let mut cur = Some(reject_bc);
     let mut budget: usize = 200_000;
     while let Some(idx) = cur {
-        if Some(idx) == base_hidx {
-            break;
-        }
-        budget = budget.checked_sub(1)?;
-        let bc = env.history.get(idx)?;
+        if Some(idx) == base_hidx { break; }
+        match budget.checked_sub(1) { Some(b) => budget = b, None => return empty }
+        let Some(bc) = env.history.get(idx) else { return empty };
         path.push((bc.pc, bc.instr.clone()));
         cur = bc.parent_idx;
     }
     let dbg = std::env::var("ZOVIA_BCF_REPLAY_DEBUG").ok().as_deref() == Some("1");
-    if path.is_empty() {
-        if dbg { eprintln!("[replay] EMPTY path base_cid={} base_hidx={:?} reject_bc={}", base_cid, base_hidx, reject_bc); }
-        return None;
-    }
+    if path.is_empty() { return empty; }
     path.reverse(); // forward order: base_pc .. reject branch
 
-    // The reject is the DEAD path: its destination pc disambiguates which
-    // edge the final branch transfer should follow.
     let dead_target = reject_state.pc;
-    // The reject insn at `reject_pc` is the last breadcrumb. Two reject
-    // shapes: (a) BRANCH reject (transfer_if dead side) — `reject_state` is
-    // a successor whose pc is the dead edge's destination (≠ reject_pc); we
-    // EXECUTE the branch and follow the dead edge. (b) ACCESS/ALU/CALL
-    // reject — `reject_state` IS the state at the reject insn (pc ==
-    // reject_pc); the failing insn must NOT be executed, so we replay up to
-    // its predecessor and read the bcf of the state that arrives at it.
-    let reject_pc = env.history.get(reject_bc)?.pc;
+    let Some(reject_pc) = env.history.get(reject_bc).map(|b| b.pc) else { return empty };
     let is_branch_reject = reject_state.pc != reject_pc;
     let n_exec = if is_branch_reject { path.len() } else { path.len() - 1 };
-    if n_exec == 0 {
-        return None;
-    }
+    if n_exec == 0 { return empty; }
     if dbg {
         eprintln!("[replay] STRUCT reject_pc={} reject_state.pc={} is_branch={} path[0]={} path[last]={} len={} n_exec={}",
             reject_pc, reject_state.pc, is_branch_reject, path[0].0, path[path.len()-1].0, path.len(), n_exec);
     }
 
-    // 3. Replay: clone base, reset bcf (kernel resets bcf_expr=-1 at replay
-    //    start), re-run transfer following the path. replay_mode suppresses
-    //    fail()/precision/discharge side effects and makes branches return
-    //    both edges so we can pick the path's next pc (dead edge at the end).
-    let mut base_state = base_state;
-    base_state.reset_bcf_for_replay();
-    env.replay_mode = true;
-    let mut holder: Option<State> = Some(base_state);
-    for i in 0..n_exec {
-        let pc = path[i].0;
-        let instr = path[i].1.clone();
-        let mut st = match holder.take() {
-            Some(s) => s,
-            None => break,
-        };
-        st.pc = pc;
-        let succ = crate::analysis::transfer::transfer(env, st, &instr);
-        let next_pc = if i + 1 < path.len() { path[i + 1].0 } else { dead_target };
-        let pcs: Vec<usize> = succ.iter().map(|s| s.pc).collect();
-        holder = succ.into_iter().find(|s| s.pc == next_pc);
-        if holder.is_none() {
-            if dbg { eprintln!("[replay] DIVERGE at step {}/{} pc={} want_next={} got={:?}", i, path.len(), pc, next_pc, pcs); }
-            break; // replay diverged from the recorded path
+    // 3. Reset points: None = the plain replay (bcf reset at the suffix base).
+    //    NARROWBASE (default-ON) adds one per CONDITIONAL branch step k whose
+    //    LHS reg NARROWS on the taken side — re-anchoring the bcf base PAST the
+    //    narrowing so the LHS materializes POST-narrow (kernel bcf_track base =
+    //    st->parent past the narrowing branch). Emitted ADDITIVELY (caller
+    //    dedups by cond_hash). from_nat_fib pc748: the `s>5`@523 reset point
+    //    yields d53387e3 (proto `[u>=6,u<=0xff]`) the plain replay misses
+    //    (it re-executes 523 → proto pre-narrow = 2af13624 shape).
+    let narrowbase = crate::common::config::bcf_mirror_knob("ZOVIA_BCF_REPLAY_NARROWBASE", true);
+    let mut reset_points: Vec<Option<usize>> = vec![None];
+    if narrowbase {
+        for i in 0..n_exec {
+            if matches!(path[i].1, Instr::If { .. }) {
+                reset_points.push(Some(i));
+            }
         }
     }
-    env.replay_mode = false;
-    let mut final_state = holder?;
-    let sym = *final_state.bcf.take()?;
-    if dbg { eprintln!("[replay] OK path_len={} reject_pc={} dead_target={} n_conds={}", path.len(), reject_bc, dead_target, sym.path_conds.len()); }
-    crate::refinement::refine_unreachable::build_unreachable_from_replay(sym)
+
+    let mut goals = Vec::new();
+    for reset_after_idx in reset_points {
+        let mut base_state = base_state.clone();
+        base_state.reset_bcf_for_replay();
+        env.replay_mode = true;
+        let mut holder: Option<State> = Some(base_state);
+        for i in 0..n_exec {
+            let pc = path[i].0;
+            let instr = path[i].1.clone();
+            let st = match holder.take() { Some(s) => s, None => break };
+            let mut st = st;
+            st.pc = pc;
+            let succ = crate::analysis::transfer::transfer(env, st, &instr);
+            let next_pc = if i + 1 < path.len() { path[i + 1].0 } else { dead_target };
+            holder = succ.into_iter().find(|s| s.pc == next_pc);
+            if holder.is_none() { break; }
+            if Some(i) == reset_after_idx {
+                if let (Some(h), Instr::If { width, left, op, right, target }) =
+                    (holder.as_mut(), &instr)
+                {
+                    if let Some((op_then, op_else)) = cmp_op_to_bcf_pair(*op) {
+                        h.reset_bcf_for_replay();
+                        let taken = next_pc == *target;
+                        let op_byte = if taken { op_then } else { op_else };
+                        let pre_b =
+                            crate::analysis::transfer::alu::helpers::bcf_reg_bounds(h, *left);
+                        record_path_cond_for_side(
+                            h, *width, *left, *op, op_byte, right, pc, None, pre_b,
+                        );
+                    }
+                }
+            }
+        }
+        env.replay_mode = false;
+        if let Some(mut final_state) = holder {
+            if let Some(symb) = final_state.bcf.take() {
+                if let Some(g) = crate::refinement::refine_unreachable::build_unreachable_from_replay(*symb) {
+                    goals.push(g);
+                }
+            }
+        }
+    }
+    goals
 }
 
 pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &State) -> bool {
@@ -687,13 +752,13 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     if state.bcf.is_none() {
         return false;
     }
+    // FAITHFUL base (Phase 2, 2026-07-01). The kernel's ONE `base` from
+    // backtrack_states gives BOTH the goal anchor (`base->insn_idx`, the
+    // replay start) AND the marking bound (parents[] = the chain up to base).
+    // `base_pc` = `base->insn_idx` (anchor, for the prove/goal calls). The
+    // marking below uses `base_cid_dbg` (the base cache_id) to mark exactly
+    // the `parents[]` chain — no split, no bcidx/EXCLUDE_BASE pc-window.
     let base_pc = unreachable_base_pc(env, state);
-    let loop_suffix_on =
-        std::env::var("ZOVIA_EXP_LOOP_SUFFIX_BASE").ok().as_deref() == Some("1");
-    let flag_skip_on =
-        std::env::var("ZOVIA_EXP_FLAG_SKIP_BASE").ok().as_deref() == Some("1");
-    let loop_entry_on =
-        std::env::var("ZOVIA_EXP_LOOP_ENTRY_BASE").ok().as_deref() == Some("1");
     // Mirror kernel's `vstate->last_insn_idx` retrieval at bcf_track
     // replay start: look up the prev_insn PC of the cached state AT
     // base_pc (the cache the suffix walk landed on, not the immediate
@@ -701,66 +766,13 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     // to identify the immediate-predecessor branch cond (the kernel's
     // record_path_cond push at insn=base_pc, verifier.c:21117).
     let (prev_insn_pc, base_cid_dbg) = {
-        use crate::analysis::machine::reg::Reg;
-        use crate::analysis::machine::reg_types::RegType;
-        const VARREGS: [Reg; 10] = [
-            Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4,
-            Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9,
-        ];
-        let targets: Vec<Reg> = VARREGS.iter().copied()
-            .filter(|&r| !matches!(state.types.get(r), RegType::NotInit))
-            .filter(|&r| {
-                let ty = state.types.get(r);
-                let const_off = state.get_tnum(r).is_const()
-                    || matches!(ty, RegType::PtrToMapValue { offset: Some(_), .. })
-                    || matches!(ty, RegType::PtrToMapValueOrNull { .. })
-                    || matches!(ty, RegType::PtrToCtx)
-                    || matches!(ty, RegType::PtrToPacketEnd)
-                    || matches!(ty, RegType::PtrToSocket { .. })
-                    || matches!(ty, RegType::PtrToSocketOrNull { .. })
-                    || matches!(ty, RegType::PtrToSockCommon { .. })
-                    || matches!(ty, RegType::PtrToSockCommonOrNull { .. })
-                    || matches!(ty, RegType::PtrToTcpSock { .. })
-                    || matches!(ty, RegType::PtrToTcpSockOrNull { .. })
-                    || matches!(ty, RegType::PtrToCpumask { .. })
-                    || matches!(ty, RegType::PtrToCpumaskOrNull { .. })
-                    || matches!(ty, RegType::PtrToArena { .. })
-                    || matches!(ty, RegType::PtrToArenaOrNull { .. })
-                    || matches!(ty, RegType::PtrToCgroup { .. })
-                    || matches!(ty, RegType::PtrToCgroupOrNull { .. })
-                    || matches!(ty, RegType::PtrToBtfId { .. })
-                    || matches!(ty, RegType::PtrToOwnedKptr { .. })
-                    || matches!(ty, RegType::PtrToMapKptr { .. });
-                !(!matches!(ty, RegType::ScalarValue) && const_off)
-            })
-            .collect();
+        // Shared target mask — IDENTICAL to unreachable_base_pc via the
+        // common helper. A drift here (e.g. missing the pkt_const_off drop)
+        // empties the cache-id walk at a different insn than the pc walk,
+        // leaving base_cid=None → the faithful REPLAY is skipped and the
+        // pc274 190-path family MISSes.
         let hidx = env.current_step_idx.or(state.history_idx);
-        let targets = filter_live_unknown_targets(env, state, hidx, targets);
-        // KERNEL-FAITHFUL PRECISION (no_log proto-arm fix, 2026-05-31):
-        // mirror bcf_prove_unreachable → backtrack_states(reg_masks)'s
-        // precision side-effect. The kernel marks the reject's live,
-        // non-const "reg_masks" registers precise along the suffix; that
-        // precision keeps sibling paths (the proto≤5 / ==6 / ≥7 arms of an
-        // IP-proto switch) DISTINCT in is_state_visited, so each reaches the
-        // reject and gets its own discharge. zovia computes the same
-        // `targets` for the base walk but never marked them precise, so its
-        // imprecise-scalar wildcard rule (regsafe NOT_EXACT: a non-precise
-        // scalar is skipped) MERGED the arms — only a subset of the reject's
-        // discharges were produced, leaving kernel MISSes on the unmerged
-        // siblings' hashes (from_nat_no_log pc735: 618296 etc.). Marking here
-        // makes the cached ancestor states carry the precision, so a later
-        // sibling's is_state_visited sees range_within over disjoint proto
-        // ranges ([0,5] vs [7,255]) and stays distinct. Replaces the blunt
-        // ZOVIA_NO_PRUNE_WINDOW experiment knob with a targeted, kernel-shaped
-        // change. Default-OFF until VM-gated (repr-19 + cilium-17 loads, watch
-        // state-count). See project_no_log_subsumption_arc.md.
-        if std::env::var("ZOVIA_BCF_REJECT_PRECISE").ok().as_deref() == Some("1") {
-            if let Some(h) = hidx {
-                for &r in &targets {
-                    crate::analysis::flow::precision::mark_chain_precision_backward(env, h, state.parent_cache_id, r);
-                }
-            }
-        }
+        let targets = unreachable_target_regs(env, state, hidx);
         let landed = hidx.and_then(|hidx| {
             crate::analysis::flow::precision::bcf_suffix_base_pc_and_cache_id(env, hidx, state.parent_cache_id, &targets)
         });
@@ -786,12 +798,17 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     // replay-derived entry alongside the reconstruction discharges (merge
     // dedups by cond_hash). Lets us validate replay coverage without
     // disturbing the existing path.
-    if std::env::var("ZOVIA_BCF_REPLAY").ok().as_deref() == Some("1") {
+    // REPLAY = faithful base→reject re-execution (kernel bcf_track mirror).
+    // DEFAULT-ON (kill-switch ZOVIA_BCF_REPLAY=0); ADDITIVE alongside the
+    // reconstruction discharge (merge dedups by cond_hash). Pairs with
+    // ZOVIA_BCF_REPLAY_FIRSTREF (also default-ON) for kernel-faithful first-ref
+    // bound emission.
+    if crate::common::config::bcf_mirror_knob("ZOVIA_BCF_REPLAY", true) {
         if std::env::var("ZOVIA_BCF_REPLAY_DEBUG").ok().as_deref() == Some("1") {
             eprintln!("[replay] CALL reject@pc={} base_cid={:?}", state.pc, base_cid_dbg);
         }
         if let Some(cid) = base_cid_dbg {
-            if let Some(rok) = try_prove_unreachable_via_replay(env, state, cid) {
+            for rok in try_prove_unreachable_via_replay(env, state, cid) {
                 let rentry = RefineEntry::new(
                     rok.goal_root,
                     rok.sym.exprs,
@@ -800,6 +817,9 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
                 );
                 if std::env::var("ZOVIA_BCF_REPLAY_DEBUG").ok().as_deref() == Some("1") {
                     eprintln!("[replay] HASH reject@pc={} hash={:016x}", state.pc, rentry.cond_hash);
+                }
+                if env.bcf_proofs.iter().any(|e| e.cond_hash == rentry.cond_hash) {
+                    continue;
                 }
                 info!(target: "app",
                     "[bcf] REPLAY path-unreachable: proof {} bytes (hash {:016x})",
@@ -832,6 +852,18 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
         }
     }
     env.bcf_proofs.push(entry);
+    // DEBUG (parent-hop validation, 2026-06-19): eagerly flush the
+    // accumulated bcf_proofs to a path after every discharge push, so the
+    // on-disk bundle reflects current proofs even when the run is killed by
+    // a wall-clock timeout before analyze() reaches its write_bundle. Lets
+    // us capture the accepted_entrypoint 21f06b60 entry despite the no_log
+    // non-termination. Writes atomically (tmp+rename). Default-OFF.
+    if let Ok(flush_path) = std::env::var("ZOVIA_BCF_EAGER_FLUSH") {
+        let tmp = format!("{}.tmp", flush_path);
+        if crate::refinement::bundle::write_bundle(std::path::Path::new(&tmp), &env.bcf_proofs).is_ok() {
+            let _ = std::fs::rename(&tmp, &flush_path);
+        }
+    }
     // Also push the un-rewritten (aliased-VAR) form so previously-
     // matched hashes that happened to be the aliased shape stay in the
     // bundle alongside the kernel-shape rewrites. Without this, the
@@ -911,208 +943,6 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
                     );
                     env.bcf_proofs.push(entry_t);
                 }
-            }
-        }
-    }
-
-    // EXPERIMENT anchor-union (ZOVIA_BCF_ANCHOR_UNION=1, all-faithful mirror
-    // 2026-06-11): the kernel's bcf_track base can sit at a LATER checkpoint
-    // than this discharge's base_pc, yielding a leaner suffix-only cond
-    // (from_hep 415f43/a46620/600a50/09b8c4: kernel forms lack the early
-    // port-compare conjuncts). Re-emit the obligation anchored at each later
-    // narrowed-const branch pc on the path (the foldable-branch candidates,
-    // same filter as flag_skip_multi), in BOTH fold modes. ADDITIVE + deduped.
-    if crate::common::config::bcf_mirror_knob("ZOVIA_BCF_ANCHOR_UNION", true) {
-        if let Some(bcfst) = state.bcf.as_ref() {
-            // Candidates = EVERY distinct path-cond pc later than the current
-            // base (not just narrowed-const branches): the kernel's bcf_track
-            // base can sit at any checkpoint, including jump-edge targets
-            // whose surrounding cond stretch (e.g. from_hep 2586-2597 port
-            // bounds) is exactly what narrower anchor sets exclude.
-            //
-            // PLUS a bounded LOOKBACK of path-cond pcs at/below the natural
-            // base: the kernel's checkpoint can also sit EARLIER than zovia's
-            // cached base (to_wep reject 1783: zovia base=1633, kernel
-            // base=1599 → window [1602..] = the c70002dc/588b0338/5bc713f6/
-            // 86ac8cbf quartet, 2 path-cond pcs before zovia's base). Earlier
-            // anchors give superset windows — still cvc5-proven, additive.
-            let mut all_pcs: Vec<usize> = bcfst.path_cond_pcs.clone();
-            all_pcs.sort_unstable();
-            all_pcs.dedup();
-            let lookback: usize = std::env::var("ZOVIA_BCF_ANCHOR_LOOKBACK")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(8);
-            let anchors: Vec<usize> = match base_pc {
-                None => all_pcs,
-                Some(bp) => {
-                    let idx = all_pcs.partition_point(|&q| q <= bp);
-                    all_pcs[idx.saturating_sub(lookback)..].to_vec()
-                }
-            };
-            for p in anchors {
-                // prev for a re-anchored replay = the last path-cond pc below
-                // the anchor (the actual preceding cond on the path — mirrors
-                // record_path_cond at bcf_track replay start; for a jump-edge
-                // anchor this is the jump source, e.g. 2586's prev = 1484).
-                let prev_for_p = bcfst
-                    .path_cond_pcs
-                    .iter()
-                    .filter(|&&q| q < p)
-                    .copied()
-                    .max();
-                // mode: 0 = current fold (faithful when env set), 1 = legacy
-                // fold, 2 = NO-REWRITE (aliased-VAR form — the Class-A loop
-                // emits rw=false per anchor and the kernel queries it, e.g.
-                // 673434f3 on the to_hep/to_lo co-re_v6 pair).
-                // prev=p-1 mirrors the kernel's vstate->last_insn_idx: the
-                // replay-start prev is the INSN preceding the base, which need
-                // not be a recorded cond pc (prev-push then SYNTHESIZES that
-                // branch's cond — e.g. the (0x0 != 0x2)-prefixed forms).
-                let prev_insn = p.checked_sub(1);
-                for (mode, prev_v) in [
-                    (0, prev_for_p),
-                    (1, prev_for_p),
-                    (2, prev_for_p),
-                    (0, prev_insn),
-                    (1, prev_insn),
-                    (2, prev_insn),
-                    // prev=None variants: some kernel bases push NO prev
-                    // branch cond at replay start.
-                    (0, None),
-                    (1, None),
-                    (2, None),
-                    // TRAJECTORY-suffix window modes (3 = env fold, 4 =
-                    // legacy fold, 5 = no-rewrite): kernel replay is a
-                    // linear trajectory suffix; when the path crossed
-                    // higher-pc code before the base the numeric window
-                    // keeps carried conds the kernel never replays
-                    // (from_l3_co-re_v6 fe23e625).
-                    (3, prev_for_p),
-                    (4, prev_for_p),
-                    (5, prev_for_p),
-                    (3, prev_insn),
-                    (4, prev_insn),
-                    (5, prev_insn),
-                    (3, None),
-                    (4, None),
-                    (5, None),
-                ] {
-                    if prev_v.is_none() && prev_for_p.is_none() && mode != 0 {
-                        continue; // avoid exact duplicates of the Some-prev rows
-                    }
-                    if prev_v == prev_insn && prev_insn == prev_for_p && mode != 0 {
-                        continue; // p-1 row duplicates the computed-prev row
-                    }
-                    let okv = match mode {
-                        1 => crate::refinement::refine_unreachable::try_prove_unreachable_fold_legacy(
-                            state, Some(p), prev_v,
-                        ),
-                        2 => crate::refinement::refine_unreachable::try_prove_unreachable_no_rewrite(
-                            state, Some(p), prev_v,
-                        ),
-                        3 => crate::refinement::refine_unreachable::try_prove_unreachable_traj(
-                            state, Some(p), prev_v,
-                        ),
-                        4 => crate::refinement::refine_unreachable::try_prove_unreachable_traj_fold_legacy(
-                            state, Some(p), prev_v,
-                        ),
-                        5 => crate::refinement::refine_unreachable::try_prove_unreachable_traj_no_rewrite(
-                            state, Some(p), prev_v,
-                        ),
-                        _ => try_prove_unreachable(state, Some(p), prev_v),
-                    };
-                    if let Some(ok_au) = okv {
-                        let entry_au = RefineEntry::new(
-                            ok_au.goal_root, ok_au.sym.exprs, ok_au.proof_bytes,
-                            BCF_BUNDLE_KIND_UNREACHABLE,
-                        );
-                        if !env.bcf_proofs.iter().any(|e| e.cond_hash == entry_au.cond_hash) {
-                            info!(
-                                target: "app",
-                                "[bcf] path-unreachable (anchor-union@{} mode={}): cvc5 proof {} bytes (hash {:016x})",
-                                p, mode, entry_au.proof_bytes.len(), entry_au.cond_hash
-                            );
-                            env.bcf_proofs.push(entry_au);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Loop-suffix-base discharge (additive). When the reject's recorded path
-    // crossed an unrolled bounded loop, re-anchor the goal at the loop exit
-    // (the kernel's bcf_track base) so only the exit branch + post-loop suffix
-    // survive — produces the kernel's post-loop obligation (accepted_entrypoint
-    // 0x11cc) that the pre-loop-anchored discharges above miss. ADDITIVE +
-    // deduped: returns None when the path crossed no loop, so it never drops
-    // another reject's obligation.
-    if loop_suffix_on {
-        if let Some(ok_ls) = crate::refinement::refine_unreachable::try_prove_unreachable_loop_suffix(
-            state, base_pc, prev_insn_pc,
-        ) {
-            let entry_ls = RefineEntry::new(
-                ok_ls.goal_root, ok_ls.sym.exprs, ok_ls.proof_bytes,
-                BCF_BUNDLE_KIND_UNREACHABLE,
-            );
-            if !env.bcf_proofs.iter().any(|e| e.cond_hash == entry_ls.cond_hash) {
-                info!(
-                    target: "app",
-                    "[bcf] path-unreachable (loop-suffix): cvc5 proof {} bytes (hash {:016x})",
-                    entry_ls.proof_bytes.len(), entry_ls.cond_hash
-                );
-                env.bcf_proofs.push(entry_ls);
-            }
-        }
-    }
-
-    // Flag-skip-base discharge (additive). Re-anchors past the loop exit at
-    // the proto-switch "flag" branch's flag-clear (`0==0`) side, dropping the
-    // loop and the flag's `!=0x400` conjunct — produces the kernel's
-    // flag-bypass obligations (accepted_entrypoint 0x2f5796f3… family) that
-    // the loop-suffix + pre-loop discharges miss. ADDITIVE + deduped: returns
-    // None when the path crossed no loop / has no post-loop foldable branch.
-    if flag_skip_on {
-        for ok_fs in crate::refinement::refine_unreachable::try_prove_unreachable_flag_skip_multi(
-            state, base_pc, prev_insn_pc,
-        ) {
-            let entry_fs = RefineEntry::new(
-                ok_fs.goal_root, ok_fs.sym.exprs, ok_fs.proof_bytes,
-                BCF_BUNDLE_KIND_UNREACHABLE,
-            );
-            if !env.bcf_proofs.iter().any(|e| e.cond_hash == entry_fs.cond_hash) {
-                info!(
-                    target: "app",
-                    "[bcf] path-unreachable (flag-skip): cvc5 proof {} bytes (hash {:016x})",
-                    entry_fs.proof_bytes.len(), entry_fs.cond_hash
-                );
-                env.bcf_proofs.push(entry_fs);
-            }
-        }
-    }
-
-    // Loop-entry-base discharge (additive). Re-anchors at a loop-header bound
-    // check on the zero-iteration route, reproducing the kernel's `u>=`-anchored
-    // proto-switch obligations (the second engine-shape family) that flag-skip
-    // (== anchors) and the loop-suffix/pre-loop discharges miss. ADDITIVE +
-    // deduped.
-    if loop_entry_on && !env.loop_exit_branch_pcs.is_empty() {
-        let headers = env.loop_exit_branch_pcs.clone();
-        for ok_le in crate::refinement::refine_unreachable::try_prove_unreachable_loop_entry_multi(
-            state, base_pc, prev_insn_pc, &headers,
-        ) {
-            let entry_le = RefineEntry::new(
-                ok_le.goal_root, ok_le.sym.exprs, ok_le.proof_bytes,
-                BCF_BUNDLE_KIND_UNREACHABLE,
-            );
-            if !env.bcf_proofs.iter().any(|e| e.cond_hash == entry_le.cond_hash) {
-                info!(
-                    target: "app",
-                    "[bcf] path-unreachable (loop-entry): cvc5 proof {} bytes (hash {:016x})",
-                    entry_le.proof_bytes.len(), entry_le.cond_hash
-                );
-                env.bcf_proofs.push(entry_le);
             }
         }
     }
@@ -1218,14 +1048,13 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
         let mut depth = 0;
         while depth < max_ancestor_depth {
             let Some(cur_cid) = cur_cid_opt else { break };
-            let Some(&(cur_pc, cur_idx)) = env.cache_loc_by_id.get(&cur_cid) else { break };
+            // Live-then-retired: an evicted mid-chain ancestor must not
+            // truncate the chain-discharge walk.
             let Some(parent_cid) = env
-                .explored_states
-                .get(&cur_pc)
-                .and_then(|v| v.get(cur_idx))
-                .and_then(|s| s.parent_cache_id)
+                .state_by_cache_id(cur_cid)
+                .and_then(|(_, s)| s.parent_cache_id)
             else { break };
-            let Some(&(ancestor_pc, _)) = env.cache_loc_by_id.get(&parent_cid) else { break };
+            let Some((ancestor_pc, _)) = env.state_by_cache_id(parent_cid) else { break };
             let ancestor_prev_pc = env.cached_prev_insn_pc(parent_cid);
             // Per-ancestor PC-suffix discharges (rewrite + no-rewrite).
             // Register-filtered discharges are PC-independent and emitted
@@ -1269,8 +1098,8 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
             // (ZOVIA_BCF_REPLAY=1). Re-executes from the ancestor's cached
             // state, so the goal is the kernel's exact bcf_track path cond
             // for a replay starting here. Additive + deduped by cond_hash.
-            if std::env::var("ZOVIA_BCF_REPLAY").ok().as_deref() == Some("1") {
-                if let Some(rok) = try_prove_unreachable_via_replay(env, state, parent_cid) {
+            if crate::common::config::bcf_mirror_knob("ZOVIA_BCF_REPLAY", true) {
+                for rok in try_prove_unreachable_via_replay(env, state, parent_cid) {
                     let rentry = RefineEntry::new(
                         rok.goal_root, rok.sym.exprs, rok.proof_bytes,
                         BCF_BUNDLE_KIND_UNREACHABLE,
@@ -1296,6 +1125,6 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     // its own path-unreachable bundle entry (cilium bpf_wireguard
     // pc246 route-B). Scoped to the same suffix base as the
     // path_conds (kernel parents[0..vstate_cnt-1]).
-    crate::analysis::flow::pruning::cache::mark_path_children_unsafe(env, state, base_pc);
+    crate::analysis::flow::pruning::cache::mark_path_children_unsafe(env, state, base_cid_dbg);
     true
 }

@@ -36,6 +36,63 @@ fn is_inf_loop_skip_pc(prog: &Program, pc: usize) -> bool {
     matches!(prog.instrs.get(pc), Some(Instr::Call { .. }))
 }
 
+/// DIAGNOSTIC (ZOVIA_ZHIT): print every prune HIT in insn window 380-910
+/// with a global sequence number, for diffing against the kernel's
+/// [ZK phit] sequence (same window, same fields).
+fn zhit_seq(pc: usize, state: &State, prev: &State) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var("ZOVIA_ZHIT").is_ok()) {
+        return;
+    }
+
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    use crate::analysis::machine::reg::Reg;
+    let r2t = state.types.get(Reg::R2);
+    let r2i = state.domain.get_interval(Reg::R2);
+    let mut diffs = String::new();
+    for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9] {
+        let ci = state.domain.get_interval(r);
+        let pi = prev.domain.get_interval(r);
+        if ci != pi || state.types.get(r) != prev.types.get(r) {
+            diffs.push_str(&format!(
+                " {:?}:cur={:?}[{}..{}]vs prev={:?}[{}..{}]p={}",
+                r, state.types.get(r), ci.0, ci.1,
+                prev.types.get(r), pi.0, pi.1,
+                prev.precise_regs.contains(&r)
+            ));
+        }
+    }
+    eprintln!(
+        "[zhit] seq={} pc={} curR2={:?}[{}..{}] DIFFS:{}",
+        seq, pc, r2t, r2i.0, r2i.1, diffs
+    );
+}
+
+/// DIAGNOSTIC (ZOVIA_DBG_SKIP_PC): tally children_unsafe prune-skips per pc;
+/// dump the top offenders every 50k skips. Finds the cached state(s) whose
+/// children_unsafe marking is collapsing convergence and exploding routes.
+fn dbg_skip_pc(pc: usize) {
+    use std::sync::{Mutex, OnceLock};
+    static ON: OnceLock<bool> = OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var("ZOVIA_DBG_SKIP_PC").is_ok()) {
+        return;
+    }
+    static T: OnceLock<Mutex<(std::collections::HashMap<usize, u64>, u64)>> = OnceLock::new();
+    let m = T.get_or_init(|| Mutex::new((std::collections::HashMap::new(), 0)));
+    let mut g = m.lock().unwrap();
+    *g.0.entry(pc).or_insert(0) += 1;
+    g.1 += 1;
+    if g.1 % 3_000 == 0 {
+        let mut v: Vec<_> = g.0.iter().map(|(&p, &c)| (c, p)).collect();
+        v.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+        let top: Vec<String> = v.iter().take(8).map(|(c, p)| format!("pc{}={}", p, c)).collect();
+        eprintln!("[skip_pc] total={} top: {}", g.1, top.join(" "));
+    }
+}
+
 /// Handle pruning decision at a loop point.
 /// Returns Some(true) to prune, Some(false) to continue, None if no previous states.
 /// Walk cur's `parent_cache_id` lineage and collect the cache_ids of all
@@ -51,12 +108,8 @@ fn collect_ancestor_ids(env: &VerifierEnv, state: &State) -> HashSet<u32> {
             break;
         }
         budget -= 1;
-        match env
-            .cache_loc_by_id
-            .get(&cid)
-            .and_then(|&(p, i)| env.explored_states.get(&p).and_then(|v| v.get(i)))
-        {
-            Some(st) => next = st.parent_cache_id,
+        match env.state_by_cache_id(cid) {
+            Some((_, st)) => next = st.parent_cache_id,
             None => break,
         }
     }
@@ -146,6 +199,7 @@ fn handle_loop_pruning(
         for (i, prev) in prev_states.iter().enumerate() {
             // Kernel children_unsafe (bcf_refine, verifier.c:24580-81).
             if prev.children_unsafe {
+                dbg_skip_pc(pc);
                 continue;
             }
             // SCC force_exact: prev is on the current DFS path iff its
@@ -201,11 +255,10 @@ fn handle_loop_pruning(
             // inf-loop FA-safety is preserved by direction. Validated: FA=0
             // and 0 selftest regressions; calico-19 BCF bundles byte-identical
             // to the prior gated HEAD.
-            let skip_active = prev.dfs_paths > 0 && {
-                let anc = ancestor_ids
-                    .get_or_insert_with(|| collect_ancestor_ids(env, state));
-                prev.cache_id.is_none_or(|cid| anc.contains(&cid))
-            };
+            // Kernel blanket branches>0 gate — see the matching comment in
+            // handle_standard_pruning. (Ancestors-only was a carve-out for
+            // the broken branches accounting, repaired in ee5221c.)
+            let skip_active = prev.branches > 0;
             if skip_active {
                 if crate::analysis::trace_pc_in_range(pc) {
                     eprintln!(
@@ -224,6 +277,7 @@ fn handle_loop_pruning(
             }
             match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
                 Ok(()) => {
+                    zhit_seq(pc, state, prev);
                     if crate::analysis::trace_pc_in_range(pc) {
                         eprintln!(
                             "[SUBSUM_HIT] pc={} prev_idx={} prev.dfs_paths={} force_exact={}",
@@ -330,6 +384,7 @@ fn handle_standard_pruning(
     // widened (unbounded) r7 reaches the access and is rejected. `iter_pc_slot`
     // is populated at every iter_next site by iter_next_fork.
     let iter_next_pc = env.iter_pc_slot.contains_key(&pc);
+    let mut ancestor_ids: Option<HashSet<u32>> = None;
     if let Some(prev_states) = env.explored_states.get(&pc) {
         for (i, prev) in prev_states.iter().enumerate() {
             // Kernel children_unsafe (bcf_refine, verifier.c:24580-81):
@@ -337,6 +392,42 @@ fn handle_standard_pruning(
             // not-prune-safe. Don't let it subsume a later arrival.
             if prev.children_unsafe {
                 local_children_unsafe_skips += 1;
+                dbg_skip_pc(pc);
+                continue;
+            }
+            // Kernel `is_state_visited`: a cached state with branches>0
+            // NEVER subsumes a normal arrival (`if (sl->state.branches)
+            // ... goto miss`, verifier.c v6.15 L19024) — at EVERY prune
+            // point, not just loop heads. Same ancestors-only refinement
+            // as handle_loop_pruning's skip_active (see the long comment
+            // there): a co-active SIBLING under zovia's interleaved
+            // worklist is a state the kernel's strict DFS would have
+            // fully explored, so it may subsume; a true ANCESTOR on
+            // cur's own lineage must not (the kernel's rule — exposed at
+            // the pc18/619 outer-loop heads once slot cleaning became
+            // read-mark-driven: a descendant merged into its own
+            // still-active ancestor 365x where the kernel prunes 6x).
+            // Kernel blanket gate: `if (sl->state.branches) ... goto miss`
+            // — a cached state whose subtree is still in flight NEVER
+            // subsumes a normal arrival, sibling or ancestor. The former
+            // ancestors-only carve-out was tuned under the broken
+            // dense-caching branches accounting (everything looked
+            // permanently active, so a blanket skip skipped everything);
+            // with kernel-shape branches (ee5221c) the blanket gate is
+            // the faithful rule. Divergence this closes (kernel #37/38):
+            // the 584<-521 R1=0 state is added ~100 insns before the
+            // TCP-arm wide-R2 arrival compares at 584; the kernel
+            // silently misses on branches>0 (zero [ZK sv584] compares
+            // against it), zovia's sibling carve-out let the compare run
+            // -> imprecise-R2 free-pass -> the sponge-subtree's R2 died
+            // at 584 instead of reaching 748.
+            if prev.branches > 0 {
+                if crate::analysis::trace_pc_in_range(pc) {
+                    eprintln!(
+                        "[SUBSUM_SKIP_ACTIVE] pc={} prev_idx={} prev.branches={} cache_id={:?} (standard)",
+                        pc, i, prev.branches, prev.cache_id,
+                    );
+                }
                 continue;
             }
             // Kernel-faithful force_exact (see matching block above for
@@ -346,6 +437,7 @@ fn handle_standard_pruning(
                 iter_next_pc || crate::analysis::flow::scc::incomplete_read_marks(env, prev);
             match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
                 Ok(()) => {
+                    zhit_seq(pc, state, prev);
                     hit_idx = Some(i);
                     break;
                 }
@@ -410,31 +502,43 @@ pub fn should_prune(
 ) -> bool {
     let pc = state.pc;
 
-    if std::env::var("ZOVIA_NO_PRUNE").is_ok() {
-        return false;
-    }
-
-    // EXPERIMENT (no_log proto-arm investigation 2026-05-31): windowed
-    // prune-disable. `ZOVIA_NO_PRUNE_WINDOW=lo:hi` suppresses subsumption
-    // for pc in [lo,hi], keeping sibling trajectories (e.g. the proto>5
-    // and proto<=5 arms of the pc506 switch) DISTINCT through that window
-    // so the kernel's per-arm reject discharge (base 530 / hash 78171d)
-    // can be reproduced. Scoped to avoid the pc1190-1330 fan-out E2BIG.
-    if let Ok(w) = std::env::var("ZOVIA_NO_PRUNE_WINDOW") {
-        if let Some((lo, hi)) = w.split_once(':') {
-            if let (Ok(lo), Ok(hi)) = (lo.parse::<usize>(), hi.parse::<usize>()) {
-                if pc >= lo && pc <= hi {
-                    return false;
-                }
-            }
-        }
-    }
-
     env.pruning_stats.should_prune_calls += 1;
+
+    if crate::analysis::trace_pc_in_range(pc) {
+        let nprev = env.explored_states.get(&pc).map(|v| v.len()).unwrap_or(0);
+        eprintln!(
+            "[SP_ENTRY] pc={} nprev={} is_prune_point={}",
+            pc, nprev, is_prune_point(env, pc)
+        );
+    }
 
     if !is_prune_point(env, pc) {
         env.pruning_stats.not_prune_point += 1;
         return false;
+    }
+
+    // Kernel `clean_live_states(env, insn_idx)` — called at the top of
+    // every `is_state_visited`: LAZILY clean any cached state at this pc
+    // whose subtree completed (branches==0) but which was skipped
+    // earlier (e.g. its SCC still had pending backedges at eager-clean
+    // time). Without the retry, states inside a long-running loop SCC
+    // are never cleaned and every later compare runs against the fat
+    // state (from_nat_fib pc2200: 1913 Stack misses vs kernel 76/78
+    // prune rate — the tail-call epilogue explosion).
+    {
+        let to_clean: Vec<u32> = env
+            .explored_states
+            .get(&pc)
+            .map(|v| {
+                v.iter()
+                    .filter(|s| !s.cleaned && s.branches == 0)
+                    .filter_map(|s| s.cache_id)
+                    .collect()
+            })
+            .unwrap_or_default();
+        for cid in to_clean {
+            crate::analysis::flow::pruning::cache::clean_verifier_state(env, cid);
+        }
     }
 
     let is_on_path = state
@@ -472,6 +576,22 @@ pub fn should_prune(
             prog.instrs.get(pc),
             Some(Instr::Call { .. }) | Some(Instr::MayGoto { .. })
         );
+
+    // DIAG (pc521 d53): when this pc is traced and prev cached states
+    // already exist, log the early-decision inputs so we can see WHY a
+    // second arm's subsumption is skipped (the kernel compares here and
+    // keeps ONE state; zovia forms two).
+    if crate::analysis::trace_pc_in_range(pc) {
+        let nprev = env.explored_states.get(&pc).map(|v| v.len()).unwrap_or(0);
+        if nprev > 0 {
+            eprintln!(
+                "[SP_GATE] pc={} nprev={} is_on_path={} in_loop={} force_ckpt={} prune_point={} -> would_skip_onpath={}",
+                pc, nprev, is_on_path, in_loop, pc_is_force_checkpoint,
+                is_prune_point(env, pc),
+                is_on_path && !in_loop && !pc_is_force_checkpoint,
+            );
+        }
+    }
 
     // Re-entry to a PC from a different depth (e.g. repeated call in a loop).
     // Must continue to reach the actual loop back-edge.
@@ -511,20 +631,15 @@ pub fn should_prune(
     // unknown for that frame ⇒ DON'T skip (full compare — the sound
     // direction). Built once (cur's frame shape is fixed; old zips 1:1
     // by callsite).
+    // Kernel `stacksafe` has NO in-compare liveness skip: dead slots are
+    // removed from CACHED states by `clean_verifier_state` (now driven by
+    // the dynamic live-stack marks, see flow::live_stack); an uncleaned
+    // state (branches>0 / pending SCC backedges) is compared in FULL.
+    // The former static-live_slots skip here was an extra merge-enabler
+    // the kernel doesn't have (it hid per-byte slot-kind mismatches the
+    // kernel blocks on — from_nat_fib pc1375 fp-24 ZERO-vs-MISC).
     let nframes = state.frames.depth();
-    let frame_live_slots: Vec<Option<HashSet<i16>>> = (0..nframes)
-        .map(|i| {
-            let fpc = if i + 1 == nframes {
-                pc
-            } else {
-                state
-                    .frames
-                    .get(crate::analysis::machine::frame_stack::FrameLevel::from_index(i + 1))
-                    .return_pc
-            };
-            env.insn_aux_data.get(fpc).map(|a| a.live_slots.clone())
-        })
-        .collect();
+    let frame_live_slots: Vec<Option<HashSet<i16>>> = vec![None; nframes];
 
     // Kernel-faithful infinite-loop trap (verifier.c v6.15 L19114-L19127,
     // `is_state_visited`'s inf-loop check). For any cached state at this
@@ -637,10 +752,8 @@ pub fn should_prune(
                     }
                     steps += 1;
                     cur_anc = env
-                        .cache_loc_by_id
-                        .get(&cid)
-                        .and_then(|(p, i)| env.explored_states.get(p)?.get(*i))
-                        .and_then(|s| s.parent_cache_id);
+                        .state_by_cache_id(cid)
+                        .and_then(|(_, s)| s.parent_cache_id);
                 }
                 found
             };
@@ -651,9 +764,6 @@ pub fn should_prune(
                 continue;
             }
             if iter_active_depths_differ(prev, state) {
-                continue;
-            }
-            if std::env::var("ZOVIA_DISABLE_INF_LOOP_TRAP").ok().as_deref() == Some("1") {
                 continue;
             }
             if state_exact_equal(prev, state) {
@@ -834,19 +944,19 @@ fn record_pruning_misses(env: &mut VerifierEnv, pc: usize, miss_idxs: &[usize]) 
     }
     // Sort descending so removals don't shift later indices.
     to_evict.sort_unstable_by(|a, b| b.cmp(a));
-    // Collect cache_ids of evicted entries for cache_loc_by_id cleanup.
-    let evicted_ids: Vec<u32> = if let Some(states) = env.explored_states.get(&pc) {
-        to_evict
-            .iter()
-            .filter_map(|&i| states.get(i).and_then(|s| s.cache_id))
-            .collect()
-    } else {
-        Vec::new()
-    };
+    // Kernel is_state_visited L20455-64: eviction moves the state to
+    // env->free_list (it stays resolvable through descendants'
+    // st->parent until branches == 0), it is NOT destroyed. Retire the
+    // evicted State objects so parent-chain walks (branches accounting,
+    // bcf backtrack base, children_unsafe marking, replay base fetch)
+    // keep working — destroying them here was the from_l3_fib_no_log
+    // pc222 0x94363000 miss (base state evicted → bcf_suffix_base_pc
+    // None → base-less goal).
+    let mut evicted: Vec<State> = Vec::new();
     if let Some(states) = env.explored_states.get_mut(&pc) {
         for &i in &to_evict {
             if i < states.len() {
-                states.remove(i);
+                evicted.push(states.remove(i));
             }
         }
     }
@@ -857,10 +967,14 @@ fn record_pruning_misses(env: &mut VerifierEnv, pc: usize, miss_idxs: &[usize]) 
             }
         }
     }
-    // cache_loc_by_id cleanup: drop evicted ids, re-index survivors. Same
-    // invariant as the FIFO drain in `merging::record_state`.
-    for id in evicted_ids {
-        env.cache_loc_by_id.remove(&id);
+    // cache_loc_by_id cleanup: drop evicted ids (they resolve through
+    // retired_states from now on), re-index survivors. Same invariant
+    // as the FIFO drain in `merging::record_state`.
+    for s in evicted {
+        if let Some(id) = s.cache_id {
+            env.cache_loc_by_id.remove(&id);
+            env.retire_state(id, pc, s);
+        }
     }
     if let Some(states) = env.explored_states.get(&pc) {
         for (new_idx, s) in states.iter().enumerate() {

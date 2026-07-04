@@ -923,6 +923,14 @@ fn stack_subsumed_by(
     // for consistency: a given old id may map to exactly one cur id
     // across the comparison.
     let mut iter_idmap: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+    // Kernel `stacksafe` per-byte `slot_type` comparison (verifier.c:19708-19762,
+    // the `StackSlotKind` block below). The older model keyed absent bytes as
+    // `STACK_INVALID` but collapsed every PRESENT byte (spill / helper-MISC /
+    // const) to a default `ScalarValue` in `get_slot_type` — so a byte one path
+    // wrote via a helper (`STACK_MISC`) and a byte another path never wrote
+    // (`STACK_INVALID`) looked identical, and the two paths wrongly subsumed
+    // each other (calico from_nat_fib proto-demux pc521 → dropped the sibling's
+    // pc748 obligations). The faithful per-byte kind rule is now unconditional.
     for (frame_i, (old_frame, new_frame)) in
         old.frames.iter().zip(cur.frames.iter()).enumerate()
     {
@@ -963,6 +971,36 @@ fn stack_subsumed_by(
                     continue;
                 }
             }
+
+            // Kernel `stacksafe` per-byte `slot_type` rule (verifier.c v6.15
+            // L19690-L19760). `get_slot_kind` returns `None` for a never-written
+            // byte (`STACK_INVALID`).
+            //   - old == STACK_INVALID  → "explored, doesn't matter": old
+            //     covers any cur, so this byte never blocks the prune.
+            //   - old written, cur == STACK_INVALID → slot_types differ → the
+            //     states are NOT equivalent (this is the from_nat_fib fix: the
+            //     TCP arm wrote `STACK_MISC` at fp-272, the non-TCP arm left it
+            //     `STACK_INVALID`).
+            //   - both written: kinds must match, except a cur `STACK_ZERO`
+            //     satisfies an old `STACK_MISC` (zero is a more-specific misc).
+            //     For MISC/ZERO scalar bytes there is no spilled value to
+            //     compare, so the byte is settled here; only `STACK_SPILL`
+            //     falls through to the reg-level type/precision checks below.
+            {
+                use crate::analysis::machine::stack_state::StackSlotKind::*;
+                match (
+                    old_frame.stack.get_slot_kind(offset),
+                    new_frame.stack.get_slot_kind(offset),
+                ) {
+                    (None, _) => continue,
+                    (Some(_), None) => return false,
+                    (Some(Spill), Some(Spill)) => { /* fall through to reg checks */ }
+                    (Some(Misc), Some(Misc | Zero))
+                    | (Some(Zero), Some(Zero)) => continue,
+                    (Some(_), Some(_)) => return false,
+                }
+            }
+
             let old_ty = old_frame.stack.get_slot_type(offset);
             let new_ty = new_frame.stack.get_slot_type(offset);
             // Stack-specific subsumption is STRICTER than register

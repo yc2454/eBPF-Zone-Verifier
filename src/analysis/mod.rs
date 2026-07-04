@@ -159,6 +159,7 @@ pub fn analyze_program_full(
 
     // Compute liveness information for all registers.
     liveness::compute_liveness(prog, &mut env);
+    flow::live_stack::init(&mut env, prog);
 
     // Compute SCCs over the CFG. Annotates `insn_aux_data[pc].scc_id`
     // (1+ for multi-vertex SCCs / singletons-with-self-edge, 0
@@ -515,6 +516,7 @@ pub fn analyze_exception_cb(
         return Some(VerificationError::CfgError(e));
     }
     liveness::compute_liveness(prog, &mut env);
+    flow::live_stack::init(&mut env, prog);
 
     // Seed initial state at the cb's entry PC. The kernel's
     // `btf_prepare_func_args` produces ARG_ANYTHING for the cookie arg;
@@ -910,6 +912,11 @@ fn run_worklist(
             }
             info!("Pruned state at pc {}", state.pc);
             prune_count += 1;
+            // Kernel process_bpf_exit: `bpf_update_live_stack` at every
+            // path death, BEFORE branch counts drop (so a state cleaned
+            // at branches==0 sees fully propagated read marks).
+            let ls_key = flow::live_stack::callchain_of(&state);
+            flow::live_stack::update_live_stack(env, &ls_key);
             // SCC: this DFS path is done (subsumed by a cached state).
             // Decrement parent.branches up the chain; if a parent's
             // branches hits 0 propagate its loop_entry to its parent.
@@ -932,10 +939,9 @@ fn run_worklist(
         //   (2) Inner: `add_new_state` heuristic (verifier.c v6.15
         //       L18998-L19013): force_new_state || (jmps_delta>=2 &&
         //       insns_delta>=8). Counters are PER-PATH on State.
-        // Default ON in BCF mode (all-faithful mirror, repr-19 19/19
-        // 2026-06-12); kill-switch ZOVIA_KERNEL_ENGINE=0.
-        let kernel_engine = config.kernel_engine
-            || crate::common::config::bcf_mirror_knob("ZOVIA_KERNEL_ENGINE", env.bcf_enabled);
+        // ON in BCF mode (all-faithful mirror, repr-19 19/19 2026-06-12); the
+        // legacy dense-cache path remains for non-BCF mode (selftest baseline).
+        let kernel_engine = config.kernel_engine || env.bcf_enabled;
         let at_prune_point = pruning::widening::is_prune_point(env, state.pc);
         let insn_aux_force = env
             .insn_aux_data
@@ -984,87 +990,52 @@ fn run_worklist(
         let force_new_state = insn_aux_force || long_history;
         let env_heuristic =
             env_jmps_delta >= 2 && env_insns_delta >= 8;
-        let path_heuristic =
-            path_jmps_delta >= 2 && path_insns_delta >= 8;
-        // ZOVIA_KERNEL_ENGINE_AND=1 selects the more-restrictive AND
-        // mode: cache only when BOTH env-wide AND per-path heuristics
-        // fire. Default is OR (either fires) — see commit 61d60ac. AND
-        // mode produces MORE bundle entries (sparser caching → more
-        // exploration paths reach each rejection site). The two modes
-        // produce DIFFERENT entry sets that overlap; running both
-        // passes with ZOVIA_BUNDLE_KEEP=1 (main.rs) merges by hash via
-        // the existing write_bundle dedup. 61d60ac measured 20 unique
-        // entries across AND+OR merge for calico_tc_main, covering all
-        // 9 known kernel discharge hashes.
-        let kernel_engine_and = config.kernel_engine_and
-            || std::env::var("ZOVIA_KERNEL_ENGINE_AND").ok().as_deref() == Some("1");
-        // Kernel-engine (non-AND): env-OR-path. Under linear DFS the kernel's
-        // env-wide counters are effectively per-path between cache events;
-        // zovia's interleaved worklist makes path-only too tight at major
-        // multi-trajectory convergence points (e.g. calico anchor PC 1873,
-        // 9 incoming jumps), where each upstream cache resets the per-path
-        // delta to ~1 → no add_new_state → walker can't land at the
-        // kernel-matched base. OR-mode lets a sibling-inflated env delta
-        // admit the cache. Verified 2026-05-23 to close calico anchor
-        // (-EACCES → 7/7) without regressing c17 from_tnl_debug (6/6).
-        let combined_heuristic = if kernel_engine_and {
-            env_heuristic && path_heuristic
-        } else if kernel_engine {
-            env_heuristic || path_heuristic
-        } else {
-            env_heuristic || path_heuristic
-        };
-        let mut outer_gate = !kernel_engine || at_prune_point;
-        let mut add_new_state = !kernel_engine
+        // Kernel `is_state_visited` add_new_state (verifier.c L20186-20189) is a
+        // SINGLE condition on the env-wide counters:
+        //   jmps_processed - prev_jmps_processed >= 2 && insn_processed - prev >= 8
+        // zovia's worklist is a LIFO stack (push_back + pop_back) = pure DFS,
+        // identical to the kernel's traversal, and `jmps/insn_processed` are
+        // bumped per-insn/per-jmp with `prev_*` reset at each add_new_state
+        // (below) — so `env_heuristic` reproduces the kernel's condition exactly.
+        // (An older `env_heuristic || path_heuristic` OR added a per-path term
+        // justified by a since-disproven "interleaved worklist" claim; the
+        // worklist is not interleaved, so that term over-cached vs the kernel.
+        // Removed along with the AND/OR env knobs.)
+        let outer_gate = !kernel_engine || at_prune_point;
+        let add_new_state = !kernel_engine
             || force_new_state
-            || combined_heuristic;
-        // EXPERIMENT (no_log 618296): force a checkpoint at a specific PC so
-        // the discharge base-walk lands there (kernel has a state boundary at
-        // the pc559 merge → base=559; zovia's sparse caching lands 530).
-        // Comma-separated PC list. Default-off.
-        if let Ok(pcs) = std::env::var("ZOVIA_FORCE_CKPT_PCS") {
-            if pcs.split(',').any(|p| p.trim().parse::<usize>() == Ok(state.pc)) {
-                outer_gate = true;
-                add_new_state = true;
-            }
-        }
-        // GENERAL per-arrival caching at jmp_points (no_log lean-bundle,
-        // 2026-05-30): the kernel runs is_state_visited at EVERY arrival at a
-        // prune point and caches each non-subsumed state — so a CFG merge
-        // (jmp_point: branch target / post-call fallthrough) accumulates one
-        // cached state per distinct arrival arm (proto≤5/==6/≥7/==0x11 at the
-        // pc559 merge). zovia's add_new_state delta-heuristic is more
-        // conservative and skips most of these, so the discharge base-walk
-        // can't anchor per-arrival → it needed the ZOVIA_FORCE_CKPT_PCS hack.
-        // This generalizes that: force a checkpoint at every jmp_point so the
-        // faithful-base walk lands on the right per-arrival cache. Subsumption
-        // still dedups equal arrivals, so the cache count is bounded by the
-        // kernel's per-merge state count. Gated; pairs with FAITHFUL_BASE.
-        if std::env::var("ZOVIA_BCF_CACHE_AT_JMP_POINTS").ok().as_deref() == Some("1")
-            && env
-                .insn_aux_data
-                .get(state.pc)
-                .map(|a| a.jmp_point)
-                .unwrap_or(false)
-        {
-            outer_gate = true;
-            add_new_state = true;
-        }
+            || env_heuristic;
         if outer_gate && add_new_state {
             let cache_id =
                 merging::record_state(env, state.clone(), config.max_states_per_pc);
             if trace_pc_in_range(state.pc) {
                 let n_cached = env.explored_states.get(&state.pc).map(|v| v.len()).unwrap_or(0);
                 eprintln!(
-                    "[TRACE] CACHE pc={} -> cache_id={} parent={:?} (n_now={}, force_new={} env_jd={} env_id={} path_jd={} path_id={} jmp_hist={} env_h={} path_h={} combined={} outer_gate={})",
+                    "[TRACE] CACHE pc={} -> cache_id={} parent={:?} (n_now={}, force_new={} env_jd={} env_id={} path_jd={} path_id={} jmp_hist={} env_h={} outer_gate={})",
                     state.pc, cache_id, state.parent_cache_id, n_cached,
                     force_new_state, env_jmps_delta, env_insns_delta, path_jmps_delta, path_insns_delta,
                     state.jmp_history_cnt,
-                    env_heuristic, path_heuristic, combined_heuristic,
+                    env_heuristic,
                     outer_gate,
                 );
             }
+            // PHASE-1 VALIDATION (ZOVIA_DUMP_STATE_RANGE): the cached state's
+            // faithful (insn_idx, first, last) — compare to box #15 [ZK refine]
+            // base_insn/base_first/base_last. state.first_insn_idx here is still
+            // the CACHED (pre-reset) value; the reset below is for the successor.
+            if std::env::var("ZOVIA_DUMP_STATE_RANGE").ok().as_deref() == Some("1") {
+                eprintln!(
+                    "[srange] cid={} insn_idx={} first={} last={}",
+                    cache_id, state.pc, state.first_insn_idx, state.last_insn_idx
+                );
+            }
             state.parent_cache_id = Some(cache_id);
+            // Kernel `cur->first_insn_idx = insn_idx` (verifier.c:20529): the
+            // continuing state begins a NEW segment at this checkpoint pc. The
+            // cached clone above keeps the PRIOR segment start (copy_verifier_state
+            // :2073). last_insn_idx is unchanged (it's the arrival pc, set on
+            // this state at successor-creation).
+            state.first_insn_idx = state.pc;
             env.prev_jmps_processed = env.jmps_processed;
             env.prev_insn_processed = env.insn_processed;
             state.prev_jmp_at_cache = state.path_jmp_count;
@@ -1084,11 +1055,11 @@ fn run_worklist(
             state.jmp_history_cnt = 0;
         } else if trace_pc_in_range(state.pc) {
             eprintln!(
-                "[TRACE] NOCACHE pc={} parent={:?} (force_new={} env_jd={} env_id={} path_jd={} path_id={} jmp_hist={} env_h={} path_h={} combined={} outer_gate={})",
+                "[TRACE] NOCACHE pc={} parent={:?} (force_new={} env_jd={} env_id={} path_jd={} path_id={} jmp_hist={} env_h={} outer_gate={})",
                 state.pc, state.parent_cache_id,
                 force_new_state, env_jmps_delta, env_insns_delta, path_jmps_delta, path_insns_delta,
                 state.jmp_history_cnt,
-                env_heuristic, path_heuristic, combined_heuristic,
+                env_heuristic,
                 outer_gate,
             );
         }
@@ -1218,6 +1189,10 @@ fn run_worklist(
         // SCC: save fields needed after `state` is moved into transfer.
         let cur_dfs_depth = state.dfs_depth;
         let cur_parent_cache_id = state.parent_cache_id;
+        // Kernel `env->insn_idx` for this step: each successor arrives FROM
+        // this pc, so its `last_insn_idx` = this pc (verifier.c:21049
+        // `state->last_insn_idx = env->prev_insn_idx`).
+        let cur_insn_pc = state.pc;
         state.domain.set_current_pc(state.pc);
         // Kernel `env->jmps_processed++` (verifier.c L19553): bump on
         // JMP-class insn for the add_new_state sparse-cache heuristic.
@@ -1233,7 +1208,14 @@ fn run_worklist(
             env.jmps_processed += 1;
             state.path_jmp_count = state.path_jmp_count.saturating_add(1);
         }
+        // Kernel do_check: `bpf_reset_stack_write_marks(env, insn_idx)`
+        // before do_check_insn, `bpf_commit_stack_write_marks` after.
+        // The callchain snapshot also serves the path-death
+        // `bpf_update_live_stack` below (state is moved into transfer).
+        let ls_key = flow::live_stack::callchain_of(&state);
+        flow::live_stack::reset_stack_write_marks(env, &state, state.pc);
         let mut successors = transfer::transfer(env, state, instr);
+        flow::live_stack::commit_stack_write_marks(env);
         if diag_hit {
             let succ_dump: Vec<String> = successors
                 .iter()
@@ -1307,16 +1289,17 @@ fn run_worklist(
         // gives sibling arms anchor recency-locality at loop heads (see
         // get_branch_snapshot triage: the deferral lets every arm-variant
         // of an iteration seed its own forward re-exploration before any
-        // back-edge pops → quadratic redundant paths). Default ON in BCF
-        // mode (all-faithful mirror); base mode keeps the deferral
-        // (selftest baseline) — kill-switch =0 / force-on =1.
-        let kernel_push_order =
-            crate::common::config::bcf_mirror_knob("ZOVIA_KERNEL_PUSH_ORDER", env.bcf_enabled);
+        // back-edge pops → quadratic redundant paths). ON in BCF mode
+        // (all-faithful mirror); base mode keeps the deferral (selftest baseline).
+        let kernel_push_order = env.bcf_enabled;
         let mut loop_back = Vec::new();
         let mut other = Vec::new();
         let succ_count = successors.len();
         for mut succ in successors.into_iter() {
             succ.history_idx = current_step_idx;
+            // Kernel `state->last_insn_idx = env->prev_insn_idx` (verifier.c:21049):
+            // this successor arrived from the instruction just processed.
+            succ.last_insn_idx = cur_insn_pc;
             // SCC: child inherits its DFS depth from parent + 1, and its
             // initial branches=1 (this one in-flight path through succ).
             // The parent's branches gets bumped once per pushed successor
@@ -1347,16 +1330,21 @@ fn run_worklist(
         // trap gate (`prev.dfs_paths == 0` skip).
         if succ_count > 0
             && let Some(pcid) = cur_parent_cache_id
-            && let Some(&(ppc, pidx)) = env.cache_loc_by_id.get(&pcid)
-            && let Some(p) = env.explored_states.get_mut(&ppc).and_then(|v| v.get_mut(pidx))
+            && let Some((_, p)) = env.state_by_cache_id_mut(pcid)
         {
-            p.branches = p.branches.saturating_add(succ_count as u32);
+            // Kernel push_stack: only the EXTRA fork alternatives bump
+            // the checkpoint's branches — the continuing path was
+            // already counted (branches=1 at record_state). Straight-
+            // line pops (succ_count==1) add nothing.
             if succ_count > 1 {
+                p.branches = p.branches.saturating_add((succ_count - 1) as u32);
                 p.dfs_paths = p.dfs_paths.saturating_add((succ_count - 1) as u32);
             }
         }
         if succ_count == 0 {
             // No successors (e.g. Exit): this DFS path terminated.
+            // Kernel process_bpf_exit: propagate live-stack marks first.
+            flow::live_stack::update_live_stack(env, &ls_key);
             // Decrement parent chain analogously to the prune-hit path.
             crate::analysis::flow::scc::complete_dfs_branch(env, cur_parent_cache_id);
         }

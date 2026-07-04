@@ -64,7 +64,7 @@ fn try_bcf_refine_stack(
     env.bcf_proofs.push(entry);
     // Mirror kernel `bcf_refine` parent-marking (verifier.c:24904-24921);
     // see the matching block in `memory/map.rs::try_bcf_refine_map`.
-    crate::analysis::flow::pruning::cache::mark_path_children_unsafe(env, state, base_pc);
+    crate::analysis::flow::pruning::cache::mark_path_children_unsafe(env, state, landed.map(|(_, cid)| cid));
     true
 }
 
@@ -120,6 +120,20 @@ pub fn check_stack_access(
                 return;
             }
 
+            // Kernel `bpf_mark_stack_read` (verifier.c:3877 fills /
+            // :8651 helper mem args): record the exact slots this READ
+            // touches under the current callchain. Writes are marked at
+            // the store transfer (full-slot gate).
+            if !matches!(kind, AccessKind::Write) {
+                let mask = crate::analysis::flow::live_stack::slot_mask(actual_offset, size);
+                crate::analysis::flow::live_stack::mark_stack_read(
+                    env,
+                    state,
+                    pointer_frame_lv.index(),
+                    pc,
+                    mask,
+                );
+            }
             check_stack_initialization(env, stack_being_accessed, kind, actual_offset, size, pc);
         }
         None => {
@@ -148,6 +162,22 @@ pub fn check_stack_access(
                 return;
             }
 
+            // Kernel variable-offset stack read (verifier.c:5868):
+            // mark every slot the access might touch.
+            if !matches!(kind, AccessKind::Write) && lo != i64::MIN && hi != i64::MAX {
+                let span = (hi - lo) + size;
+                let mask = crate::analysis::flow::live_stack::slot_mask(
+                    lo + instruction_offset,
+                    span,
+                );
+                crate::analysis::flow::live_stack::mark_stack_read(
+                    env,
+                    state,
+                    pointer_frame_lv.index(),
+                    pc,
+                    mask,
+                );
+            }
             if lo != i64::MIN && hi != i64::MAX {
                 for off_candidate in lo..=hi {
                     let actual_offset = off_candidate + instruction_offset;

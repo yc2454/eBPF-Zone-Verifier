@@ -147,6 +147,61 @@ pub fn cvc5_path() -> Result<PathBuf> {
 /// Returns `Err(NotUnsat)` if cvc5 reported `sat` or `unknown` — i.e., the
 /// refinement condition isn't unsat, so the program isn't safe.
 pub fn solve(smtlib: &str) -> Result<Vec<u8>> {
+    // Memo cache: `solve` is a pure function of the SMT-LIB text, and the
+    // profile shows verification wall-time is dominated by cvc5 process
+    // spawns (82% of main-thread samples in poll/posix_spawn on
+    // from_nat_fib). Kernel-parity exploration re-derives the SAME goal at
+    // many states (per-arm/per-path discharges of identical conditions),
+    // so identical queries repeat heavily. Cache BOTH directions: unsat
+    // proof bytes and NotUnsat verdicts (sat/unknown gate path-unreachable
+    // decisions and repeat just as much). Keyed by the full query text —
+    // no hash-collision risk on proof reuse. Infra-only: same input, same
+    // output, no verifier-behavior change.
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Mutex, OnceLock};
+    static MEMO: OnceLock<Mutex<HashMap<String, std::result::Result<Vec<u8>, String>>>> =
+        OnceLock::new();
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    static HITS: AtomicUsize = AtomicUsize::new(0);
+    let calls = CALLS.fetch_add(1, Ordering::Relaxed) + 1;
+    let memo = MEMO.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(cached) = memo.lock().unwrap().get(smtlib) {
+        let hits = HITS.fetch_add(1, Ordering::Relaxed) + 1;
+        if std::env::var("ZOVIA_SOLVER_STATS").is_ok() && hits % 500 == 0 {
+            eprintln!("[solver] calls={} memo_hits={}", calls, hits);
+        }
+        return match cached {
+            Ok(bytes) => Ok(bytes.clone()),
+            Err(msg) => Err(SolverError::NotUnsat(msg.clone())),
+        };
+    }
+    if std::env::var("ZOVIA_SOLVER_STATS").is_ok() && calls % 500 == 0 {
+        eprintln!(
+            "[solver] calls={} memo_hits={}",
+            calls,
+            HITS.load(Ordering::Relaxed)
+        );
+    }
+    let outcome = solve_uncached(smtlib);
+    match &outcome {
+        Ok(bytes) => {
+            memo.lock()
+                .unwrap()
+                .insert(smtlib.to_string(), Ok(bytes.clone()));
+        }
+        Err(SolverError::NotUnsat(msg)) => {
+            memo.lock()
+                .unwrap()
+                .insert(smtlib.to_string(), Err(msg.clone()));
+        }
+        // Io / SolverFailed / CvcBinaryMissing are environmental — don't cache.
+        Err(_) => {}
+    }
+    outcome
+}
+
+fn solve_uncached(smtlib: &str) -> Result<Vec<u8>> {
     let cvc5 = cvc5_path()?;
 
     // Write SMT-LIB and proof bytes to a per-call temp dir we own end-to-end.

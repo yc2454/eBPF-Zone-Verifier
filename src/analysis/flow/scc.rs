@@ -343,18 +343,13 @@ pub fn maybe_enter_scc(env: &mut VerifierEnv, state: &State, cid: u32) {
 /// visit.
 ///
 pub fn maybe_exit_scc(env: &mut VerifierEnv, cid: u32) {
-    // Identify the callchain belonging to `cid`'s cached state.
-    let Some(&(pc, idx)) = env.cache_loc_by_id.get(&cid) else {
-        return;
-    };
+    // Identify the callchain belonging to `cid`'s cached state
+    // (live-then-retired: the kernel calls maybe_exit_scc on any state
+    // whose branches hit 0, including free_list ones).
     // Snapshot the State so we can compute the callchain without
     // holding a long mutable borrow.
-    let state_snapshot = match env
-        .explored_states
-        .get(&pc)
-        .and_then(|v| v.get(idx))
-    {
-        Some(s) => s.clone(),
+    let state_snapshot = match env.state_by_cache_id(cid) {
+        Some((_, s)) => s.clone(),
         None => return,
     };
     let Some(callchain) =
@@ -387,16 +382,10 @@ pub fn maybe_exit_scc(env: &mut VerifierEnv, cid: u32) {
     for _ in 0..MAX_BACKEDGE_ITERS {
         let mut changed = false;
         for be in &backedges {
-            // Look up equal_state by cache_id; if evicted, skip
-            // this backedge.
-            let Some(&(epc, eidx)) = env.cache_loc_by_id.get(&be.equal_state_cache_id) else {
-                continue;
-            };
+            // Look up equal_state by cache_id (live-then-retired).
             let Some(equal_state) = env
-                .explored_states
-                .get(&epc)
-                .and_then(|v| v.get(eidx))
-                .cloned()
+                .state_by_cache_id(be.equal_state_cache_id)
+                .map(|(_, s)| s.clone())
             else {
                 continue;
             };
@@ -457,10 +446,7 @@ pub fn add_scc_backedge(
     // The kernel keys add_scc_backedge on `sl->state` (the cached
     // state we hit against) — same callchain as cur because both
     // are in the same SCC visit instance.
-    let Some(&(epc, eidx)) = env.cache_loc_by_id.get(&equal_state_cache_id) else {
-        return;
-    };
-    let Some(equal_state) = env.explored_states.get(&epc).and_then(|v| v.get(eidx)) else {
+    let Some((_, equal_state)) = env.state_by_cache_id(equal_state_cache_id) else {
         return;
     };
     let Some(callchain) =
@@ -486,8 +472,7 @@ pub fn add_scc_backedge(
 /// without holding a borrow on env.explored_states. Returns None if
 /// the cache_id has been evicted.
 fn cached_scc_info(env: &VerifierEnv, cid: u32) -> Option<(u32, u32, Option<u32>)> {
-    let &(pc, idx) = env.cache_loc_by_id.get(&cid)?;
-    let st = env.explored_states.get(&pc)?.get(idx)?;
+    let (_, st) = env.state_by_cache_id(cid)?;
     Some((st.branches, st.dfs_depth, st.loop_entry_cache_id))
 }
 
@@ -558,10 +543,9 @@ pub fn complete_dfs_branch(env: &mut VerifierEnv, start_cache_id: Option<u32>) {
             break;
         }
         budget -= 1;
-        let Some(&(pc, idx)) = env.cache_loc_by_id.get(&cid) else {
-            break;
-        };
-        let Some(st) = env.explored_states.get_mut(&pc).and_then(|v| v.get_mut(idx)) else {
+        // Resolve live-then-retired: kernel update_branch_counts walks
+        // st->parent pointers, which include free_list (evicted) states.
+        let Some((_, st)) = env.state_by_cache_id_mut(cid) else {
             break;
         };
         if st.branches > 0 {
@@ -591,21 +575,20 @@ pub fn complete_dfs_branch(env: &mut VerifierEnv, start_cache_id: Option<u32>) {
             // list is empty; this is a no-op. Step 3 wires
             // propagate_backedges into maybe_exit_scc proper.
             maybe_exit_scc(env, cid);
+            // Kernel update_branch_counts: `if (sl) maybe_free_verifier_state`
+            // — a retired (free_list) state whose last live descendant
+            // just completed is freed now.
+            env.maybe_free_retired(cid);
         }
         if still_open {
             // Other DFS paths through this parent still open ⇒ stop.
             // Still propagate the loop_entry hint if applicable.
             if let (Some(le), Some(parent_cid)) = (st_loop_entry, st_parent) {
                 // Read le's info first (immutable borrow), then mutate
-                // parent record. Cloning the &(ppc,pidx) tuple makes
-                // the lookup borrow short.
+                // parent record (live-then-retired resolution).
                 let hdr_info = cached_scc_info(env, le);
-                let parent_loc = env.cache_loc_by_id.get(&parent_cid).copied();
-                if let (Some((hbr, hd, _)), Some((ppc, pidx))) = (hdr_info, parent_loc)
-                    && let Some(p) = env
-                        .explored_states
-                        .get_mut(&ppc)
-                        .and_then(|v| v.get_mut(pidx))
+                if let Some((hbr, hd, _)) = hdr_info
+                    && let Some((_, p)) = env.state_by_cache_id_mut(parent_cid)
                 {
                     let p_eff_depth = match p.loop_entry_cache_id {
                         Some(_) => p.dfs_depth, // approximation; chain-walk skipped to avoid re-borrow

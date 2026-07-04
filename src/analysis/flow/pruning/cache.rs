@@ -44,6 +44,25 @@ use crate::analysis::machine::state::State;
 ///
 /// Idempotent: skipped on already-cleaned states (kernel L19542
 /// `sl->state.cleaned` guard).
+/// DIAGNOSTIC (ZOVIA_CLEAN_STATS): [0]=cleaned [1]=skipped-incomplete.
+pub fn clean_stat(which: usize) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var("ZOVIA_CLEAN_STATS").is_ok()) {
+        return;
+    }
+    static C: [AtomicU64; 2] = [AtomicU64::new(0), AtomicU64::new(0)];
+    let n = C[which].fetch_add(1, Ordering::Relaxed) + 1;
+    if n % 500 == 0 || n == 1 {
+        eprintln!(
+            "[clean_stats] cleaned={} skipped_incomplete={}",
+            C[0].load(Ordering::Relaxed),
+            C[1].load(Ordering::Relaxed)
+        );
+    }
+}
+
 pub fn clean_verifier_state(env: &mut VerifierEnv, cid: u32) {
     let Some(&(pc, idx)) = env.cache_loc_by_id.get(&cid) else {
         return;
@@ -52,15 +71,22 @@ pub fn clean_verifier_state(env: &mut VerifierEnv, cid: u32) {
     // Snapshot the frame ips + their live sets BEFORE taking the
     // mutable borrow on explored_states (insn_aux_data lookup
     // borrows env immutably).
-    let frame_ips: Vec<usize> = {
+    let (frame_ips, ls_key, st_pc): (Vec<usize>, Vec<usize>, usize) = {
         let Some(st) = env.explored_states.get(&pc).and_then(|v| v.get(idx)) else {
             return;
         };
         if st.cleaned {
             return;
         }
+        // Kernel `clean_live_states` gate: a state whose SCC has pending
+        // backedges has incomplete read marks — don't clean it yet.
+        if crate::analysis::flow::scc::incomplete_read_marks(env, st) {
+            clean_stat(1);
+            return;
+        }
+        clean_stat(0);
         let n = st.frames.depth();
-        (0..n)
+        let ips = (0..n)
             .map(|i| {
                 if i + 1 == n {
                     st.pc
@@ -70,13 +96,28 @@ pub fn clean_verifier_state(env: &mut VerifierEnv, cid: u32) {
                         .return_pc
                 }
             })
-            .collect()
+            .collect();
+        (ips, crate::analysis::flow::live_stack::callchain_of(st), st.pc)
     };
-    let frame_live: Vec<(HashSet<Reg>, HashSet<i16>)> = frame_ips
+    // Registers stay on the STATIC live_regs (kernel `live_regs_before`,
+    // compute_live_registers). Stack slots use the DYNAMIC live-stack
+    // marks (kernel bpf_live_stack_query_init + bpf_stack_slot_alive).
+    let frame_live: Vec<(HashSet<Reg>, u64)> = frame_ips
         .iter()
-        .map(|&fip| match env.insn_aux_data.get(fip) {
-            Some(aux) => (aux.live_regs.clone(), aux.live_slots.clone()),
-            None => (HashSet::new(), HashSet::new()),
+        .enumerate()
+        .map(|(fi, &fip)| {
+            let regs = env
+                .insn_aux_data
+                .get(fip)
+                .map(|a| a.live_regs.clone())
+                .unwrap_or_default();
+            let alive = crate::analysis::flow::live_stack::frame_alive_mask(
+                &env.live_stack,
+                &ls_key,
+                st_pc,
+                fi,
+            );
+            (regs, alive)
         })
         .collect();
 
@@ -111,15 +152,20 @@ pub fn clean_verifier_state(env: &mut VerifierEnv, cid: u32) {
             }
         }
     }
-    for (i, (live_regs, live_slots)) in frame_live.iter().enumerate() {
+    for (i, (live_regs, alive_mask)) in frame_live.iter().enumerate() {
         let level = FrameLevel::from_index(i);
         let frame = st.frames.get_mut(level);
-        // Slot clean.
+        // Slot clean: a byte is dead iff its 8-byte slot (spi) is not
+        // alive per the dynamic live-stack query.
         let off_to_clean: Vec<i16> = frame
             .stack
             .slot_offsets()
             .into_iter()
-            .filter(|off| !live_slots.contains(off))
+            .filter(|&off| {
+                crate::analysis::flow::live_stack::spi_of(off as i64)
+                    .map(|spi| alive_mask & (1u64 << spi) == 0)
+                    .unwrap_or(false)
+            })
             .filter(|&off| {
                 if let Some(slot) = frame.stack.get_slot(off) {
                     slot.iterator.is_none()
@@ -212,20 +258,25 @@ pub fn clean_verifier_state(env: &mut VerifierEnv, cid: u32) {
 /// suppresses pruning and explodes route enumeration. `None`
 /// (kernel `backtrack_states` -EFAULT keep-all) means no lower
 /// bound — mark the whole lineage (conservative).
-pub fn mark_path_children_unsafe(env: &mut VerifierEnv, cur: &State, base_pc: Option<usize>) {
+/// Kernel `bcf_refine` marks `parents[0..vstate_cnt-1]` children_unsafe
+/// (verifier.c:24684): the state chain `cur->parent .. st`, EXCLUDING
+/// `base = st->parent`. zovia's `parent_cache_id` chain IS that checkpoint
+/// chain, so this walks it from `cur.parent_cache_id` up to (but not
+/// including) `base_cache_id` and marks each cached state. This is the
+/// FAITHFUL bound — a bounded state chain, not a pc window — replacing the
+/// EXCLUDE_BASE / DEEP_UNSAFE / bcidx pc-bound approximations (which either
+/// under-marked, missing d53's pc521-covering states, or over-marked
+/// "everything below pc146", causing the pc274 re-exploration blowup).
+/// `base_cache_id == None` ⇒ backtrack didn't find a base (bt never emptied)
+/// ⇒ kernel marks the whole chain to entry; we do the same.
+pub fn mark_path_children_unsafe(
+    env: &mut VerifierEnv,
+    cur: &State,
+    base_cache_id: Option<u32>,
+) {
     let mut id = cur.parent_cache_id;
     let mut budget: usize = 16_384;
     let dump = std::env::var("ZOVIA_DUMP_DISCHARGE").ok().as_deref() == Some("1");
-    // EXPERIMENT (structural distinguisher): do not mark loop-header
-    // states children_unsafe. A loop header is a back-edge target — the
-    // state cached there is the loop's wide convergence subsumer. The
-    // kernel rebuilds it on each BCF retry; zovia's one-shot cascade
-    // would permanently invalidate it, collapsing the only state that
-    // subsumes the loop's R1×R8×R9 fan (accepted_entrypoint pc-170 OOM).
-    // calico_tc_main marks the same loop region but doesn't depend on it
-    // for coverage (its route obligations are straight-line, high-pc).
-    let skip_loop_hdr =
-        std::env::var("ZOVIA_EXP_SKIP_LOOP_HEADER_UNSAFE").ok().as_deref() == Some("1");
     let mut marked = 0usize;
     let mut first_pc: Option<usize> = None;
     let mut last_pc: Option<usize> = None;
@@ -234,45 +285,38 @@ pub fn mark_path_children_unsafe(env: &mut VerifierEnv, cur: &State, base_pc: Op
             break;
         }
         budget -= 1;
-        let Some(&(pc, idx)) = env.cache_loc_by_id.get(&cid) else {
+        // Stop AT the base (excluded) — kernel's `parents[0..vstate_cnt-1]`.
+        if Some(cid) == base_cache_id {
+            break;
+        }
+        // Live-then-retired: an evicted mid-chain ancestor must not
+        // truncate the walk (kernel parents[] are pointers — free_list
+        // membership is invisible to the marking loop). Marking a
+        // retired state is a no-op for pruning (it's out of the
+        // candidate lists) but the walk continues to live ancestors.
+        let Some((pc, s)) = env.state_by_cache_id_mut(cid) else {
             break;
         };
-        if let Some(bp) = base_pc
-            && pc < bp
-        {
-            // Past the backtrack suffix base — kernel parents[]
-            // span only the suffix; stop here.
-            break;
+        let parent = s.parent_cache_id;
+        // Kernel marks unconditionally (idempotent); walk continues past
+        // already-marked states to reach the base each time.
+        if !s.children_unsafe {
+            s.children_unsafe = true;
+            marked += 1;
+            if first_pc.is_none() {
+                first_pc = Some(pc);
+            }
+            last_pc = Some(pc);
+            if crate::analysis::trace_pc_in_range(pc) {
+                eprintln!("[disc-mark] pc={} cid={}", pc, cid);
+            }
         }
-        let Some(s) = env
-            .explored_states
-            .get_mut(&pc)
-            .and_then(|v| v.get_mut(idx))
-        else {
-            break;
-        };
-        if s.children_unsafe {
-            // Already marked: this prefix (and its ancestors) was
-            // marked by an earlier path-unreachable on the same
-            // lineage — stop, the rest is already done.
-            break;
-        }
-        if skip_loop_hdr && env.loop_header_pcs.contains(&pc) {
-            // EXPERIMENT: protect the loop-convergence subsumer; keep
-            // walking ancestors (the suffix continues past it).
-            id = s.parent_cache_id;
-            continue;
-        }
-        s.children_unsafe = true;
-        marked += 1;
-        if first_pc.is_none() { first_pc = Some(pc); }
-        last_pc = Some(pc);
-        id = s.parent_cache_id;
+        id = parent;
     }
     if dump {
         eprintln!(
-            "[disc] marked {} ancestors  pc=[{:?}..{:?}]  base_pc={:?}",
-            marked, last_pc, first_pc, base_pc
+            "[disc] marked {} ancestors  pc=[{:?}..{:?}]  base_cid={:?}",
+            marked, last_pc, first_pc, base_cache_id
         );
     }
 }

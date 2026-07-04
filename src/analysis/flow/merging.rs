@@ -89,12 +89,19 @@ pub fn record_state(
     let cache_id = env.next_cache_id;
     env.next_cache_id = env.next_cache_id.wrapping_add(1);
     state.cache_id = Some(cache_id);
-    // SCC bookkeeping: on cache, branches starts at 0 (no children yet
-    // pushed). dfs_depth was already set when the state was created (at
-    // worklist push time, parent.dfs_depth + 1). loop_entry inherited
-    // from the worklist state — typically None unless a back-edge
-    // detected on the way here.
-    state.branches = 0;
+    // SCC bookkeeping: kernel `add_new_state` invariant — a freshly
+    // cached state has branches == 1, the single in-flight path that
+    // just checkpointed here (verifier.c asserts exactly this:
+    // "verifier_bug_if(new->branches != 1)"). Forks under it add ONLY
+    // the extra alternatives (succ_count - 1, kernel push_stack); every
+    // path death decrements one (update_branch_counts). The old
+    // `branches = 0` + per-pop `+= succ_count` accounting inflated the
+    // counter by one per straight-line instruction in sparse-caching
+    // mode, so branches almost never returned to 0 and
+    // clean_verifier_state / maybe_exit_scc effectively NEVER ran
+    // (measured: 1 clean in a whole from_nat_fib run vs the kernel
+    // cleaning every completed state).
+    state.branches = 1;
     // Kernel-faithful "open paths" counter, parallel to `branches`. Init
     // 1 = the single in-flight cur path that just hit this checkpoint.
     // See State::dfs_paths doc comment for full semantics.
@@ -118,6 +125,21 @@ pub fn record_state(
 
     let states = env.explored_states.entry(pc).or_default();
     let idx = states.len();
+    if crate::analysis::trace_pc_in_range(pc) {
+        use crate::analysis::machine::reg::Reg;
+        let r1t = state.types.get(Reg::R1);
+        let r1i = state.domain.get_interval(Reg::R1);
+        let r2t = state.types.get(Reg::R2);
+        let r2i = state.domain.get_interval(Reg::R2);
+        let r0t = state.types.get(Reg::R0);
+        let r9t = state.types.get(Reg::R9);
+        let r9i = state.domain.get_interval(Reg::R9);
+        eprintln!(
+            "[cache] pc={} idx={} cid={} parent={:?} r0={:?} r1={:?}[{}..{}] r2={:?}[{}..{}] r9={:?}[{}..{}]",
+            pc, idx, cache_id, state.parent_cache_id, r0t, r1t, r1i.0, r1i.1, r2t, r2i.0, r2i.1,
+            r9t, r9i.0, r9i.1
+        );
+    }
     states.push(state);
     env.cache_loc_by_id.insert(cache_id, (pc, idx));
 
@@ -135,22 +157,24 @@ pub fn record_state(
     // surviving entries shift left by `excess`, so update their idx.
     if max_states_per_pc > 0 && states.len() > max_states_per_pc {
         let excess = states.len() - max_states_per_pc;
-        // Collect cache_ids of evicted (front) and surviving entries.
-        let evicted_ids: Vec<u32> = states
-            .iter()
-            .take(excess)
-            .filter_map(|s| s.cache_id)
-            .collect();
         let surviving_ids: Vec<u32> = states
             .iter()
             .skip(excess)
             .filter_map(|s| s.cache_id)
             .collect();
         env.cache_evictions += excess as u64;
-        states.drain(0..excess);
+        // Kernel free_list semantics: evicted states leave the pruning
+        // list but stay resolvable via `parent_cache_id` chains until
+        // `branches == 0` (env.retire_state). Destroying them here
+        // dangles branches accounting / bcf backtrack bases /
+        // children_unsafe marking.
+        let evicted: Vec<State> = states.drain(0..excess).collect();
         metrics.drain(0..excess);
-        for id in evicted_ids {
-            env.cache_loc_by_id.remove(&id);
+        for s in evicted {
+            if let Some(id) = s.cache_id {
+                env.cache_loc_by_id.remove(&id);
+                env.retire_state(id, pc, s);
+            }
         }
         for (new_idx, id) in surviving_ids.iter().enumerate() {
             env.cache_loc_by_id.insert(*id, (pc, new_idx));
