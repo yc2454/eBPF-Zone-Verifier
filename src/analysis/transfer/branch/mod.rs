@@ -837,6 +837,7 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     // reconstruction discharge (merge dedups by cond_hash). Pairs with
     // ZOVIA_BCF_REPLAY_FIRSTREF (also default-ON) for kernel-faithful first-ref
     // bound emission.
+    let mut replay_goals_produced: usize = 0;
     if crate::common::config::bcf_mirror_knob("ZOVIA_BCF_REPLAY", true) {
         if std::env::var("ZOVIA_BCF_REPLAY_DEBUG").ok().as_deref() == Some("1") {
             eprintln!("[replay] CALL reject@pc={} base_cid={:?}", state.pc, base_cid_dbg);
@@ -852,6 +853,7 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
                 if std::env::var("ZOVIA_BCF_REPLAY_DEBUG").ok().as_deref() == Some("1") {
                     eprintln!("[replay] HASH reject@pc={} hash={:016x}", state.pc, rentry.cond_hash);
                 }
+                replay_goals_produced += 1;
                 let dup = env.bcf_proofs.iter().any(|e| e.cond_hash == rentry.cond_hash);
                 census_log("replay_base", state.pc, -1, rung, rentry.cond_hash, dup);
                 if dup {
@@ -889,13 +891,7 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
         // Lean mode: the natural prove above still gates the return value
         // (and thus parent marking) exactly as before, but its entry and all
         // reconstruction twins below stay out of the bundle; the ancestor
-        // walk runs only the depth-0 replay.
-        if let Ok(flush_path) = std::env::var("ZOVIA_BCF_EAGER_FLUSH") {
-            let tmp = format!("{}.tmp", flush_path);
-            if crate::refinement::bundle::write_bundle(std::path::Path::new(&tmp), &env.bcf_proofs).is_ok() {
-                let _ = std::fs::rename(&tmp, &flush_path);
-            }
-        }
+        // walk runs only the shallow replays.
         // Ancestor replays at depth 0 AND 1: the census found min-depth 0
         // suffices on fnf/l3/twep/thep, but to_lo_debug_co-re_v6's queried
         // 0x673434f3469c3018 (pc2222) is replay_anc depth-1-only — the
@@ -912,6 +908,7 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
                     rok.goal_root, rok.sym.exprs, rok.proof_bytes,
                     BCF_BUNDLE_KIND_UNREACHABLE,
                 );
+                replay_goals_produced += 1;
                 let ra_dup = env.bcf_proofs.iter().any(|e| e.cond_hash == rentry.cond_hash);
                 census_log("replay_anc", state.pc, lean_depth, rung, rentry.cond_hash, ra_dup);
                 if !ra_dup {
@@ -920,8 +917,24 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
             }
             cur = Some(parent_cid);
         }
-        crate::analysis::flow::pruning::cache::mark_path_children_unsafe(env, state, base_cid_dbg);
-        return true;
+        // FALLBACK (lean v3, cilium/from_tnl lesson): when the replay family
+        // produced NOTHING for this reject — no cached base (base_cid=None,
+        // the base-less full-path goal shape: cilium bpf_lxc, from_tnl
+        // pc214) or every replay diverged — the reconstruction classes are
+        // the ONLY emitters for it, so fall through to the full fat path
+        // for THIS reject instead of returning early. Cilium fat bundles
+        // (774KB bpf_lxc) are entirely this shape; lean-v2 emitted 0 bytes
+        // there and the VM load failed EACCES with 0 queries.
+        if replay_goals_produced > 0 {
+            if let Ok(flush_path) = std::env::var("ZOVIA_BCF_EAGER_FLUSH") {
+                let tmp = format!("{}.tmp", flush_path);
+                if crate::refinement::bundle::write_bundle(std::path::Path::new(&tmp), &env.bcf_proofs).is_ok() {
+                    let _ = std::fs::rename(&tmp, &flush_path);
+                }
+            }
+            crate::analysis::flow::pruning::cache::mark_path_children_unsafe(env, state, base_cid_dbg);
+            return true;
+        }
     }
     if let Ok(prefix) = std::env::var("ZOVIA_BCF_DUMP_PROOF") {
         let idx = env.bcf_proofs.len();
