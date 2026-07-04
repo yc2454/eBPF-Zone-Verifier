@@ -896,23 +896,29 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
                 let _ = std::fs::rename(&tmp, &flush_path);
             }
         }
-        if let Some(cid) = base_cid_dbg {
-            if let Some(parent_cid) = env
-                .state_by_cache_id(cid)
+        // Ancestor replays at depth 0 AND 1: the census found min-depth 0
+        // suffices on fnf/l3/twep/thep, but to_lo_debug_co-re_v6's queried
+        // 0x673434f3469c3018 (pc2222) is replay_anc depth-1-only — the
+        // kernel's base lands two cache-hops below the walker on that
+        // reject. Depth ≤ 1 is the measured envelope so far.
+        let mut cur = base_cid_dbg;
+        for lean_depth in 0..2 {
+            let Some(parent_cid) = cur
+                .and_then(|cid| env.state_by_cache_id(cid))
                 .and_then(|(_, s)| s.parent_cache_id)
-            {
-                for (rung, rok) in try_prove_unreachable_via_replay(env, state, parent_cid) {
-                    let rentry = RefineEntry::new(
-                        rok.goal_root, rok.sym.exprs, rok.proof_bytes,
-                        BCF_BUNDLE_KIND_UNREACHABLE,
-                    );
-                    let ra_dup = env.bcf_proofs.iter().any(|e| e.cond_hash == rentry.cond_hash);
-                    census_log("replay_anc", state.pc, 0, rung, rentry.cond_hash, ra_dup);
-                    if !ra_dup {
-                        env.bcf_proofs.push(rentry);
-                    }
+            else { break };
+            for (rung, rok) in try_prove_unreachable_via_replay(env, state, parent_cid) {
+                let rentry = RefineEntry::new(
+                    rok.goal_root, rok.sym.exprs, rok.proof_bytes,
+                    BCF_BUNDLE_KIND_UNREACHABLE,
+                );
+                let ra_dup = env.bcf_proofs.iter().any(|e| e.cond_hash == rentry.cond_hash);
+                census_log("replay_anc", state.pc, lean_depth, rung, rentry.cond_hash, ra_dup);
+                if !ra_dup {
+                    env.bcf_proofs.push(rentry);
                 }
             }
+            cur = Some(parent_cid);
         }
         crate::analysis::flow::pruning::cache::mark_path_children_unsafe(env, state, base_cid_dbg);
         return true;
