@@ -228,6 +228,35 @@ pub(crate) fn transfer_store(
         return vec![];
     }
 
+    // Kernel `__check_reg_arg` SRC_OP hook (verifier.c ~4091): during
+    // bcf_track, EVERY read of a non-const register materializes its
+    // VAR + bound block ("Bind an expr for non-constants when it's
+    // first used"). The store-source read was zovia's missing case:
+    // stack spills materialize via `spill_at`'s reg_expr, but stores to
+    // map/ctx/pkt memory never touched the src's bcf expr — so a u8
+    // load stored to a map value contributed no `u<= 0xff` bound var
+    // to the replay goal (to_wep_debug pc1783 0xc70002dc = zovia's
+    // stream + two such leading bounds; to_l3_debug_v6 same family).
+    // reg_expr is first-ref-cached (kernel `reg->bcf_expr >= 0` out),
+    // so a later spill/cond reference of the same reg dedups.
+    if env.replay_mode
+        && let Operand::Reg(r) = src
+        && matches!(state.types.get(*r), RegType::ScalarValue)
+        && let Some(src_idx) = r.bcf_idx()
+        && state.bcf.is_some()
+    {
+        let bounds = crate::analysis::transfer::alu::helpers::bcf_reg_bounds(&state, *r);
+        // Kernel gate: `!tnum_is_const(reg->var_off)` — consts are not
+        // materialized at the read hook.
+        if bounds.const_val.is_none() {
+            let pc = state.pc;
+            if let Some(b) = state.bcf.as_mut() {
+                b.set_current_pc(pc);
+                b.reg_expr(src_idx, &bounds, false);
+            }
+        }
+    }
+
     let access_size = size.bytes() as i64;
     let src_type = match src {
         Operand::Reg(r) => state.types.get(*r),
