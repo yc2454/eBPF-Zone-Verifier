@@ -815,19 +815,22 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
         eprintln!("[disc] reject@pc={} base_pc={:?} prev_insn_pc={:?} parent_cid={:?} base_cid={:?}",
                   state.pc, base_pc, prev_insn_pc, state.parent_cache_id, base_cid_dbg);
     }
-    // LEAN-EMISSION EXPERIMENT (ZOVIA_BCF_LEAN=1, default-OFF, diagnosis-only
-    // per the census arc — see memory project_over_emission_census_2026-07-04):
-    // emit ONLY the measured-useful classes (replay_base all rungs +
-    // replay_anc depth 0). The 2026-07-04 census over fresh kernel-queried
-    // sets (fnf/l3/twep/to_hep whole-object loads, 338 hashes) found every
-    // other class — natural/no_rw/legacy_fold/traj*/regfilter*/anc_* recon +
-    // replay_anc depth>=1 — has ZERO exclusive utility. Control flow, cvc5
-    // proving of the natural goal (gates the return value), and
-    // mark_path_children_unsafe are UNCHANGED; only bundle pushes are
-    // skipped. Validation = fresh native build + whole-object VM gate (q2:
-    // no hash-set reasoning). Resolution after the gate: delete the dead
-    // classes outright (heuristic removal) and drop this env check.
-    let lean = std::env::var("ZOVIA_BCF_LEAN").ok().as_deref() == Some("1");
+    // LEAN EMISSION — THE DEFAULT (census arc 2026-07-04/05, memory
+    // project_over_emission_census_2026-07-04): emit the replay family
+    // (replay_base all rungs + ancestor replays depth 0-1) and fall through
+    // to the full reconstruction fan-out ONLY for rejects where the replay
+    // family produced nothing (base-less full-path goals — cilium bpf_lxc,
+    // from_tnl pc214 family). Measured basis: 4-object census (338/338
+    // kernel-queried hashes covered by the replay family where a base
+    // exists) + repr-19 16/19 parity + cilium-17 17/17 + E2-scale sweep
+    // LEAN 278/337 vs FAT 244/337 (+34: E2BIG class extinct, build-timeouts
+    // cured; 2 known 1-hash regressions tracked as chase targets alongside
+    // the other 57 first-misses). Control flow, the cvc5 prove of the
+    // natural goal (gates the return value), and mark_path_children_unsafe
+    // are IDENTICAL to the historical fat path; only bundle pushes differ.
+    // The skipped classes' code below is kept: it IS the base-less
+    // fallback path.
+    let lean = true;
     // Faithful base→reject replay (ZOVIA_BCF_REPLAY=1), ADDITIVE: push the
     // replay-derived entry alongside the reconstruction discharges (merge
     // dedups by cond_hash). Lets us validate replay coverage without
