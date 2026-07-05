@@ -900,6 +900,24 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
         // 0x673434f3469c3018 (pc2222) is replay_anc depth-1-only — the
         // kernel's base lands two cache-hops below the walker on that
         // reject. Depth ≤ 1 is the measured envelope so far.
+        // Aliased-VAR (no-rewrite) reconstruction twin at the natural base
+        // (lean v4): the E2 lean sweep's two LOAD regressions are BOTH
+        // no-rewrite shapes the replay never produces — to_lo_fib_no_log_
+        // co-re_v6 pc754 0xf00d1f29 = class no_rw, c17 from_hep_fib_dsr_
+        // no_log pc1216 0xb9e1f14d = class anc_norw d0 (fat-census
+        // attributed). Same lesson as 2026-05-27 (kernel queries via the
+        // aliased form on some programs; calico-19 once 19->9 without it).
+        if let Some(ok_no_rw) = crate::refinement::refine_unreachable::try_prove_unreachable_no_rewrite(state, base_pc, prev_insn_pc) {
+            let entry_no_rw = RefineEntry::new(
+                ok_no_rw.goal_root, ok_no_rw.sym.exprs, ok_no_rw.proof_bytes,
+                BCF_BUNDLE_KIND_UNREACHABLE,
+            );
+            let nr_dup = env.bcf_proofs.iter().any(|e| e.cond_hash == entry_no_rw.cond_hash);
+            census_log("no_rw", state.pc, -1, -1, entry_no_rw.cond_hash, nr_dup);
+            if !nr_dup {
+                env.bcf_proofs.push(entry_no_rw);
+            }
+        }
         let mut cur = base_cid_dbg;
         for lean_depth in 0..2 {
             let Some(parent_cid) = cur
@@ -916,6 +934,23 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
                 census_log("replay_anc", state.pc, lean_depth, rung, rentry.cond_hash, ra_dup);
                 if !ra_dup {
                     env.bcf_proofs.push(rentry);
+                }
+            }
+            // Aliased-VAR reconstruction at this ancestor (lean v4, the
+            // anc_norw d<=1 slice — see the no_rw comment above).
+            let anc_pc = env.state_by_cache_id(parent_cid).map(|(pc, _)| pc);
+            if let Some(anc_pc) = anc_pc {
+                let anc_prev = env.cached_prev_insn_pc(parent_cid);
+                if let Some(ok_an) = crate::refinement::refine_unreachable::try_prove_unreachable_no_rewrite(state, Some(anc_pc), anc_prev) {
+                    let entry_an = RefineEntry::new(
+                        ok_an.goal_root, ok_an.sym.exprs, ok_an.proof_bytes,
+                        BCF_BUNDLE_KIND_UNREACHABLE,
+                    );
+                    let an_dup = env.bcf_proofs.iter().any(|e| e.cond_hash == entry_an.cond_hash);
+                    census_log("anc_norw", state.pc, lean_depth, -1, entry_an.cond_hash, an_dup);
+                    if !an_dup {
+                        env.bcf_proofs.push(entry_an);
+                    }
                 }
             }
             cur = Some(parent_cid);
