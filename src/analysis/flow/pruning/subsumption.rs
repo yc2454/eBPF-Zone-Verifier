@@ -191,7 +191,7 @@ pub(super) fn state_subsumed_by(
     {
         return Err(SubsumptionMissReason::Domain);
     }
-    if !stack_subsumed_by(cur, old, frame_live_slots) {
+    if !stack_subsumed_by(cur, old, frame_live_slots, force_exact) {
         return Err(SubsumptionMissReason::Stack);
     }
     if !tnum_subsumed_by(cur, old, live_regs) {
@@ -903,6 +903,7 @@ fn stack_subsumed_by(
     cur: &State,
     old: &State,
     frame_live_slots: &[Option<HashSet<i16>>],
+    force_exact: bool,
 ) -> bool {
     // clean_verifier_state analog (kernel clean_func_state,
     // verifier.c:19424): a stack slot the kernel proves dead is set to
@@ -988,16 +989,80 @@ fn stack_subsumed_by(
             //     falls through to the reg-level type/precision checks below.
             {
                 use crate::analysis::machine::stack_state::StackSlotKind::*;
-                match (
-                    old_frame.stack.get_slot_kind(offset),
-                    new_frame.stack.get_slot_kind(offset),
-                ) {
+                let ok = old_frame.stack.get_slot_kind(offset);
+                let nk = new_frame.stack.get_slot_kind(offset);
+                match (ok, nk) {
                     (None, _) => continue,
-                    (Some(_), None) => return false,
                     (Some(Spill), Some(Spill)) => { /* fall through to reg checks */ }
                     (Some(Misc), Some(Misc | Zero))
                     | (Some(Zero), Some(Zero)) => continue,
-                    (Some(_), Some(_)) => return false,
+                    // Kernel `scalar_reg_for_stack` (verifier.c:19686, applied at
+                    // stacksafe:19737 BEFORE the per-byte kind rule): a 64-bit
+                    // scalar spill and an all-MISC slot compare as SCALARS —
+                    // "load from all slots MISC produces unbound scalar". MISC
+                    // reads as `unbound_reg` (unknown IMPRECISE scalar), and
+                    // regsafe's scalar rule under !exact is: imprecise old
+                    // covers anything; precise old needs range_within+tnum_in
+                    // (an unbound cur is only covered by a full-range old).
+                    // Under EXACT the fake regs must be regs_exact → mismatch.
+                    // Measured: to_wep pc140 loop-exit collapse (fp-64..-57
+                    // Spill-vs-Misc) — the kernel prunes 89/load there; this
+                    // arm's absence forced 12 exit lineages and starved the
+                    // pc142 checkpoint (99e08549 MISS root).
+                    (Some(Misc), Some(Spill)) if !force_exact => {
+                        // old MISC ⇒ fake unbound imprecise scalar: covers any
+                        // scalar spill; a non-scalar spill is NOT covered.
+                        let new_is_scalar = new_frame
+                            .stack
+                            .get_slot(offset)
+                            .map(|s| matches!(s.reg_type, RegType::ScalarValue))
+                            .unwrap_or(false);
+                        if new_is_scalar {
+                            continue;
+                        }
+                        if std::env::var("ZOVIA_DUMP_STACK_MISS").ok().as_deref() == Some("1") {
+                            eprintln!(
+                                "[stack_miss] pc={} frame={} off={} old_kind={:?} new_kind={:?} (misc-vs-ptr-spill)",
+                                cur.pc, frame_i, offset, ok, nk
+                            );
+                        }
+                        return false;
+                    }
+                    (Some(Spill), Some(Misc)) if !force_exact => {
+                        // cur MISC ⇒ fake unbound cur scalar. Covered iff the
+                        // old spilled scalar is imprecise (kernel regsafe:
+                        // !rold->precise → true) or precise-but-full-range.
+                        let old_covers = old_frame
+                            .stack
+                            .get_slot(offset)
+                            .map(|s| {
+                                matches!(s.reg_type, RegType::ScalarValue)
+                                    && (!s.precise
+                                        || (s.bounds.min == i64::MIN
+                                            && s.bounds.max == i64::MAX
+                                            && s.tnum.mask == u64::MAX))
+                            })
+                            .unwrap_or(false);
+                        if old_covers {
+                            continue;
+                        }
+                        if std::env::var("ZOVIA_DUMP_STACK_MISS").ok().as_deref() == Some("1") {
+                            eprintln!(
+                                "[stack_miss] pc={} frame={} off={} old_kind={:?} new_kind={:?} (precise-spill-vs-misc)",
+                                cur.pc, frame_i, offset, ok, nk
+                            );
+                        }
+                        return false;
+                    }
+                    (Some(_), None) | (Some(_), Some(_)) => {
+                        if std::env::var("ZOVIA_DUMP_STACK_MISS").ok().as_deref() == Some("1") {
+                            eprintln!(
+                                "[stack_miss] pc={} frame={} off={} old_kind={:?} new_kind={:?}",
+                                cur.pc, frame_i, offset, ok, nk
+                            );
+                        }
+                        return false;
+                    }
                 }
             }
 

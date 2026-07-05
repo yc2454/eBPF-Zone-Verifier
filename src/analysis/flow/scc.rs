@@ -551,6 +551,9 @@ pub fn complete_dfs_branch(env: &mut VerifierEnv, start_cache_id: Option<u32>) {
         if st.branches > 0 {
             st.branches -= 1;
         }
+        if crate::analysis::trace_pc_in_range(st.pc) {
+            eprintln!("[BR] dec pc={} cid={} now={}", st.pc, cid, st.branches);
+        }
         // Kernel-faithful dfs_paths decrement (parallel counter, see
         // State::dfs_paths). Walks the SAME chain as branches but
         // its 0-floor is what the inf-loop trap gate consults.

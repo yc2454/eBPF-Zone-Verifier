@@ -1356,6 +1356,10 @@ fn run_worklist(
             if succ_count > 1 {
                 p.branches = p.branches.saturating_add((succ_count - 1) as u32);
                 p.dfs_paths = p.dfs_paths.saturating_add((succ_count - 1) as u32);
+                if trace_pc_in_range(p.pc) {
+                    eprintln!("[BR] inc pc={} cid={} now={} (fork@{} n={})",
+                        p.pc, pcid, p.branches, cur_insn_pc, succ_count);
+                }
             }
         }
         if succ_count == 0 {
