@@ -447,6 +447,36 @@ fn handle_standard_pruning(
             match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
                 Ok(()) => {
                     zhit_seq(pc, state, prev);
+                    if crate::analysis::trace_pc_in_range(pc) {
+                        eprintln!(
+                            "[SUBSUM_HIT] pc={} prev_idx={} cache_id={:?} (standard)",
+                            pc, i, prev.cache_id,
+                        );
+                        // Precision-seam probe (route-B 140 hit): dump the
+                        // compared live dims of cur vs the matched cache.
+                        if std::env::var("ZOVIA_DUMP_HIT_DIMS").ok().as_deref() == Some("1") {
+                            for &r in live_regs.iter() {
+                                eprintln!(
+                                    "[hit_dim] pc={} reg={:?} cur(t={:?} tn={:?} prec={}) old(t={:?} tn={:?} prec={})",
+                                    pc, r,
+                                    state.types.get(r), state.get_tnum(r),
+                                    state.precise_regs.contains(&r),
+                                    prev.types.get(r), prev.get_tnum(r),
+                                    prev.precise_regs.contains(&r),
+                                );
+                            }
+                            for off in [-64i16, -60, -57, -56] {
+                                let cs = state.frames.current().stack.get_slot(off);
+                                let ps = prev.frames.current().stack.get_slot(off);
+                                eprintln!(
+                                    "[hit_dim] pc={} slot={} cur={:?} old={:?}",
+                                    pc, off,
+                                    cs.map(|s| (s.bounds.min, s.bounds.max, s.precise)),
+                                    ps.map(|s| (s.bounds.min, s.bounds.max, s.precise)),
+                                );
+                            }
+                        }
+                    }
                     hit_idx = Some(i);
                     break;
                 }
