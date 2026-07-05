@@ -505,6 +505,12 @@ fn try_bcf_refine_map(
             log::info!(target: "app", "[bcf] dumped raw proof to {}", path);
         }
     }
+    if std::env::var("ZOVIA_BCF_CENSUS").ok().as_deref() == Some("1") {
+        crate::analysis::transfer::branch::census_log(
+            "refine_map", state.pc, -1, -1, entry.cond_hash,
+            env.bcf_proofs.iter().any(|e| e.cond_hash == entry.cond_hash),
+        );
+    }
     env.bcf_proofs.push(entry);
     // Mirror kernel `bcf_refine` parent-marking (verifier.c:24904-24921):
     // every cached ancestor on this refinement's backtrack suffix is no

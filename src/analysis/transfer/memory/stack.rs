@@ -61,6 +61,12 @@ fn try_bcf_refine_stack(
             Err(e) => log::warn!(target: "app", "[bcf] proof dump to {} failed: {}", path, e),
         }
     }
+    if std::env::var("ZOVIA_BCF_CENSUS").ok().as_deref() == Some("1") {
+        crate::analysis::transfer::branch::census_log(
+            "refine_stack", state.pc, -1, -1, entry.cond_hash,
+            env.bcf_proofs.iter().any(|e| e.cond_hash == entry.cond_hash),
+        );
+    }
     env.bcf_proofs.push(entry);
     // Mirror kernel `bcf_refine` parent-marking (verifier.c:24904-24921);
     // see the matching block in `memory/map.rs::try_bcf_refine_map`.
