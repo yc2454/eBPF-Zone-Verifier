@@ -1217,6 +1217,19 @@ pub fn build_unreachable_from_replay(mut sym: SymbolicState) -> Option<Unreachab
     if std::env::var("ZOVIA_BCF_DUMP_SMT").is_ok() {
         eprintln!("---- [bcf] SMT-LIB to cvc5 (replay) ----\n{}\n---- end ----", smt);
     }
-    let bytes = solver::solve(&smt).ok()?;
+    // Formation-time census (diagnosis): the post-prove [census] lines can't
+    // distinguish never-formed from formed-but-prove-declined; log both the
+    // formed hash and the solve outcome.
+    let census = std::env::var("ZOVIA_BCF_CENSUS").ok().as_deref() == Some("1");
+    let formed_hash = if census {
+        Some(super::canonical_hash::hash_expr(goal_root, &sym.exprs))
+    } else {
+        None
+    };
+    let solved = solver::solve(&smt);
+    if let Some(h) = formed_hash {
+        eprintln!("[census-formed] hash={:016x} solve_ok={}", h, solved.is_ok());
+    }
+    let bytes = solved.ok()?;
     Some(UnreachableOk { proof_bytes: bytes, goal_root, sym })
 }
