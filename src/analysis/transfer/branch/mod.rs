@@ -638,7 +638,7 @@ fn try_prove_unreachable_via_replay(
     env: &mut VerifierEnv,
     reject_state: &State,
     base_cid: u32,
-) -> Vec<crate::refinement::refine_unreachable::UnreachableOk> {
+) -> Vec<(i64, crate::refinement::refine_unreachable::UnreachableOk)> {
 
     let empty = Vec::new();
     // 1. Retrieve the cached base State (with its register/domain state).
@@ -730,7 +730,7 @@ fn try_prove_unreachable_via_replay(
         if let Some(mut final_state) = holder {
             if let Some(symb) = final_state.bcf.take() {
                 if let Some(g) = crate::refinement::refine_unreachable::build_unreachable_from_replay(*symb) {
-                    goals.push(g);
+                    goals.push((reset_after_idx.map(|i| i as i64).unwrap_or(-1), g));
                 }
             }
         }
@@ -752,6 +752,8 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     if state.bcf.is_none() {
         return false;
     }
+    // Diagnosis-only volume census ([census] stderr lines, ZOVIA_BCF_CENSUS=1).
+    let census = std::env::var("ZOVIA_BCF_CENSUS").ok().as_deref() == Some("1");
     // FAITHFUL base (Phase 2, 2026-07-01). The kernel's ONE `base` from
     // backtrack_states gives BOTH the goal anchor (`base->insn_idx`, the
     // replay start) AND the marking bound (parents[] = the chain up to base).
@@ -808,7 +810,7 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
             eprintln!("[replay] CALL reject@pc={} base_cid={:?}", state.pc, base_cid_dbg);
         }
         if let Some(cid) = base_cid_dbg {
-            for rok in try_prove_unreachable_via_replay(env, state, cid) {
+            for (rung, rok) in try_prove_unreachable_via_replay(env, state, cid) {
                 let rentry = RefineEntry::new(
                     rok.goal_root,
                     rok.sym.exprs,
@@ -818,7 +820,12 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
                 if std::env::var("ZOVIA_BCF_REPLAY_DEBUG").ok().as_deref() == Some("1") {
                     eprintln!("[replay] HASH reject@pc={} hash={:016x}", state.pc, rentry.cond_hash);
                 }
-                if env.bcf_proofs.iter().any(|e| e.cond_hash == rentry.cond_hash) {
+                let census_dup = env.bcf_proofs.iter().any(|e| e.cond_hash == rentry.cond_hash);
+                if census {
+                    eprintln!("[census] pc={} class=replay_base depth=-1 rung={} hash={:016x} dup={}",
+                        state.pc, rung, rentry.cond_hash, census_dup as u8);
+                }
+                if census_dup {
                     continue;
                 }
                 info!(target: "app",
@@ -837,6 +844,10 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
         ok.proof_bytes,
         BCF_BUNDLE_KIND_UNREACHABLE,
     );
+    if census {
+        eprintln!("[census] pc={} class=natural depth=-1 rung=-1 hash={:016x} dup=0",
+            state.pc, entry.cond_hash);
+    }
     info!(
         target: "app",
         "[bcf] path-unreachable speculation: cvc5 proof {} bytes (hash {:016x})",
@@ -879,6 +890,10 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
             BCF_BUNDLE_KIND_UNREACHABLE,
         );
         let already_have = env.bcf_proofs.iter().any(|e| e.cond_hash == entry_no_rw.cond_hash);
+        if census {
+            eprintln!("[census] pc={} class=no_rw depth=-1 rung=-1 hash={:016x} dup={}",
+                state.pc, entry_no_rw.cond_hash, already_have as u8);
+        }
         if !already_have {
             info!(
                 target: "app",
@@ -903,6 +918,11 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
                 ok_lf.goal_root, ok_lf.sym.exprs, ok_lf.proof_bytes,
                 BCF_BUNDLE_KIND_UNREACHABLE,
             );
+            if census {
+                let d = env.bcf_proofs.iter().any(|e| e.cond_hash == entry_lf.cond_hash);
+                eprintln!("[census] pc={} class=legacy_fold depth=-1 rung=-1 hash={:016x} dup={}",
+                    state.pc, entry_lf.cond_hash, d as u8);
+            }
             if !env.bcf_proofs.iter().any(|e| e.cond_hash == entry_lf.cond_hash) {
                 info!(
                     target: "app",
@@ -919,22 +939,27 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     // a path-cond pc, so the anchor-union below never re-anchors exactly
     // there — emit the traj-window forms at (base_pc, prev_insn_pc) too.
     if crate::common::config::bcf_mirror_knob("ZOVIA_BCF_BOTH_FOLDS", true) && base_pc.is_some() {
-        for okv in [
-            crate::refinement::refine_unreachable::try_prove_unreachable_traj(
+        for (tcls, okv) in [
+            ("traj", crate::refinement::refine_unreachable::try_prove_unreachable_traj(
                 state, base_pc, prev_insn_pc,
-            ),
-            crate::refinement::refine_unreachable::try_prove_unreachable_traj_fold_legacy(
+            )),
+            ("traj_lf", crate::refinement::refine_unreachable::try_prove_unreachable_traj_fold_legacy(
                 state, base_pc, prev_insn_pc,
-            ),
-            crate::refinement::refine_unreachable::try_prove_unreachable_traj_no_rewrite(
+            )),
+            ("traj_no_rw", crate::refinement::refine_unreachable::try_prove_unreachable_traj_no_rewrite(
                 state, base_pc, prev_insn_pc,
-            ),
+            )),
         ] {
             if let Some(ok_t) = okv {
                 let entry_t = RefineEntry::new(
                     ok_t.goal_root, ok_t.sym.exprs, ok_t.proof_bytes,
                     BCF_BUNDLE_KIND_UNREACHABLE,
                 );
+                if census {
+                    let d = env.bcf_proofs.iter().any(|e| e.cond_hash == entry_t.cond_hash);
+                    eprintln!("[census] pc={} class={} depth=-1 rung=-1 hash={:016x} dup={}",
+                        state.pc, tcls, entry_t.cond_hash, d as u8);
+                }
                 if !env.bcf_proofs.iter().any(|e| e.cond_hash == entry_t.cond_hash) {
                     info!(
                         target: "app",
@@ -1002,6 +1027,11 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
                         ok.goal_root, ok.sym.exprs, ok.proof_bytes,
                         BCF_BUNDLE_KIND_UNREACHABLE,
                     );
+                    if census {
+                        let d = env.bcf_proofs.iter().any(|e| e.cond_hash == rf_entry.cond_hash);
+                        eprintln!("[census] pc={} class=regfilter_{} depth={} rung=-1 hash={:016x} dup={}",
+                            state.pc, if use_rewrite { "rw" } else { "norw" }, hops, rf_entry.cond_hash, d as u8);
+                    }
                     if !env.bcf_proofs.iter().any(|e| e.cond_hash == rf_entry.cond_hash) {
                         info!(target: "app",
                             "[bcf] reg-filtered (expt): {} bytes (hash {:016x}, hops={}, rw={})",
@@ -1074,6 +1104,11 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
                         BCF_BUNDLE_KIND_UNREACHABLE,
                     );
                     let already_have = env.bcf_proofs.iter().any(|e| e.cond_hash == extra_entry.cond_hash);
+                    if census {
+                        eprintln!("[census] pc={} class=anc_{} depth={} rung=-1 hash={:016x} dup={}",
+                            state.pc, if use_rewrite { "rw" } else { "norw" }, depth,
+                            extra_entry.cond_hash, already_have as u8);
+                    }
                     if std::env::var("ZOVIA_DUMP_DISCHARGE").ok().as_deref() == Some("1") {
                         eprintln!(
                             "[disc-ancestor] depth={} anchor_pc={} anchor_cid={} prev_pc={:?} rw={} hash={:016x} dup={}",
@@ -1099,7 +1134,7 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
             // state, so the goal is the kernel's exact bcf_track path cond
             // for a replay starting here. Additive + deduped by cond_hash.
             if crate::common::config::bcf_mirror_knob("ZOVIA_BCF_REPLAY", true) {
-                for rok in try_prove_unreachable_via_replay(env, state, parent_cid) {
+                for (rung, rok) in try_prove_unreachable_via_replay(env, state, parent_cid) {
                     let rentry = RefineEntry::new(
                         rok.goal_root, rok.sym.exprs, rok.proof_bytes,
                         BCF_BUNDLE_KIND_UNREACHABLE,
@@ -1108,7 +1143,12 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
                         eprintln!("[replay] ANCESTOR depth={} anchor_cid={} hash={:016x}",
                             depth, parent_cid, rentry.cond_hash);
                     }
-                    if !env.bcf_proofs.iter().any(|e| e.cond_hash == rentry.cond_hash) {
+                    let census_dup = env.bcf_proofs.iter().any(|e| e.cond_hash == rentry.cond_hash);
+                    if census {
+                        eprintln!("[census] pc={} class=replay_anc depth={} rung={} hash={:016x} dup={}",
+                            state.pc, depth, rung, rentry.cond_hash, census_dup as u8);
+                    }
+                    if !census_dup {
                         env.bcf_proofs.push(rentry);
                     }
                 }

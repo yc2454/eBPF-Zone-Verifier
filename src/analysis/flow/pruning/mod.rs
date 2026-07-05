@@ -607,11 +607,18 @@ pub fn should_prune(
         }
     }
 
-    // Re-entry to a PC from a different depth (e.g. repeated call in a loop).
-    // Must continue to reach the actual loop back-edge.
+    // REMOVED (dampener port, 2026-07-05): the historical on-path shortcut
+    // (`is_on_path && !in_loop && !pc_is_force_checkpoint -> return false`)
+    // skipped the scan entirely at non-loop-head on-path pcs. The kernel's
+    // is_state_visited has NO such shortcut — on-path arrivals are exactly
+    // what its branches>0 block + skip_inf_loop_check dampener handle, and
+    // the blanket branches>0 gate makes the scan safe here (active states
+    // skip-miss, never wrongly subsume). With the shortcut, the dampener
+    // could never see the active ancestor on loop descents (from_tnl pc125:
+    // [SP_GATE] would_skip_onpath=true every iteration -> every-2 cadence
+    // vs kernel every-5). Keep the stat for observability.
     if is_on_path && !in_loop && !pc_is_force_checkpoint {
         env.pruning_stats.on_path_skip += 1;
-        return false;
     }
 
     // Track whether we actually have prev states to compare against.
