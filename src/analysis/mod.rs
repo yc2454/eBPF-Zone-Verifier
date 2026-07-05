@@ -1002,9 +1002,26 @@ fn run_worklist(
         // worklist is not interleaved, so that term over-cached vs the kernel.
         // Removed along with the AND/OR env knobs.)
         let outer_gate = !kernel_engine || at_prune_point;
+        // Kernel in-loop checkpoint dampener (`skip_inf_loop_check`,
+        // verifier.c ~20320): when the pruning scan met a cached state
+        // with branches>0 at this pc (an in-flight ancestor — "the
+        // verifier is processing a loop"), suppress the add unless
+        // force_new_state or the deltas reach the loop thresholds
+        // (dj>=20 || di>=100; kernel constants). This is what gives the
+        // kernel its sparse in-loop checkpoint cadence (from_tnl
+        // accepted_entrypoint pc124 loop: kernel adds every ~5
+        // iterations = dj 20 / ~4 jumps-per-iter, [ZK add125] probe
+        // 2026-07-05, r8 = 1,4,9,14,19,24,29; zovia pre-port added
+        // every 2 via the bare 2/8 rule → its exit-lattice frontier and
+        // goal bases sat at different iterations than the kernel's
+        // queried ladder — the 21-object deep-treadmill class).
+        let loop_dampener = env.saw_active_state_at_check
+            && !force_new_state
+            && env_jmps_delta < 20
+            && env_insns_delta < 100;
         let add_new_state = !kernel_engine
             || force_new_state
-            || env_heuristic;
+            || (env_heuristic && !loop_dampener);
         if outer_gate && add_new_state {
             let cache_id =
                 merging::record_state(env, state.clone(), config.max_states_per_pc);

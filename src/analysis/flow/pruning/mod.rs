@@ -187,6 +187,8 @@ fn handle_loop_pruning(
     // below. Computed lazily — only when an active prev is actually
     // encountered — so converged loops (no active prev) pay nothing.
     let mut ancestor_ids: Option<HashSet<u32>> = None;
+    // Kernel in-loop dampener input (see handle_standard_pruning).
+    let mut saw_active_loop = false;
 
     let (hit_idx, miss_idxs, miss_reasons): (
         Option<usize>,
@@ -260,6 +262,7 @@ fn handle_loop_pruning(
             // the broken branches accounting, repaired in ee5221c.)
             let skip_active = prev.branches > 0;
             if skip_active {
+                saw_active_loop = true;
                 if crate::analysis::trace_pc_in_range(pc) {
                     eprintln!(
                         "[SUBSUM_SKIP_ACTIVE] pc={} prev_idx={} prev.dfs_paths={} cache_id={:?}",
@@ -304,6 +307,7 @@ fn handle_loop_pruning(
         env.pruning_stats.loop_walks_no_prev += 1;
         return false;
     };
+    env.saw_active_state_at_check |= saw_active_loop;
 
     if let Some(idx) = hit_idx {
         env.pruning_stats.loop_walks_hit += 1;
@@ -373,6 +377,10 @@ fn handle_standard_pruning(
     let mut miss_idxs: Vec<usize> = Vec::new();
     let mut miss_reasons: Vec<SubsumptionMissReason> = Vec::new();
     let mut local_children_unsafe_skips: u64 = 0;
+    // Kernel in-loop dampener input: did this arrival encounter an
+    // in-flight (branches>0) cached state at this pc? (env flag written
+    // after the scan — the scan holds an immutable borrow of env.)
+    let mut saw_active = false;
     // Kernel `is_state_visited` `is_iter_next_insn` branch (verifier.c v6.15
     // L19079): iterator convergence ALWAYS uses `states_equal(RANGE_WITHIN)`,
     // never the looser NOT_EXACT. RANGE_WITHIN range-checks even non-precise
@@ -422,6 +430,7 @@ fn handle_standard_pruning(
             // -> imprecise-R2 free-pass -> the sponge-subtree's R2 died
             // at 584 instead of reaching 748.
             if prev.branches > 0 {
+                saw_active = true;
                 if crate::analysis::trace_pc_in_range(pc) {
                     eprintln!(
                         "[SUBSUM_SKIP_ACTIVE] pc={} prev_idx={} prev.branches={} cache_id={:?} (standard)",
@@ -456,6 +465,7 @@ fn handle_standard_pruning(
     }
     env.pruning_stats.children_unsafe_skips =
         env.pruning_stats.children_unsafe_skips.saturating_add(local_children_unsafe_skips);
+    env.saw_active_state_at_check |= saw_active;
     if let Some(idx) = hit_idx {
         record_pruning_hit(env, pc, idx);
         // Kernel-aligned propagate_precision (per-path lineage walk).
@@ -503,6 +513,10 @@ pub fn should_prune(
     let pc = state.pc;
 
     env.pruning_stats.should_prune_calls += 1;
+    // Kernel in-loop dampener input — reset per is_state_visited analog;
+    // the scan handlers set it when an in-flight (branches>0) cached
+    // state is encountered at this pc.
+    env.saw_active_state_at_check = false;
 
     if crate::analysis::trace_pc_in_range(pc) {
         let nprev = env.explored_states.get(&pc).map(|v| v.len()).unwrap_or(0);

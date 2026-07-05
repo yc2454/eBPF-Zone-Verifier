@@ -220,6 +220,13 @@ pub struct VerifierEnv<'a> {
     /// failed" from "subsumption never even attempted". Incremented in
     /// `should_prune` and dumped alongside the miss histogram.
     pub pruning_stats: PruningStats,
+    /// Set by the pruning scan when the current arrival encountered a
+    /// cached state with `branches > 0` (an in-flight ancestor — the
+    /// kernel's "processing a loop" signal). Consumed by the add_new_state
+    /// decision to apply the kernel's in-loop checkpoint dampener
+    /// (`skip_inf_loop_check`, verifier.c ~20320: suppress the add unless
+    /// force_new_state or dj>=20 or di>=100). Reset at every should_prune.
+    pub saw_active_state_at_check: bool,
     pub insn_aux_data: Vec<InsnAuxData>,
     pub invalid_pc_set: HashSet<usize>,
     pub addr_space_cast_to_arena_pcs: HashSet<usize>,
@@ -410,6 +417,7 @@ impl<'a> VerifierEnv<'a> {
             bcf_enabled,
             subsumption_misses: HashMap::new(),
             pruning_stats: PruningStats::default(),
+            saw_active_state_at_check: false,
             insn_aux_data: vec![InsnAuxData::default(); prog.instrs.len()],
             invalid_pc_set: prog.invalid_pc_set.clone(),
             addr_space_cast_to_arena_pcs: prog.addr_space_cast_to_arena_pcs.clone(),
