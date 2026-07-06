@@ -532,6 +532,17 @@ fn handle_standard_pruning(
                                     ps.map(|s| (s.bounds.min, s.bounds.max, s.precise)),
                                 );
                             }
+                            let kinds = |fr: &crate::analysis::machine::frame_stack::CallFrame| {
+                                (-64i16..-56).map(|b| fr.stack.get_slot_kind(b)).collect::<Vec<_>>()
+                            };
+                            eprintln!(
+                                "[hit_dim] pc={} fp64_kinds cur={:?} old={:?} cur_ty={:?} old_ty={:?}",
+                                pc,
+                                kinds(state.frames.current()),
+                                kinds(prev.frames.current()),
+                                state.frames.current().stack.get_slot(-64).map(|s| s.reg_type.clone()),
+                                prev.frames.current().stack.get_slot(-64).map(|s| s.reg_type.clone()),
+                            );
                         }
                     }
                     hit_idx = Some(i);

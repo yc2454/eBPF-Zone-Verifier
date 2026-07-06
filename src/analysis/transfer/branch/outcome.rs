@@ -18,9 +18,12 @@ pub(crate) fn condition_outcome(
 ) -> Option<bool> {
     let v = condition_outcome_inner(state, width, left, op, right);
     if v.is_some() && std::env::var("ZOVIA_DUMP_BRANCH_RESOLVE").ok().as_deref() == Some("1") {
+        let cb = get_combined_bounds(state, left, width);
+        let (s32lo, s32hi) = state.domain.get_s32_bounds(left);
+        let (ilo, ihi) = state.domain.get_interval(left);
         eprintln!(
-            "[branch-resolve] pc={} left={:?} op={:?} right={:?} verdict={:?}",
-            state.pc, left, op, right, v
+            "[branch-resolve] pc={} left={:?} op={:?} right={:?} verdict={:?} comb={:?} s32=[{},{}] ivl=[{},{}] tn={:?}",
+            state.pc, left, op, right, v, cb, s32lo, s32hi, ilo, ihi, state.get_tnum(left)
         );
     }
     v
