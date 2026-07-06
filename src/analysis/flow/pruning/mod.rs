@@ -187,6 +187,8 @@ fn handle_loop_pruning(
     // below. Computed lazily — only when an active prev is actually
     // encountered — so converged loops (no active prev) pay nothing.
     let mut ancestor_ids: Option<HashSet<u32>> = None;
+    // Kernel in-loop dampener input (see handle_standard_pruning).
+    let mut saw_active_loop = false;
 
     let (hit_idx, miss_idxs, miss_reasons): (
         Option<usize>,
@@ -260,6 +262,7 @@ fn handle_loop_pruning(
             // the broken branches accounting, repaired in ee5221c.)
             let skip_active = prev.branches > 0;
             if skip_active {
+                saw_active_loop = true;
                 if crate::analysis::trace_pc_in_range(pc) {
                     eprintln!(
                         "[SUBSUM_SKIP_ACTIVE] pc={} prev_idx={} prev.dfs_paths={} cache_id={:?}",
@@ -304,6 +307,7 @@ fn handle_loop_pruning(
         env.pruning_stats.loop_walks_no_prev += 1;
         return false;
     };
+    env.saw_active_state_at_check |= saw_active_loop;
 
     if let Some(idx) = hit_idx {
         env.pruning_stats.loop_walks_hit += 1;
@@ -373,6 +377,10 @@ fn handle_standard_pruning(
     let mut miss_idxs: Vec<usize> = Vec::new();
     let mut miss_reasons: Vec<SubsumptionMissReason> = Vec::new();
     let mut local_children_unsafe_skips: u64 = 0;
+    // Kernel in-loop dampener input: did this arrival encounter an
+    // in-flight (branches>0) cached state at this pc? (env flag written
+    // after the scan — the scan holds an immutable borrow of env.)
+    let mut saw_active = false;
     // Kernel `is_state_visited` `is_iter_next_insn` branch (verifier.c v6.15
     // L19079): iterator convergence ALWAYS uses `states_equal(RANGE_WITHIN)`,
     // never the looser NOT_EXACT. RANGE_WITHIN range-checks even non-precise
@@ -422,6 +430,7 @@ fn handle_standard_pruning(
             // -> imprecise-R2 free-pass -> the sponge-subtree's R2 died
             // at 584 instead of reaching 748.
             if prev.branches > 0 {
+                saw_active = true;
                 if crate::analysis::trace_pc_in_range(pc) {
                     eprintln!(
                         "[SUBSUM_SKIP_ACTIVE] pc={} prev_idx={} prev.branches={} cache_id={:?} (standard)",
@@ -438,6 +447,36 @@ fn handle_standard_pruning(
             match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
                 Ok(()) => {
                     zhit_seq(pc, state, prev);
+                    if crate::analysis::trace_pc_in_range(pc) {
+                        eprintln!(
+                            "[SUBSUM_HIT] pc={} prev_idx={} cache_id={:?} (standard)",
+                            pc, i, prev.cache_id,
+                        );
+                        // Precision-seam probe (route-B 140 hit): dump the
+                        // compared live dims of cur vs the matched cache.
+                        if std::env::var("ZOVIA_DUMP_HIT_DIMS").ok().as_deref() == Some("1") {
+                            for &r in live_regs.iter() {
+                                eprintln!(
+                                    "[hit_dim] pc={} reg={:?} cur(t={:?} tn={:?} prec={}) old(t={:?} tn={:?} prec={})",
+                                    pc, r,
+                                    state.types.get(r), state.get_tnum(r),
+                                    state.precise_regs.contains(&r),
+                                    prev.types.get(r), prev.get_tnum(r),
+                                    prev.precise_regs.contains(&r),
+                                );
+                            }
+                            for off in [-64i16, -60, -57, -56] {
+                                let cs = state.frames.current().stack.get_slot(off);
+                                let ps = prev.frames.current().stack.get_slot(off);
+                                eprintln!(
+                                    "[hit_dim] pc={} slot={} cur={:?} old={:?}",
+                                    pc, off,
+                                    cs.map(|s| (s.bounds.min, s.bounds.max, s.precise)),
+                                    ps.map(|s| (s.bounds.min, s.bounds.max, s.precise)),
+                                );
+                            }
+                        }
+                    }
                     hit_idx = Some(i);
                     break;
                 }
@@ -456,6 +495,7 @@ fn handle_standard_pruning(
     }
     env.pruning_stats.children_unsafe_skips =
         env.pruning_stats.children_unsafe_skips.saturating_add(local_children_unsafe_skips);
+    env.saw_active_state_at_check |= saw_active;
     if let Some(idx) = hit_idx {
         record_pruning_hit(env, pc, idx);
         // Kernel-aligned propagate_precision (per-path lineage walk).
@@ -503,6 +543,10 @@ pub fn should_prune(
     let pc = state.pc;
 
     env.pruning_stats.should_prune_calls += 1;
+    // Kernel in-loop dampener input — reset per is_state_visited analog;
+    // the scan handlers set it when an in-flight (branches>0) cached
+    // state is encountered at this pc.
+    env.saw_active_state_at_check = false;
 
     if crate::analysis::trace_pc_in_range(pc) {
         let nprev = env.explored_states.get(&pc).map(|v| v.len()).unwrap_or(0);
@@ -593,11 +637,18 @@ pub fn should_prune(
         }
     }
 
-    // Re-entry to a PC from a different depth (e.g. repeated call in a loop).
-    // Must continue to reach the actual loop back-edge.
+    // REMOVED (dampener port, 2026-07-05): the historical on-path shortcut
+    // (`is_on_path && !in_loop && !pc_is_force_checkpoint -> return false`)
+    // skipped the scan entirely at non-loop-head on-path pcs. The kernel's
+    // is_state_visited has NO such shortcut — on-path arrivals are exactly
+    // what its branches>0 block + skip_inf_loop_check dampener handle, and
+    // the blanket branches>0 gate makes the scan safe here (active states
+    // skip-miss, never wrongly subsume). With the shortcut, the dampener
+    // could never see the active ancestor on loop descents (from_tnl pc125:
+    // [SP_GATE] would_skip_onpath=true every iteration -> every-2 cadence
+    // vs kernel every-5). Keep the stat for observability.
     if is_on_path && !in_loop && !pc_is_force_checkpoint {
         env.pruning_stats.on_path_skip += 1;
-        return false;
     }
 
     // Track whether we actually have prev states to compare against.

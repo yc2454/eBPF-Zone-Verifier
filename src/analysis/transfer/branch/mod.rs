@@ -830,7 +830,10 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     // are IDENTICAL to the historical fat path; only bundle pushes differ.
     // The skipped classes' code below is kept: it IS the base-less
     // fallback path.
-    let lean = true;
+    // DIAGNOSIS-ONLY escape hatch (2026-07-05 E2 regression triage):
+    // ZOVIA_BCF_LEAN=0 re-enables the full fat fan-out so a census can ask
+    // "would ANY anchor/class produce the missed hash". Not a tuning knob.
+    let lean = std::env::var("ZOVIA_BCF_LEAN").ok().as_deref() != Some("0");
     // Faithful base→reject replay (ZOVIA_BCF_REPLAY=1), ADDITIVE: push the
     // replay-derived entry alongside the reconstruction discharges (merge
     // dedups by cond_hash). Lets us validate replay coverage without

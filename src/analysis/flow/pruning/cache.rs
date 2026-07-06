@@ -76,11 +76,17 @@ pub fn clean_verifier_state(env: &mut VerifierEnv, cid: u32) {
             return;
         };
         if st.cleaned {
+            if crate::analysis::trace_pc_in_range(pc) {
+                eprintln!("[CLEAN] pc={} cid={} already_cleaned", pc, cid);
+            }
             return;
         }
         // Kernel `clean_live_states` gate: a state whose SCC has pending
         // backedges has incomplete read marks — don't clean it yet.
         if crate::analysis::flow::scc::incomplete_read_marks(env, st) {
+            if crate::analysis::trace_pc_in_range(pc) {
+                eprintln!("[CLEAN] pc={} cid={} SKIP incomplete_read_marks", pc, cid);
+            }
             clean_stat(1);
             return;
         }
@@ -117,6 +123,12 @@ pub fn clean_verifier_state(env: &mut VerifierEnv, cid: u32) {
                 st_pc,
                 fi,
             );
+            if crate::analysis::trace_pc_in_range(st_pc) {
+                eprintln!(
+                    "[CLEAN] pc={} frame={} fip={} alive_mask={:#x}",
+                    st_pc, fi, fip, alive
+                );
+            }
             (regs, alive)
         })
         .collect();
