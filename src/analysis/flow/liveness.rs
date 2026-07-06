@@ -542,24 +542,43 @@ fn get_use_def(instr: &Instr, alias: &AliasMap) -> UseDef {
             }
         }
 
-        Instr::Call { .. } => {
+        Instr::Call { kind } => {
             // Helper/kfunc calls clobber caller-saved R0-R5 on return.
             for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
                 ud.def_regs.insert(r);
             }
-            // USES: mark all of R1-R5 read. This is a SOUND over-approximation,
-            // NOT faithful. The kernel reads only the call's ACTUAL argument
-            // registers (proto->arg_type[0..nargs]; trailing/unused = DontCare),
-            // so a dead arg reg (e.g. R3 across a 2-arg helper) is
-            // clobbered-without-read and should go dead. Marking only the real
-            // args is the faithful set — but in ISOLATION it regressed coverage
-            // 24->12/28 (ZOVIA_FAITHFUL_HELPER_ARGS, falsified & removed
-            // 2026-07-01): a compensating divergence in zovia's subsumption
-            // means precise call-liveness can't be adopted on its own. Kept as
-            // the sound over-approximation; the faithful fix is precise
-            // call-liveness together with that subsumption divergence, not one
-            // alone. See HANDOFF_from_nat_fib_pc521.
-            for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+            // USES: the call's ACTUAL argument registers only (kernel
+            // compute_live_registers: proto->arg_type[0..nargs], trailing
+            // DontCare = clobbered-without-read → dead). Re-landed
+            // 2026-07-06: the 2026-07-01 in-isolation falsification
+            // (ZOVIA_FAITHFUL_HELPER_ARGS, 24->12/28) predates the
+            // parity-arc pruning ports (bucket scan, dampener, scrub,
+            // misc arm, counter placement) that fixed the compensating
+            // subsumption divergence it collided with. Direct evidence
+            // now: to_wep c15 pc1009 — kernel HITS (R1 dead before
+            // `call ktime_get_ns` (0 args) at 1012), zovia's blanket
+            // R1-R5 read kept R1=PtrToMapValue live → Types miss → +1
+            // cadence skew → the extra 1011-cache (add #55 seam).
+            // Kfuncs / unknown protos stay conservative (R1-R5).
+            let nargs: Option<usize> = match kind {
+                crate::ast::CallKind::Helper { id } => {
+                    crate::analysis::transfer::call::helper_protos::get_helper_proto(*id)
+                        .map(|p| {
+                            p.args
+                                .iter()
+                                .take_while(|a| {
+                                    !matches!(
+                                        a,
+                                        crate::analysis::transfer::call::signatures::ArgKind::DontCare
+                                    )
+                                })
+                                .count()
+                        })
+                }
+                crate::ast::CallKind::Kfunc { .. } => None,
+            };
+            let n = nargs.unwrap_or(5);
+            for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5].into_iter().take(n) {
                 ud.use_regs.insert(r);
             }
         }
