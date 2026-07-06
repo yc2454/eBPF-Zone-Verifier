@@ -1257,6 +1257,23 @@ fn tnum_subsumed_by(cur_state: &State, old_state: &State, live_regs: &HashSet<Re
         if !old_state.is_reg_precise(r) {
             continue;
         }
+        // Kernel `regsafe` compares var_off (the tnum) ONLY in the
+        // SCALAR_VALUE arm; pointer types (PTR_TO_MAP_VALUE / PACKET /
+        // CTX / …) are compared by their type-specific fields (offset
+        // range, id via check_ids, range) and NEVER by var_off. A
+        // map-value pointer can carry a STALE precise scalar tnum — e.g.
+        // `r0 = 0` (const 0, marked precise) then `r0 = map_lookup()`
+        // makes r0 a PtrToMapValue that kept tnum{0,0}+precise, while a
+        // sibling path's fresh lookup has tnum unknown. Comparing those
+        // meaningless address-tnums wrongly blocked subsumption:
+        // to_wep c15 pc68 (R0 map-ptr, old tnum{0,0} precise vs cur
+        // unknown) — the FIRST prologue over-cache, doubling paths
+        // 1→2→4→8 into the pc124 loop = the ICMP treadmill root.
+        // `domain_subsumed_by` already skips pointers here; this makes
+        // the tnum check consistent and kernel-faithful.
+        if old_state.types.get(r).is_pointer() || cur_state.types.get(r).is_pointer() {
+            continue;
+        }
         let cur = cur_state.get_tnum(r);
         let old = old_state.get_tnum(r);
         if !tnum_covers(&cur, &old) {
