@@ -993,6 +993,18 @@ fn stack_subsumed_by(
                 let nk = new_frame.stack.get_slot_kind(offset);
                 match (ok, nk) {
                     (None, _) => continue,
+                    // Kernel stacksafe:19742 — `env->allow_uninit_stack &&
+                    // old slot_type == STACK_MISC -> continue`, BEFORE the
+                    // scalar_reg_for_stack arm and the per-byte kind rule.
+                    // Privileged loads (zovia's model, like test_loader as
+                    // root) may read uninit stack, so an old MISC byte
+                    // covers ANY cur byte — including a never-written one
+                    // (to_wep pc1033 2nd pass: old Misc @fp-145 vs cur
+                    // INVALID; kernel HITs and kills the leg, zovia's
+                    // (Misc, None) => miss kept it alive → cadence phase
+                    // diverged at add #45). EXACT compares still require
+                    // equal kinds (kernel 19733).
+                    (Some(Misc), _) if !force_exact => continue,
                     (Some(Spill), Some(Spill)) => { /* fall through to reg checks */ }
                     (Some(Misc), Some(Misc | Zero))
                     | (Some(Zero), Some(Zero)) => continue,
