@@ -190,17 +190,26 @@ fn handle_loop_pruning(
     // Kernel in-loop dampener input (see handle_standard_pruning).
     let mut saw_active_loop = false;
 
-    let (hit_idx, miss_idxs, miss_reasons): (
+    let (hit_idx, miss_idxs, miss_reasons, counted_miss_idxs): (
         Option<usize>,
         Vec<usize>,
         Vec<SubsumptionMissReason>,
+        Vec<usize>,
     ) = if let Some(prev_states) = env.explored_states.get(&pc) {
         let mut h = None;
         let mut m: Vec<usize> = Vec::new();
         let mut r: Vec<SubsumptionMissReason> = Vec::new();
-        for (i, prev) in prev_states.iter().enumerate() {
+        // Kernel scan shape: newest-first + per-sl miss counting under the
+        // RUNNING add_new_state (see the long comment in
+        // handle_standard_pruning).
+        let mut add_now = would_add_new_state_base(env, state, pc);
+        let mut cm: Vec<usize> = Vec::new();
+        for (i, prev) in prev_states.iter().enumerate().rev() {
             // Kernel children_unsafe (bcf_refine, verifier.c:24580-81).
             if prev.children_unsafe {
+                if add_now {
+                    cm.push(i);
+                }
                 dbg_skip_pc(pc);
                 continue;
             }
@@ -263,18 +272,29 @@ fn handle_loop_pruning(
             let skip_active = prev.branches > 0;
             if skip_active {
                 saw_active_loop = true;
+                // Kernel skip_inf_loop_check: flip the running
+                // add_new_state (unless force/thresholds); the active sl
+                // itself is never miss-counted (flip precedes its goto
+                // miss). Earlier code pushed it into `m` unconditionally
+                // — that over-counted actives toward eviction.
+                if dampener_would_suppress(env, state, pc) {
+                    add_now = false;
+                }
+                // Kernel: the active sl's own `goto miss` IS counted when
+                // the dampener didn't suppress (dj>=20 cadence-crossing
+                // arrivals) — this is what accumulates miss_cnt on active
+                // cadence states and n=3-evicts them out of the bucket
+                // (measured: kernel f10b00 alive br=4 yet absent from
+                // late consults).
+                if add_now {
+                    cm.push(i);
+                }
                 if crate::analysis::trace_pc_in_range(pc) {
                     eprintln!(
                         "[SUBSUM_SKIP_ACTIVE] pc={} prev_idx={} prev.dfs_paths={} cache_id={:?}",
                         pc, i, prev.dfs_paths, prev.cache_id,
                     );
                 }
-                // Record as a miss so the kernel-faithful eviction
-                // (record_pruning_misses, n=3 at plain back-edges) keeps the
-                // per-pc cache small. Without this the FIFO cap (64) fills
-                // with distinct-precise-counter states that all miss, making
-                // every back-edge arrival walk 64 entries (O(N·64)) — the
-                // dominant cost on big bounded loops like nested_loops.
                 m.push(i);
                 continue;
             }
@@ -297,12 +317,15 @@ fn handle_loop_pruning(
                             pc, i, reason, prev.dfs_paths, force_exact,
                         );
                     }
+                    if add_now {
+                        cm.push(i);
+                    }
                     m.push(i);
                     r.push(reason);
                 }
             }
         }
-        (h, m, r)
+        (h, m, r, cm)
     } else {
         env.pruning_stats.loop_walks_no_prev += 1;
         return false;
@@ -358,11 +381,9 @@ fn handle_loop_pruning(
     }
 
     env.pruning_stats.loop_walks_miss += 1;
-    // Kernel miss-label guard — see the matching comment in
-    // handle_standard_pruning (suppressed adds must not count misses).
-    if would_add_new_state(env, state, pc, saw_active_loop) {
-        record_pruning_misses(env, pc, &miss_idxs);
-    }
+    // Kernel miss-label semantics — per-sl counted misses only (see
+    // handle_standard_pruning).
+    record_pruning_misses(env, pc, &counted_miss_idxs);
     record_subsumption_miss_reasons(env, pc, &miss_reasons);
 
     false
@@ -397,13 +418,31 @@ fn handle_standard_pruning(
     // is populated at every iter_next site by iter_next_fork.
     let iter_next_pc = env.iter_pc_slot.contains_key(&pc);
     let mut ancestor_ids: Option<HashSet<u32>> = None;
+    // Kernel scan shape (identity-ledger probe, 2026-07-05): the bucket is
+    // a list_add-PREPENDED list scanned NEWEST-FIRST, and the `miss:` label
+    // counts a miss only while the RUNNING add_new_state is still true
+    // (`if (!add_new_state) continue;`), where the in-loop dampener flips
+    // it false at the first active sl encountered. Consequences measured
+    // on to_wep: drained late states (newest) take counted misses BEFORE
+    // the scan reaches the old active cadence states, so the kernel
+    // n=3-evicts even its ACTIVE cadence checkpoints out of the bucket
+    // (f10b00: alive br=4, absent from late consults) — which is what
+    // opens its late re-entry adds. Whole-arrival gating (the previous
+    // approximation) protected everything and locked the bucket.
+    let mut add_now = would_add_new_state_base(env, state, pc);
+    let mut counted_miss_idxs: Vec<usize> = Vec::new();
     if let Some(prev_states) = env.explored_states.get(&pc) {
-        for (i, prev) in prev_states.iter().enumerate() {
+        for (i, prev) in prev_states.iter().enumerate().rev() {
             // Kernel children_unsafe (bcf_refine, verifier.c:24580-81):
             // a path-unreachable refinement marked this cached ancestor
             // not-prune-safe. Don't let it subsume a later arrival.
+            // Kernel: `goto miss` — counted toward eviction when
+            // add_new_state still true.
             if prev.children_unsafe {
                 local_children_unsafe_skips += 1;
+                if add_now {
+                    counted_miss_idxs.push(i);
+                }
                 dbg_skip_pc(pc);
                 continue;
             }
@@ -435,6 +474,20 @@ fn handle_standard_pruning(
             // at 584 instead of reaching 748.
             if prev.branches > 0 {
                 saw_active = true;
+                // Kernel skip_inf_loop_check: flips the RUNNING
+                // add_new_state false (unless force/thresholds) — sls
+                // scanned AFTER this point stop counting misses; the
+                // active sl itself is never counted (flip precedes its
+                // `goto miss`).
+                if dampener_would_suppress(env, state, pc) {
+                    add_now = false;
+                }
+                // Kernel: the active sl's own miss IS counted when the
+                // dampener didn't suppress — the eviction driver for
+                // active cadence states (see loop handler).
+                if add_now {
+                    counted_miss_idxs.push(i);
+                }
                 if crate::analysis::trace_pc_in_range(pc) {
                     eprintln!(
                         "[SUBSUM_SKIP_ACTIVE] pc={} prev_idx={} prev.branches={} cache_id={:?} (standard)",
@@ -491,6 +544,9 @@ fn handle_standard_pruning(
                             pc, i, reason, prev.dfs_paths, force_exact,
                         );
                     }
+                    if add_now {
+                        counted_miss_idxs.push(i);
+                    }
                     miss_idxs.push(i);
                     miss_reasons.push(reason);
                 }
@@ -508,30 +564,20 @@ fn handle_standard_pruning(
         }
         true
     } else {
-        // Kernel miss-label guard (verifier.c `miss:` — "when new state is
-        // not going to be added do not increase miss count"): an arrival
-        // whose add the dampener/2-8 heuristic will suppress must NOT bump
-        // miss_cnt (and thus must not drive the n=3 eviction). Without it,
-        // dampener-suppressed loop arrivals evict the ACTIVE loop ancestor
-        // the kernel keeps for the whole loop (its consults never count) —
-        // measured on to_wep pc124: ancestor evicted → bucket empty → a
-        // fresh mid-loop checkpoint at (r6=30,off=344) → the corridor
-        // variant of the same tuple pruned against it → tail iterations
-        // 30-32 lost vs the kernel (the 7-object parity seam).
-        if would_add_new_state(env, state, pc, saw_active) {
-            record_pruning_misses(env, pc, &miss_idxs);
-        }
+        // Kernel miss-label semantics: only the misses counted while the
+        // RUNNING add_new_state was true feed miss_cnt/eviction (the
+        // per-sl `counted_miss_idxs` collected in scan order above).
+        record_pruning_misses(env, pc, &counted_miss_idxs);
         record_subsumption_miss_reasons(env, pc, &miss_reasons);
         false
     }
 }
 
-/// Mirror of run_worklist's `add_new_state` decision (kernel
-/// is_state_visited L20228-31 + the skip_inf_loop_check dampener), for the
-/// miss-label guard above. Uses the same inputs: force (insn_aux ||
-/// jmp_history>40), the env-wide 2/8 heuristic, and the in-loop dampener
-/// (saw_active && dj<20 && di<100). Keep in sync with run_worklist A.c.
-fn would_add_new_state(env: &VerifierEnv, state: &State, pc: usize, saw_active: bool) -> bool {
+/// Base of the kernel's `add_new_state` before the scan (is_state_visited
+/// L20228-31): force (insn_aux || jmp_history>40) or the env-wide 2/8
+/// heuristic. The in-loop dampener then flips it false DURING the scan
+/// (see dampener_would_suppress). Keep in sync with run_worklist A.c.
+fn would_add_new_state_base(env: &VerifierEnv, state: &State, pc: usize) -> bool {
     let force_new_state = env
         .insn_aux_data
         .get(pc)
@@ -540,9 +586,22 @@ fn would_add_new_state(env: &VerifierEnv, state: &State, pc: usize, saw_active: 
         || state.jmp_history_cnt > 40;
     let dj = env.jmps_processed.saturating_sub(env.prev_jmps_processed);
     let di = env.insn_processed.saturating_sub(env.prev_insn_processed);
-    let env_heuristic = dj >= 2 && di >= 8;
-    let loop_dampener = saw_active && !force_new_state && dj < 20 && di < 100;
-    force_new_state || (env_heuristic && !loop_dampener)
+    force_new_state || (dj >= 2 && di >= 8)
+}
+
+/// Kernel skip_inf_loop_check condition (verifier.c ~20320): on
+/// encountering an active (branches>0) cached state, suppress the add
+/// unless force or the loop thresholds are reached.
+fn dampener_would_suppress(env: &VerifierEnv, state: &State, pc: usize) -> bool {
+    let force_new_state = env
+        .insn_aux_data
+        .get(pc)
+        .map(|a| a.force_checkpoint)
+        .unwrap_or(false)
+        || state.jmp_history_cnt > 40;
+    let dj = env.jmps_processed.saturating_sub(env.prev_jmps_processed);
+    let di = env.insn_processed.saturating_sub(env.prev_insn_processed);
+    !force_new_state && dj < 20 && di < 100
 }
 
 /// Bump the per-PC subsumption-miss histogram. One increment per
