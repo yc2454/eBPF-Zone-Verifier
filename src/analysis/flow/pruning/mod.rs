@@ -358,7 +358,11 @@ fn handle_loop_pruning(
     }
 
     env.pruning_stats.loop_walks_miss += 1;
-    record_pruning_misses(env, pc, &miss_idxs);
+    // Kernel miss-label guard — see the matching comment in
+    // handle_standard_pruning (suppressed adds must not count misses).
+    if would_add_new_state(env, state, pc, saw_active_loop) {
+        record_pruning_misses(env, pc, &miss_idxs);
+    }
     record_subsumption_miss_reasons(env, pc, &miss_reasons);
 
     false
@@ -504,10 +508,41 @@ fn handle_standard_pruning(
         }
         true
     } else {
-        record_pruning_misses(env, pc, &miss_idxs);
+        // Kernel miss-label guard (verifier.c `miss:` — "when new state is
+        // not going to be added do not increase miss count"): an arrival
+        // whose add the dampener/2-8 heuristic will suppress must NOT bump
+        // miss_cnt (and thus must not drive the n=3 eviction). Without it,
+        // dampener-suppressed loop arrivals evict the ACTIVE loop ancestor
+        // the kernel keeps for the whole loop (its consults never count) —
+        // measured on to_wep pc124: ancestor evicted → bucket empty → a
+        // fresh mid-loop checkpoint at (r6=30,off=344) → the corridor
+        // variant of the same tuple pruned against it → tail iterations
+        // 30-32 lost vs the kernel (the 7-object parity seam).
+        if would_add_new_state(env, state, pc, saw_active) {
+            record_pruning_misses(env, pc, &miss_idxs);
+        }
         record_subsumption_miss_reasons(env, pc, &miss_reasons);
         false
     }
+}
+
+/// Mirror of run_worklist's `add_new_state` decision (kernel
+/// is_state_visited L20228-31 + the skip_inf_loop_check dampener), for the
+/// miss-label guard above. Uses the same inputs: force (insn_aux ||
+/// jmp_history>40), the env-wide 2/8 heuristic, and the in-loop dampener
+/// (saw_active && dj<20 && di<100). Keep in sync with run_worklist A.c.
+fn would_add_new_state(env: &VerifierEnv, state: &State, pc: usize, saw_active: bool) -> bool {
+    let force_new_state = env
+        .insn_aux_data
+        .get(pc)
+        .map(|a| a.force_checkpoint)
+        .unwrap_or(false)
+        || state.jmp_history_cnt > 40;
+    let dj = env.jmps_processed.saturating_sub(env.prev_jmps_processed);
+    let di = env.insn_processed.saturating_sub(env.prev_insn_processed);
+    let env_heuristic = dj >= 2 && di >= 8;
+    let loop_dampener = saw_active && !force_new_state && dj < 20 && di < 100;
+    force_new_state || (env_heuristic && !loop_dampener)
 }
 
 /// Bump the per-PC subsumption-miss histogram. One increment per
@@ -559,6 +594,15 @@ pub fn should_prune(
     if !is_prune_point(env, pc) {
         env.pruning_stats.not_prune_point += 1;
         return false;
+    }
+
+    // [ARR] per-arrival probe (kernel [ZK arr] mirror) for the
+    // parity-seam event-stream diff: r6 = loop counter, r8 = map cursor.
+    if crate::analysis::trace_pc_in_range(pc) {
+        use crate::analysis::machine::reg::Reg;
+        let r6 = state.get_tnum(Reg::R6);
+        let r8 = state.types.get(Reg::R8);
+        eprintln!("[ARR] pc={} r6tn={:?} r8={:?}", pc, r6, r8);
     }
 
     // Kernel `clean_live_states(env, insn_idx)` — called at the top of
