@@ -397,6 +397,32 @@ pub(crate) fn transfer_store(
             }
             match src {
                 Operand::Reg(r) => {
+                    // Kernel check_stack_write_fixed_off STACK_ZERO rule:
+                    // storing a known-null reg on the MISC/ZERO path (an
+                    // unaligned or non-spillable store) runs the FULL
+                    // `mark_chain_precision(value_regno)` backward walk —
+                    // "backtrack the register to make sure it's a known
+                    // zero". spill_at's local precise_regs mark alone
+                    // never reaches CACHED ancestors: to_wep c15 pc1026
+                    // zero-store left r1 imprecise in the pc1023 cache,
+                    // so the taken-leg (r1=1) wrongly subsumed against
+                    // it where the kernel's precise const-0 rejects it
+                    // (the add-#45 cadence seam).
+                    let is_aligned = full_offset % 8 == 0;
+                    let is_scalar = matches!(
+                        state.types.get(*r),
+                        crate::analysis::machine::reg_types::RegType::ScalarValue
+                    );
+                    let zero_path = !(is_aligned && (is_scalar || size == MemSize::U64));
+                    if zero_path
+                        && is_scalar
+                        && state.domain.proven_zero(*r)
+                        && let Some(hidx) = state.history_idx
+                    {
+                        crate::analysis::flow::precision::mark_chain_precision_backward(
+                            env, hidx, state.parent_cache_id, *r,
+                        );
+                    }
                     state.spill_at(frame_level, *r, full_offset as i16, size);
                 }
                 Operand::Imm(k) => {

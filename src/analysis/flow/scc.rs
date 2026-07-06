@@ -569,7 +569,20 @@ pub fn complete_dfs_branch(env: &mut VerifierEnv, start_cache_id: Option<u32>) {
             // (verifier.c v6.15 L19528 / L19482): mutate the cached
             // state to drop dead regs / dead stack slots, making
             // future subsumption against it looser.
-            crate::analysis::flow::pruning::cache::clean_verifier_state(env, cid);
+            // Kernel gate (verifier.c:19535): a state whose SCC visit
+            // still has pending backedges has INCOMPLETE read marks —
+            // propagate_backedges will add reads later. Cleaning now
+            // drops dims the kernel still compares (to_wep pc1023
+            // taken-leg: eager clean lost the fp-58 STACK_ZERO byte →
+            // zovia HIT where the kernel's un-cleaned cache MISSes on
+            // Zero-vs-Misc). Defer to the lazy retry, which re-checks.
+            let marks_pending = env
+                .state_by_cache_id(cid)
+                .map(|(_, s)| incomplete_read_marks(env, s))
+                .unwrap_or(false);
+            if !marks_pending {
+                crate::analysis::flow::pruning::cache::clean_verifier_state(env, cid);
+            }
             // Kernel `maybe_exit_scc` (verifier.c L2253, called
             // from update_branch_counts when branches→0): if this
             // cached state is the entry of an SCC visit, the

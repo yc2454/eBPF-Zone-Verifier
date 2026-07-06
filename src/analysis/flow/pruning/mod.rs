@@ -554,6 +554,25 @@ fn handle_standard_pruning(
                             "[SUBSUM_MISS] pc={} prev_idx={} reason={:?} prev.dfs_paths={} force_exact={} (non-loop site)",
                             pc, i, reason, prev.dfs_paths, force_exact,
                         );
+                        // Miss-dim probe (124 re-entry seam): same dims as
+                        // [hit_dim] but on the miss path, cur vs the missed
+                        // cache. Env-gated, trace-range-gated.
+                        if std::env::var("ZOVIA_DUMP_MISS_DIMS").ok().as_deref() == Some("1") {
+                            use crate::analysis::machine::reg::Reg;
+                            for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4,
+                                      Reg::R6, Reg::R7, Reg::R8, Reg::R9] {
+                                let (clo, chi) = state.domain.get_interval(r);
+                                let (plo, phi) = prev.domain.get_interval(r);
+                                eprintln!(
+                                    "[miss_dim] pc={} idx={} reg={:?} cur(t={:?} ivl=[{},{}] tn={:?} prec={}) old(t={:?} ivl=[{},{}] tn={:?} prec={})",
+                                    pc, i, r,
+                                    state.types.get(r), clo, chi, state.get_tnum(r),
+                                    state.precise_regs.contains(&r),
+                                    prev.types.get(r), plo, phi, prev.get_tnum(r),
+                                    prev.precise_regs.contains(&r),
+                                );
+                            }
+                        }
                     }
                     if add_now {
                         counted_miss_idxs.push(i);
@@ -690,6 +709,11 @@ pub fn should_prune(
             .map(|v| {
                 v.iter()
                     .filter(|s| !s.cleaned && s.branches == 0)
+                    // Kernel clean_live_states gate (verifier.c:19535):
+                    // pending SCC backedges = incomplete read marks —
+                    // don't clean yet; the retry fires again after
+                    // propagate_backedges settles the marks.
+                    .filter(|s| !crate::analysis::flow::scc::incomplete_read_marks(env, s))
                     .filter_map(|s| s.cache_id)
                     .collect()
             })
