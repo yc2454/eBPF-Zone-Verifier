@@ -733,6 +733,45 @@ fn run_worklist(
         // are conditional on insn-specific flags zovia doesn't model
         // yet — under-counting at those secondary sites is preferred
         // over re-implementing the flag machinery.
+        // Kernel SECONDARY push_jmp_history sites (verifier.c:5677 spill /
+        // :5983 fill): a stack WRITE that is a register spill and a stack
+        // READ that restores a spilled register each push a history entry
+        // (`if (insn_flags) return push_jmp_history(...)`; misc writes and
+        // non-spill reads zero the flags and do NOT count). Loop bodies
+        // spill/fill every iteration, so these dominate history growth on
+        // deep lineages — without them zovia's counter sat at <=12 where
+        // the kernel's crossed 40 on the to_wep corridor unwind, so the
+        // kernel's history-FORCED late loop-head checkpoints (its 9
+        // first=198 adds at 137) never happened here, forks kept crediting
+        // the corridor checkpoint, and the pass-1 loop-head states stayed
+        // active — suppressing re-entry adds (measured 2026-07-05,
+        // [ZK br±/insn] vs [BR]/[INSN] paired probes).
+        let stack_spill_fill = {
+            use crate::analysis::machine::reg::Reg;
+            use crate::analysis::machine::reg_types::RegType;
+            let is_stack_base = |b: &Reg| {
+                *b == Reg::R10
+                    || matches!(state.types.get(*b), RegType::PtrToStack { .. })
+            };
+            match prog.instrs.get(state.pc) {
+                Some(&Instr::Store { ref base, ref src, .. }) => {
+                    is_stack_base(base) && matches!(src, crate::ast::Operand::Reg(_))
+                }
+                Some(&Instr::StoreRel { ref base, .. }) => is_stack_base(base),
+                Some(&Instr::Load { ref base, ref off, .. })
+                | Some(&Instr::LoadAcq { ref base, ref off, .. }) => {
+                    is_stack_base(base)
+                        && matches!(
+                            state.frames.current().stack.get_slot_kind(*off),
+                            Some(crate::analysis::machine::stack_state::StackSlotKind::Spill)
+                        )
+                }
+                _ => false,
+            }
+        };
+        if stack_spill_fill {
+            state.jmp_history_cnt = state.jmp_history_cnt.saturating_add(1);
+        }
         if state.pc < env.insn_aux_data.len()
             && env.insn_aux_data[state.pc].jmp_point
         {
@@ -1083,6 +1122,11 @@ fn run_worklist(
 
         // B. Global Complexity Limit (only count non-pruned states)
         env.insn_processed += 1;
+        // [INSN] corridor execution-order probe (kernel [ZK insn] mirror;
+        // gap analysis — ip jumps between lines = interleaved work).
+        if state.pc >= 185 && state.pc <= 200 && trace_pc_in_range(state.pc) {
+            eprintln!("[INSN] ip={} pc={}", env.insn_processed, state.pc);
+        }
         // Per-PC visit counter (audit hook, ZOVIA_DUMP_VISITS=1). Bumped
         // ONLY on non-pruned expansions so the count reflects state
         // expansions per pc, comparable to the kernel verifier's

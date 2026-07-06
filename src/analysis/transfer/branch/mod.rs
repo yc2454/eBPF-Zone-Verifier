@@ -239,6 +239,15 @@ pub(crate) fn transfer_if(
         }
         if linked.len() > 1 && !env.replay_mode {
             env.history.set_linked_regs(hidx, linked);
+            // Kernel push_jmp_history(..., linked_regs_pack(...)) at
+            // verifier.c:17686 is a real history ENTRY — it counts toward
+            // cur->jmp_history_cnt and thus the >40 long-history force
+            // valve. zovia recorded the breadcrumb without counting it;
+            // on loop lineages (one linked-regs entry per compared-scalar
+            // branch) that halves history growth vs the kernel — the
+            // to_wep corridor unwind sat at <=21 where the kernel crossed
+            // 40 and force-added its re-entry loop-head checkpoints.
+            state.jmp_history_cnt = state.jmp_history_cnt.saturating_add(1);
         }
     }
 
