@@ -806,6 +806,13 @@ pub fn should_prune(
     }
 
     let live_regs = env.insn_aux_data[pc].live_regs.clone();
+    if crate::analysis::trace_pc_in_range(pc)
+        && std::env::var("ZOVIA_DUMP_LIVE_REGS").ok().as_deref() == Some("1")
+    {
+        let mut v: Vec<String> = live_regs.iter().map(|r| format!("{:?}", r)).collect();
+        v.sort();
+        eprintln!("[live_regs] pc={} {:?}", pc, v);
+    }
     // clean_verifier_state analog: the kernel zeroes dead stack slots
     // (clean_func_state → STACK_INVALID) so stacksafe never compares
     // them. zovia's static `live_slots` (sound over-approx MAY-liveness)

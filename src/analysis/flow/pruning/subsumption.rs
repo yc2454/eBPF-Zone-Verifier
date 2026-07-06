@@ -740,7 +740,7 @@ fn domain_subsumed_by(
             zone_subsumed_by(old_dbm, cur_dbm, live_regs)
         }
         (NumericDomain::Interval(old_ivl), NumericDomain::Interval(cur_ivl)) => {
-            interval_subsumed_by(old_ivl, cur_ivl)
+            interval_subsumed_by(old_ivl, cur_ivl, live_regs)
         }
         _ => {
             // Mismatched domain types - should not happen in normal operation
@@ -823,6 +823,7 @@ fn zone_subsumed_by(
 fn interval_subsumed_by(
     old_ivl: &crate::domains::interval::IntervalState,
     cur_ivl: &crate::domains::interval::IntervalState,
+    live_regs: &HashSet<Reg>,
 ) -> bool {
     // Interval domain: check packet_size_lower_bound and meta_size_lower_bound
     // For subsumption, old must be MORE permissive (fewer constraints) than cur.
@@ -830,6 +831,9 @@ fn interval_subsumed_by(
     let old_pkt = old_ivl.get_packet_size_bound().unwrap_or(0);
     let cur_pkt = cur_ivl.get_packet_size_bound().unwrap_or(0);
     if old_pkt > cur_pkt {
+        if std::env::var("ZOVIA_DUMP_DOMAIN_MISS").ok().as_deref() == Some("1") {
+            eprintln!("[ivl_miss] pkt_bound old={} cur={}", old_pkt, cur_pkt);
+        }
         return false;
     }
     let old_meta = old_ivl.get_meta_size_bound().unwrap_or(0);
@@ -850,6 +854,17 @@ fn interval_subsumed_by(
     // never verified — a soundness FALSE_ACCEPT
     // (verifier_xdp_direct_packet_access::pkt_*_bad_access_2_*).
     for r in Reg::ALL {
+        // Kernel func_states_equal (verifier.c:19953): DEAD registers are
+        // never compared — `((1 << i) & live_regs_before) && !regsafe(...)`,
+        // unconditionally at every exact level. zovia's ungated Reg::ALL
+        // loop compared packet ranges on dead regs: to_wep c15 pc462
+        // 3rd arrival — R1 (dead: both successors write before reading)
+        // carried old range=54 vs cur=42 → Domain miss where the kernel
+        // HITs (event #376, the first full-stream divergence). MAY-live
+        // over-approx ⇒ complement is MUST-dead ⇒ skipping is sound.
+        if !live_regs.contains(&r) {
+            continue;
+        }
         let old_po = old_ivl.get_ptr_offset(r);
         let cur_po = cur_ivl.get_ptr_offset(r);
 
@@ -861,8 +876,18 @@ fn interval_subsumed_by(
         let old_range = old_po.and_then(|po| po.range);
         let cur_range = cur_po.and_then(|po| po.range);
         match (old_range, cur_range) {
-            (Some(_), None) => return false,
-            (Some(old_r), Some(cur_r)) if old_r > cur_r => return false,
+            (Some(_), None) => {
+                if std::env::var("ZOVIA_DUMP_DOMAIN_MISS").ok().as_deref() == Some("1") {
+                    eprintln!("[ivl_miss] reg={:?} range old=Some cur=None", r);
+                }
+                return false;
+            }
+            (Some(old_r), Some(cur_r)) if old_r > cur_r => {
+                if std::env::var("ZOVIA_DUMP_DOMAIN_MISS").ok().as_deref() == Some("1") {
+                    eprintln!("[ivl_miss] reg={:?} range old={} cur={}", r, old_r, cur_r);
+                }
+                return false;
+            }
             _ => {}
         }
 
