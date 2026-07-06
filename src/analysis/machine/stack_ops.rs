@@ -75,6 +75,7 @@ impl State {
                         size,
                         ptr_bounds: None,
                         scalar_id: None,
+                        scalar_id_off: None,
                         precise: false,
                         ptr_const_off: None,
                         iterator: None,
@@ -210,6 +211,14 @@ impl State {
             size,
             ptr_bounds,
             scalar_id: slot_scalar_id,
+            // Kernel save_register_state copies the full reg incl the
+            // BPF_ADD_CONST delta (reg->off) — a spilled add-const link
+            // keeps its delta for sync_linked_regs.
+            scalar_id_off: if slot_scalar_id.is_some() {
+                self.scalar_id_off.get(&reg).copied()
+            } else {
+                None
+            },
             precise: is_aligned && size == MemSize::U64 && self.precise_regs.contains(&reg),
             iterator: None,
             dynptr: None,
@@ -247,6 +256,7 @@ impl State {
                         size,
                         ptr_bounds: None,
                         scalar_id: None,
+                        scalar_id_off: None,
                         precise: false,
             ptr_const_off: None,
                         iterator: None,
@@ -257,6 +267,42 @@ impl State {
                         kind: crate::analysis::machine::stack_state::StackSlotKind::Spill,
                     },
                 );
+            }
+        }
+        // Kernel `save_register_state` sub-8 spill scrub (verifier.c:5497
+        // `scrub_spilled_slot`): the REMAINDER of the 8-byte slot is
+        // scrubbed — STACK_INVALID stays invalid, anything else becomes
+        // STACK_MISC. Without this a stale full-spill's residue bytes
+        // survive as SPILL and stacksafe's per-byte kind rule diverges
+        // from the kernel (to_wep pc1017: zovia cur [Spill×8] vs kernel
+        // [Spill×4,Misc×4] → zovia hit where the kernel misses).
+        if is_aligned && size.bytes() < 8 {
+            for b in (offset + size.bytes() as i16)..(offset + 8) {
+                if stack.get_slot_kind(b).is_some() {
+                    stack.insert(
+                        b,
+                        SpilledReg {
+                            source_reg: None,
+                            reg_type: RegType::ScalarValue,
+                            tnum: Tnum::unknown(),
+                            bounds: ScalarBounds {
+                                min: i64::MIN,
+                                max: i64::MAX,
+                            },
+                            size,
+                            ptr_bounds: None,
+                            scalar_id: None,
+                            scalar_id_off: None,
+                            precise: false,
+                            ptr_const_off: None,
+                            iterator: None,
+                            dynptr: None,
+                            irq_flag: None,
+                            bcf_expr: None,
+                            kind: crate::analysis::machine::stack_state::StackSlotKind::Misc,
+                        },
+                    );
+                }
             }
         }
     }
@@ -319,6 +365,7 @@ impl State {
             size,
             ptr_bounds: None,
             scalar_id: None,
+            scalar_id_off: None,
             precise: false,
             ptr_const_off: None,
             iterator: None,
@@ -351,6 +398,7 @@ impl State {
                         size,
                         ptr_bounds: None,
                         scalar_id: None,
+                        scalar_id_off: None,
                         precise: false,
             ptr_const_off: None,
                         iterator: None,
@@ -480,6 +528,14 @@ impl State {
             } else {
                 self.scalar_ids.remove(&dst);
             }
+            match spilled.scalar_id_off {
+                Some(off) if spilled.scalar_id.is_some() => {
+                    self.scalar_id_off.insert(dst, off);
+                }
+                _ => {
+                    self.scalar_id_off.remove(&dst);
+                }
+            }
             if spilled.precise {
                 self.precise_regs.insert(dst);
             } else {
@@ -508,6 +564,16 @@ impl State {
                 self.scalar_ids.insert(dst, id);
             } else {
                 self.scalar_ids.remove(&dst);
+            }
+            // Restore the kernel BPF_ADD_CONST delta alongside the id
+            // (copy_register_state preserves id|BPF_ADD_CONST + off).
+            match spilled.scalar_id_off {
+                Some(off) if spilled.scalar_id.is_some() => {
+                    self.scalar_id_off.insert(dst, off);
+                }
+                _ => {
+                    self.scalar_id_off.remove(&dst);
+                }
             }
 
             // Restore precision mark carried at spill time.
@@ -560,6 +626,7 @@ impl State {
             self.tnums.insert(dst, tn);
             self.domain.assign_interval(dst, lo, hi);
             self.scalar_ids.remove(&dst);
+            self.scalar_id_off.remove(&dst);
             self.precise_regs.remove(&dst);
             // zovia-only tnum sub-slice precision; the kernel reaches
             // these states via __mark_reg_unknown (bcf_expr = -1). Clear
@@ -572,6 +639,7 @@ impl State {
             self.tnums.insert(dst, Tnum::unknown());
             self.domain.assign_interval(dst, min, max);
             self.scalar_ids.remove(&dst);
+            self.scalar_id_off.remove(&dst);
             self.precise_regs.remove(&dst);
             // Kernel mark_reg_unknown path → bcf_expr = -1.
             restore_slot_bcf_expr(self, dst, None);

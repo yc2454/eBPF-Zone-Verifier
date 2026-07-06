@@ -251,6 +251,11 @@ pub struct SpilledReg {
     /// wires assignment/linking; refinement propagates bound/tnum
     /// tightenings across all slots and registers sharing the same id.
     pub scalar_id: Option<u32>,
+    /// Kernel `BPF_ADD_CONST` delta carried across spill/fill: the kernel's
+    /// `save_register_state` copies the full reg (id|BPF_ADD_CONST + off)
+    /// into `spilled_ptr`, so a spilled add-const link participates in
+    /// `sync_linked_regs` with its delta. `None` = base link (delta 0).
+    pub scalar_id_off: Option<i64>,
     /// Precision mark carried from the source register at spill time
     /// . Restored on fill so a register reloaded from the stack
     /// stays on the precise chain.
@@ -429,6 +434,7 @@ impl StackState {
                     size: MemSize::U64,
                     ptr_bounds: None,
                     scalar_id: None,
+                    scalar_id_off: None,
                     precise: false,
             ptr_const_off: None,
                     iterator: None,
@@ -469,6 +475,7 @@ impl StackState {
                 size: MemSize::U64,
                 ptr_bounds: None,
                 scalar_id: None,
+                    scalar_id_off: None,
                 precise: false,
             ptr_const_off: None,
                 iterator: None,
@@ -513,8 +520,10 @@ impl StackState {
         if cur.source_reg != prev.source_reg {
             cur.source_reg = None;
             cur.scalar_id = None;
-        } else if cur.scalar_id != prev.scalar_id {
+            cur.scalar_id_off = None;
+        } else if cur.scalar_id != prev.scalar_id || cur.scalar_id_off != prev.scalar_id_off {
             cur.scalar_id = None;
+            cur.scalar_id_off = None;
         }
         cur.precise = false;
         cur.ptr_bounds = None;

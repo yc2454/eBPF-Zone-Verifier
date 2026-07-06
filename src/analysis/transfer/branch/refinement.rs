@@ -96,6 +96,7 @@ fn fanout_scalar_bounds(state: &mut State, left: Reg) {
     // ── Stack slots ──────────────────────────────────────────────────────────
     // Only propagate to scalar slots; apply the same consistency guard as for
     // registers so that a subsequent fill_at doesn't load inconsistent bounds.
+    let state_pc = state.pc;
     for frame in state.frames.iter_mut() {
         for (_, slot) in frame.stack.iter_mut() {
             if slot.scalar_id != Some(id) {
@@ -104,6 +105,19 @@ fn fanout_scalar_bounds(state: &mut State, left: Reg) {
             if slot.reg_type != RegType::ScalarValue {
                 continue;
             }
+            // Kernel sync_linked_regs delta for spilled links: the slot
+            // holds `base + slot_off` while `left` holds `base + left_off`,
+            // so left's refined range applies to the slot SHIFTED by
+            // (slot_off - left_off). Without the shift a branch on an
+            // add-const reg (e.g. r8 = slot + 30) writes r8's range raw
+            // into the base slot — an unsound tightening (to_wep pc357:
+            // slot[0,65535] -> [30,65535]).
+            let delta = slot.scalar_id_off.unwrap_or(0).saturating_sub(left_off);
+            let (lo, hi, tnum) = if delta == 0 {
+                (lo, hi, tnum)
+            } else {
+                (lo.saturating_add(delta), hi.saturating_add(delta), tnum.add_imm(delta))
+            };
             if lo > slot.bounds.max || hi < slot.bounds.min {
                 continue;
             }
@@ -111,6 +125,15 @@ fn fanout_scalar_bounds(state: &mut State, left: Reg) {
             let new_max = if hi < slot.bounds.max { hi } else { slot.bounds.max };
             if new_min > new_max {
                 continue; // Would make bounds inconsistent — skip
+            }
+            if (new_min, new_max) != (slot.bounds.min, slot.bounds.max)
+                && std::env::var("ZOVIA_DUMP_SLOT_FANOUT").ok().as_deref() == Some("1")
+            {
+                eprintln!(
+                    "[slot-fanout] pc={} left={:?} left_off={} slot_bounds=[{},{}] -> [{},{}] from=[{},{}]",
+                    state_pc, left, left_off, slot.bounds.min, slot.bounds.max,
+                    new_min, new_max, lo, hi
+                );
             }
             slot.bounds.min = new_min;
             slot.bounds.max = new_max;
