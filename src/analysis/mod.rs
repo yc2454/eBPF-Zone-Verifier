@@ -944,6 +944,21 @@ fn run_worklist(
             }
         }
 
+        // Kernel do_check: `++env->insn_processed` (verifier.c:21172)
+        // runs BEFORE is_state_visited (21189) — EVERY arrival counts,
+        // including ones that then prune. zovia's old placement ("only
+        // count non-pruned states", after the record block) skipped +1
+        // per hit, so cadence deltas (dj/di vs kernel di) drifted one
+        // insn per pruned sibling — the ±1 add-phase skew across the
+        // whole parity arc (to_wep 994-1013 corridor: kernel leg3
+        // di=3 vs zovia id=2 at the same walk point).
+        env.insn_processed += 1;
+        // [INSN] corridor execution-order probe (kernel [ZK insn]
+        // mirror at the same pre-check position, verifier.c:21181).
+        if state.pc >= 185 && state.pc <= 200 && trace_pc_in_range(state.pc) {
+            eprintln!("[INSN] ip={} pc={}", env.insn_processed, state.pc);
+        }
+
         // A.b PRUNING CHECK
         if pruning::should_prune(env, &mut state, config, prog) {
             if diag_hit {
@@ -1120,13 +1135,8 @@ fn run_worklist(
             );
         }
 
-        // B. Global Complexity Limit (only count non-pruned states)
-        env.insn_processed += 1;
-        // [INSN] corridor execution-order probe (kernel [ZK insn] mirror;
-        // gap analysis — ip jumps between lines = interleaved work).
-        if state.pc >= 185 && state.pc <= 200 && trace_pc_in_range(state.pc) {
-            eprintln!("[INSN] ip={} pc={}", env.insn_processed, state.pc);
-        }
+        // B. Global Complexity Limit (increment moved above the pruning
+        // check — kernel order; see comment there.)
         // Per-PC visit counter (audit hook, ZOVIA_DUMP_VISITS=1). Bumped
         // ONLY on non-pruned expansions so the count reflects state
         // expansions per pc, comparable to the kernel verifier's
