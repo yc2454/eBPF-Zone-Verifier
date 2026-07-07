@@ -1125,6 +1125,33 @@ fn stack_subsumed_by(
                 }
             }
 
+            // Kernel stacksafe: the spilled-register comparison (regsafe on
+            // `stack[spi].spilled_ptr`) runs ONCE per slot, gated on byte 7
+            // (verifier.c:19796 `if (i % BPF_REG_SIZE != BPF_REG_SIZE - 1)
+            // continue;`) — and byte 7 is only reached when it is SPILL (a
+            // MISC/INVALID byte 7 was already skipped, incl. the
+            // allow_uninit_stack MISC skip at :19742). So a SUB-8-BYTE spill
+            // whose remainder is MISC (byte 7 == MISC) gets NO reg
+            // comparison: as OLD it covers any cur (the misc remainder reads
+            // as an unbound scalar). zovia stores the slot's reg at the BASE
+            // byte and iterates per-byte, so it was comparing the reg on
+            // EVERY spill byte — over-strict vs the kernel's byte-7-only
+            // rule. Restrict the reg comparison to the base byte, gated on
+            // the slot's LAST byte being SPILL in OLD.
+            // Fixes the to_wep c15 pc140 loop-EXIT convergence: the r6=0
+            // (loop-skipped → fp-64 = u32 store → Spill×4+Misc×4) and r6>=1
+            // (loop-ran → u64 store → Spill×8) exit states now merge to 1
+            // like the kernel (was 9 distinct → the ICMP-treadmill source).
+            {
+                use crate::analysis::machine::stack_state::StackSlotKind;
+                let slot_base = offset.div_euclid(8) * 8;
+                let old_last_spill = old_frame.stack.get_slot_kind(slot_base + 7)
+                    == Some(StackSlotKind::Spill);
+                if offset != slot_base || !old_last_spill {
+                    continue;
+                }
+            }
+
             let old_ty = old_frame.stack.get_slot_type(offset);
             let new_ty = new_frame.stack.get_slot_type(offset);
             // Stack-specific subsumption is STRICTER than register
