@@ -57,6 +57,29 @@ thread_local! {
     // base→reject replay when zovia's path crossed higher-pc code before
     // the base (from_l3_co-re_v6 fe23e625). ADDITIVE via union modes.
     static TRAJ_SUFFIX: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    // Retry-round covered check (ZOVIA_BCF_ROUNDS): build the natural goal
+    // and return WITHOUT proving. The kernel's FOUND path
+    // (bcf_bundle_try_discharge) hashes the canonical goal and looks it up
+    // in the bundle — no solver runs on a discharge hit.
+    static HASH_ONLY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Natural-goal canonical hash WITHOUT proving — the retry-round mirror's
+/// covered check. Returns the same `cond_hash` that
+/// `try_prove_unreachable` + `RefineEntry::new` would compute for this
+/// reject, but skips cvc5 entirely (kernel `bcf_bundle_try_discharge`
+/// analog: hash lookup only).
+pub fn natural_goal_hash(
+    state: &State,
+    base_pc: Option<usize>,
+    prev_insn_pc: Option<usize>,
+) -> Option<u64> {
+    HASH_ONLY.with(|c| c.set(true));
+    let r = try_prove_unreachable_inner(
+        state, base_pc, prev_insn_pc, true, None, false, None, None, false,
+    );
+    HASH_ONLY.with(|c| c.set(false));
+    r.map(|ok| crate::refinement::canonical_hash::hash_expr(ok.goal_root, &ok.sym.exprs))
 }
 
 /// Trajectory-suffix window variants of [`try_prove_unreachable`] — same
@@ -1135,6 +1158,12 @@ fn try_prove_unreachable_inner(
             "[goalmode] hash=0x{:016x} fresh_rewrite={} faithful_fold={} base_pc={:?}",
             h, do_fresh_var_rewrite, faithful_fold, base_pc
         );
+    }
+
+    // Retry-round covered check: hand the built goal back unproven (the
+    // caller only wants its canonical hash — kernel bundle-lookup analog).
+    if HASH_ONLY.with(|c| c.get()) {
+        return Some(UnreachableOk { proof_bytes: Vec::new(), goal_root, sym });
     }
 
     // Don't set sym.refine_cond — leaving it None makes smtlib::encode

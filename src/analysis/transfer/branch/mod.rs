@@ -838,6 +838,24 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
         eprintln!("[disc] reject@pc={} base_pc={:?} prev_insn_pc={:?} parent_cid={:?} base_cid={:?}",
                   state.pc, base_pc, prev_insn_pc, state.parent_cache_id, base_cid_dbg);
     }
+    // Kernel retry-round mirror (ZOVIA_BCF_ROUNDS=1): a reject whose
+    // natural goal is covered by a PRIOR round's emission discharges
+    // straight from the accumulated bundle — no cvc5, no new pushes — and
+    // the parents still get marked (kernel bcf_refine marks
+    // children_unsafe UNCONDITIONALLY after a FOUND
+    // bcf_bundle_try_discharge, verifier.c:24697). The first UNCOVERED
+    // reject ends the round at the success returns below (kernel
+    // mark_bcf_requested → the load fails → the loader retries from
+    // scratch with the grown bundle).
+    if env.bcf_rounds_mode
+        && let Some(h) = crate::refinement::refine_unreachable::natural_goal_hash(
+            state, base_pc, prev_insn_pc,
+        )
+        && env.bcf_round_covered.contains(&h)
+    {
+        crate::analysis::flow::pruning::cache::mark_path_children_unsafe(env, state, base_cid_dbg);
+        return true;
+    }
     // LEAN EMISSION — THE DEFAULT (census arc 2026-07-04/05, memory
     // project_over_emission_census_2026-07-04): emit the replay family
     // (replay_base all rungs + ancestor replays depth 0-1) and fall through
@@ -904,6 +922,18 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
         ok.proof_bytes,
         BCF_BUNDLE_KIND_UNREACHABLE,
     );
+    // The retry-round covered-set key for this reject. MUST equal what the
+    // covered check (`natural_goal_hash`) computes next round — NOT
+    // `entry.cond_hash`: when cvc5 declines the K==K rewrite,
+    // try_prove_unreachable returns the un-rewritten FALLBACK goal whose
+    // hash differs from the hash-only build → the check never hits →
+    // round livelock (first prototype run: 4096 rounds, 18 entries).
+    let natural_cond_hash = if env.bcf_rounds_mode {
+        crate::refinement::refine_unreachable::natural_goal_hash(state, base_pc, prev_insn_pc)
+            .unwrap_or(entry.cond_hash)
+    } else {
+        entry.cond_hash
+    };
     info!(
         target: "app",
         "[bcf] path-unreachable speculation: cvc5 proof {} bytes (hash {:016x})",
@@ -997,6 +1027,12 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
                 }
             }
             crate::analysis::flow::pruning::cache::mark_path_children_unsafe(env, state, base_cid_dbg);
+            // Retry-round mirror: first uncovered reject ends the round
+            // (kernel mark_bcf_requested — the load fails here).
+            if env.bcf_rounds_mode {
+                env.bcf_round_stop = true;
+                env.bcf_round_new = Some(natural_cond_hash);
+            }
             return true;
         }
     }
@@ -1299,5 +1335,11 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     // pc246 route-B). Scoped to the same suffix base as the
     // path_conds (kernel parents[0..vstate_cnt-1]).
     crate::analysis::flow::pruning::cache::mark_path_children_unsafe(env, state, base_cid_dbg);
+    // Retry-round mirror: first uncovered reject ends the round (fat /
+    // base-less fallback path; same semantics as the lean return above).
+    if env.bcf_rounds_mode {
+        env.bcf_round_stop = true;
+        env.bcf_round_new = Some(natural_cond_hash);
+    }
     true
 }
