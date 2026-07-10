@@ -1037,6 +1037,9 @@ fn run_worklist(
             // SCC: this DFS path is done (subsumed by a cached state).
             // Decrement parent.branches up the chain; if a parent's
             // branches hits 0 propagate its loop_entry to its parent.
+            if std::env::var("ZOVIA_DBG_CDB").ok().as_deref() == Some("1") {
+                eprintln!("[dbg-cdb] PRUNE-death pc={} parent={:?}", state.pc, state.parent_cache_id);
+            }
             crate::analysis::flow::scc::complete_dfs_branch(env, state.parent_cache_id);
             continue;
         }
@@ -1484,6 +1487,9 @@ fn run_worklist(
             // Kernel process_bpf_exit: propagate live-stack marks first.
             flow::live_stack::update_live_stack(env, &ls_key);
             // Decrement parent chain analogously to the prune-hit path.
+            if std::env::var("ZOVIA_DBG_CDB").ok().as_deref() == Some("1") {
+                eprintln!("[dbg-cdb] EXIT-death pc={} parent={:?}", cur_insn_pc, cur_parent_cache_id);
+            }
             crate::analysis::flow::scc::complete_dfs_branch(env, cur_parent_cache_id);
         }
         for succ in loop_back {

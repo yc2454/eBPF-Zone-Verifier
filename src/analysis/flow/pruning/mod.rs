@@ -540,7 +540,7 @@ fn handle_standard_pruning(
                                     prev.precise_regs.contains(&r),
                                 );
                             }
-                            for off in [-64i16, -60, -57, -56, -232, -216] {
+                            for off in [-64i16, -60, -57, -56, -232, -216, -296, -248] {
                                 let cs = state.frames.current().stack.get_slot(off);
                                 let ps = prev.frames.current().stack.get_slot(off);
                                 eprintln!(

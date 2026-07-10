@@ -128,6 +128,12 @@ pub fn clean_verifier_state(env: &mut VerifierEnv, cid: u32) {
                     "[CLEAN] pc={} frame={} fip={} alive_mask={:#x}",
                     st_pc, fi, fip, alive
                 );
+                if std::env::var("ZOVIA_DBG_LIVE26").ok().as_deref() == Some("1") {
+                    crate::analysis::flow::live_stack::dbg_dump_bit(
+                        &env.live_stack, &ls_key, fi, 26,
+                        &[866, 870, 871, 1326, 1348, 1401, 1433, 1463, 1776, 1961, 1987],
+                    );
+                }
             }
             (regs, alive)
         })
