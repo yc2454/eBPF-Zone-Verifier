@@ -53,14 +53,31 @@ pub fn mark_chain_precision_backward(
     parent_cache_id: Option<u32>,
     sink_reg: Reg,
 ) {
+    mark_chain_precision_backward_seeded(env, history_idx, parent_cache_id, &[sink_reg], &[]);
+}
+
+/// Batched variant (kernel `mark_chain_precision_batch` after seeding
+/// `bt` with regs AND frame slots — `propagate_precision`
+/// verifier.c:20003 seeds both from the matched cache): one lineage
+/// walk with the reg frontier AND the stack frontier pre-seeded.
+pub fn mark_chain_precision_backward_seeded(
+    env: &mut VerifierEnv,
+    history_idx: usize,
+    parent_cache_id: Option<u32>,
+    sink_regs: &[Reg],
+    sink_slots: &[i16],
+) {
     // Suppressed during faithful-discharge replay: re-executing the suffix
     // must not re-mark precision on the shared history (the marks already
     // exist from the original forward pass).
     if env.replay_mode {
         return;
     }
+    if sink_regs.is_empty() && sink_slots.is_empty() {
+        return;
+    }
     let mut frontier: HashSet<Reg> = HashSet::new();
-    frontier.insert(sink_reg);
+    frontier.extend(sink_regs.iter().copied());
 
     // Stack-slot precision frontier. Mirrors the kernel's bt->stack_masks
     // (__mark_chain_precision): when the backward walk crosses a register
@@ -75,6 +92,7 @@ pub fn mark_chain_precision_backward(
     // Tracks byte offsets (the same key `stack_subsumed_by`/`get_slot`
     // use). Validated calico-19 19/19 + cilium-17 17/17 (2026-05-30).
     let mut stack_frontier: HashSet<i16> = HashSet::new();
+    stack_frontier.extend(sink_slots.iter().copied());
 
     let caller_saved = [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5];
 
@@ -283,6 +301,11 @@ pub fn mark_chain_precision_backward(
                 for &slot_off in &stack_frontier {
                     if let Some(slot) = cur_frame.stack.get_slot_mut(slot_off) {
                         slot.precise = true;
+                        if slot_off == -248
+                            && std::env::var("ZOVIA_DBG_P248").ok().as_deref() == Some("1")
+                        {
+                            eprintln!("[prec-248] marked cid={:?} (cache pc={})", current_parent_id, s.pc);
+                        }
                     }
                 }
             }
@@ -325,10 +348,45 @@ pub fn mark_chain_precision_backward(
 /// only to per-path-lineage cached states, not all-states-at-pc.
 pub fn propagate_precision(env: &mut VerifierEnv, cur: &State, old: &State) {
     let regs: Vec<Reg> = old.precise_regs.iter().copied().collect();
+    // Kernel propagate_precision (verifier.c:20003) seeds `bt` with the
+    // matched cache's precise REGS *and* its precise spilled-scalar
+    // STACK SLOTS (`is_spilled_reg && spilled_ptr.precise` →
+    // bt_set_frame_slot) before one mark_chain_precision_batch walk.
+    // zovia propagated only regs — so a cache holding a PRECISE
+    // spilled state-tag (from_l3 fp-248: precise consts 5/6/1029/8197/
+    // 9221, kernel EQFAILs ×24k on it) never pushed that mark onto the
+    // arriving path's lineage; the arriving lineage's own checkpoints
+    // (e.g. the 1089-caches) stayed imprecise and wildcard-merged
+    // arrivals with DIFFERENT tags where the kernel keeps them apart
+    // (measured [ZK fse]/hit_dim 2026-07-10). Current-frame slots only
+    // (zovia's stack frontier is current-frame-scoped; calico is
+    // frame0-dominant — extend with per-frame frontiers if a
+    // multi-frame case surfaces).
+    let slots: Vec<i16> = old
+        .frames
+        .current()
+        .stack
+        .slot_offsets()
+        .into_iter()
+        .filter(|&off| {
+            old.frames.current().stack.get_slot(off).is_some_and(|s| {
+                s.precise
+                    && matches!(
+                        s.kind,
+                        crate::analysis::machine::stack_state::StackSlotKind::Spill
+                    )
+                    && matches!(s.reg_type, crate::analysis::machine::reg_types::RegType::ScalarValue)
+            })
+        })
+        .collect();
     let Some(history_idx) = cur.history_idx else { return };
-    for r in regs {
-        mark_chain_precision_backward(env, history_idx, cur.parent_cache_id, r);
-    }
+    mark_chain_precision_backward_seeded(
+        env,
+        history_idx,
+        cur.parent_cache_id,
+        &regs,
+        &slots,
+    );
 }
 
 /// Companion to `bcf_suffix_base_pc`: same walk, but returns
