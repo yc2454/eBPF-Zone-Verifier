@@ -1145,9 +1145,22 @@ fn stack_subsumed_by(
             {
                 use crate::analysis::machine::stack_state::StackSlotKind;
                 let slot_base = offset.div_euclid(8) * 8;
-                let old_last_spill = old_frame.stack.get_slot_kind(slot_base + 7)
+                // Kernel layout mapping (save_register_state, verifier.c:
+                // `for (i = BPF_REG_SIZE; i > BPF_REG_SIZE - size; i--)
+                // slot_type[i-1] = STACK_SPILL`): the kernel marks spill
+                // bytes TOP-DOWN, so ITS byte 7 is SPILL for EVERY spilled
+                // reg (any size) — the byte-7 gate only skips slots whose
+                // spill ANCHOR was scrubbed by a later partial overwrite.
+                // zovia marks spills BOTTOM-UP (Spill at [0..size), Misc
+                // above), so the kernel's byte-7 ≡ zovia's BASE byte.
+                // Gating on zovia's byte 7 (the 2bd0fa2 misreading) skipped
+                // the whole reg/type/precision compare for every sub-8-byte
+                // spill: from_l3_fib_no_log pc491 — cur fp-216=[0,60]
+                // imprecise HIT a cached PRECISE const-20 u32 spill, where
+                // the kernel SPILLFAILs (measured, [ZK stk] 2026-07-10).
+                let old_anchor_spill = old_frame.stack.get_slot_kind(slot_base)
                     == Some(StackSlotKind::Spill);
-                if offset != slot_base || !old_last_spill {
+                if offset != slot_base || !old_anchor_spill {
                     continue;
                 }
             }
