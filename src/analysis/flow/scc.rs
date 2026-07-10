@@ -576,13 +576,21 @@ pub fn complete_dfs_branch(env: &mut VerifierEnv, start_cache_id: Option<u32>) {
             // taken-leg: eager clean lost the fp-58 STACK_ZERO byte →
             // zovia HIT where the kernel's un-cleaned cache MISSes on
             // Zero-vs-Misc). Defer to the lazy retry, which re-checks.
-            let marks_pending = env
-                .state_by_cache_id(cid)
-                .map(|(_, s)| incomplete_read_marks(env, s))
-                .unwrap_or(false);
-            if !marks_pending {
-                crate::analysis::flow::pruning::cache::clean_verifier_state(env, cid);
-            }
+            // Kernel has NO eager clean here: `clean_live_states` has
+            // exactly ONE call site — is_state_visited
+            // (verifier.c:20230), i.e. caches are scrubbed LAZILY at
+            // the next ARRIVAL at their pc, not at the branches→0
+            // event. The eager clean this block used to run froze the
+            // scrub with the liveness snapshot of the subtree-
+            // completion instant — BEFORE sibling explorations commit
+            // their must_write kills — so slots the kernel scrubs
+            // (dead) stayed alive-kept in zovia's caches (to_lo
+            // 866/fp-216: kernel kills @1401/1433 committed at ip
+            // 656-1045 by sibling walks; its lazy clean at the ip-1198
+            // arrival scrubbed → HIT; zovia's eager clean pre-dated
+            // the kills, kept the slot → Stack-MISS → seam #63,
+            // measured [ZK wc26]/[ZK slot26] 2026-07-10). The lazy
+            // site in pruning/mod.rs is the kernel's clean.
             // Kernel `maybe_exit_scc` (verifier.c L2253, called
             // from update_branch_counts when branches→0): if this
             // cached state is the entry of an SCC visit, the
