@@ -730,6 +730,54 @@ fn try_prove_unreachable_via_replay(
     for (reset_after_idx, pre_reset) in reset_points {
         let mut base_state = base_state.clone();
         base_state.reset_bcf_for_replay();
+        // Kernel bcf_track START-PUSH (verifier.c:24499 `env->prev_insn_idx
+        // = vstate->last_insn_idx` + record_path_cond:20968): the goal's
+        // FIRST cond is the base checkpoint's CREATING branch, evaluated on
+        // the base state's (post-branch) regs — the re-execution replay
+        // starts AFTER that branch and would otherwise drop it. from_l3
+        // pc491: the If-391 `if w0 == 0` edge contributes
+        // (extract32(V0)==0) plus V0's 64-bit bounds (low32 pinned
+        // post-branch) = the 0x93e806b6 leading conjuncts. Kernel guards
+        // mirrored: branch insns only (JA/CALL/EXIT skipped by the If
+        // match), scalar dst/src only. Rung variants re-reset downstream,
+        // wiping this push — correct (their anchor is the rung insn).
+        if std::env::var("ZOVIA_BCF_REPLAY_DEBUG").ok().as_deref() == Some("1") {
+            let dbg = env.state_by_cache_id(base_cid).and_then(|(pc, c)| {
+                c.history_idx
+                    .and_then(|h| env.history.get(h))
+                    .map(|bc| (pc, bc.pc, format!("{:?}", bc.instr)))
+            });
+            eprintln!("[replay] STARTPUSH? base_cid={} -> {:?}", base_cid, dbg);
+        }
+        if let Some((_, cached)) = env.state_by_cache_id(base_cid)
+            && let Some(hidx) = cached.history_idx
+            && let Some(bc) = env.history.get(hidx)
+            && let Instr::If { width, left, op, right, target } = bc.instr.clone()
+            && matches!(
+                base_state.types.get(left),
+                crate::analysis::machine::reg_types::RegType::ScalarValue
+            )
+            && match &right {
+                Operand::Reg(r) => matches!(
+                    base_state.types.get(*r),
+                    crate::analysis::machine::reg_types::RegType::ScalarValue
+                ),
+                _ => true,
+            }
+        {
+            let prev_pc = bc.pc;
+            if let Some((op_then, op_else)) = cmp_op_to_bcf_pair(op) {
+                // Kernel record_path_cond: non_taken = (prev+1 == insn_idx).
+                let taken = path[0].0 != prev_pc + 1;
+                let _ = target;
+                let op_byte = if taken { op_then } else { op_else };
+                let pre_b =
+                    crate::analysis::transfer::alu::helpers::bcf_reg_bounds(&base_state, left);
+                record_path_cond_for_side(
+                    &mut base_state, width, left, op, op_byte, &right, prev_pc, None, pre_b,
+                );
+            }
+        }
         env.replay_mode = true;
         let mut holder: Option<State> = Some(base_state);
         for i in 0..n_exec {
