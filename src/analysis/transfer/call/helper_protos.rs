@@ -823,7 +823,11 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
             Anything,  // R3: arg1
             Anything,  // R4: arg2
             Anything,  // R5: arg3
-        ]),
+        ])
+        // Kernel bpf_trace_printk_proto: fmt/fmt_size ARE a checked
+        // mem/size pair — the fmt bytes get bounds-checked and live-stack
+        // READ-MARKED (see pairs::TRACE_PRINTK for the full story).
+        .mem_size_pairs(&pairs::TRACE_PRINTK),
 
         // bpf_trace_vprintk(fmt, fmt_size, data, data_len) -> int. Real
         // helper (id 177), gpl_only. Kernel proto (kernel/trace/

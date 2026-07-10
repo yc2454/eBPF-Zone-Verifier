@@ -684,6 +684,19 @@ pub(crate) mod pairs {
     // R2=ARG_CONST_SIZE) are bounded by the ConstSize arg kind, exactly
     // like bpf_trace_printk (no explicit pair).
     pub static TRACE_VPRINTK: [MemSizePair; 1] = [MemSizePair::new_nullable(Reg::R3, Reg::R4)];
+    // bpf_trace_printk(fmt, fmt_size, ...): R1=fmt (ARG_PTR_TO_MEM|
+    // MEM_RDONLY) paired with R2=fmt_size (ARG_CONST_SIZE) — kernel
+    // bpf_trace_printk_proto. The kernel walks the fmt buffer
+    // (check_mem_size_reg → check_helper_mem_access → check_stack_read)
+    // and READ-MARKS its bytes in live stack. The prior "ConstSize
+    // bounds it, no explicit pair" skipped the walk entirely: fmt slots
+    // stayed read-dead, clean_verifier_state scrubbed them from cached
+    // states, and printk-dense (debug-variant) programs over-merged at
+    // joins the kernel keeps distinct (to_lo_debug_v6 pc2014 fp-232 =
+    // the 0x356c9c55 C1 miss; event-stream diff 2026-07-09: kernel
+    // marks fp-232 at every call-6 site 2812/2844/3191/5050/…, zovia
+    // only at 94/157).
+    pub static TRACE_PRINTK: [MemSizePair; 1] = [MemSizePair::new(Reg::R1, Reg::R2)];
     pub static STRNCMP: [MemSizePair; 1] = [MemSizePair::new(Reg::R1, Reg::R2)];
     // ARG_CONST_SIZE_OR_ZERO: kernel admits size=0 (no buffer access),
     // mirrors `bpf_get_stack`'s `ARG_CONST_SIZE_OR_ZERO` flag at the

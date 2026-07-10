@@ -282,6 +282,19 @@ pub fn mark_stack_read(
     insn_idx: usize,
     mask: u64,
 ) {
+    // Diagnostic (ZOVIA_DBG_SPI=N): report every read-mark CALL on a
+    // frame0 slot — including gated-out ones (replay/disabled) — the
+    // to_lo fp-232 (spi 28) live-stack divergence probe.
+    if frameno == 0
+        && let Ok(spi_s) = std::env::var("ZOVIA_DBG_SPI")
+        && let Ok(spi) = spi_s.parse::<u32>()
+        && mask & (1u64 << spi) != 0
+    {
+        eprintln!(
+            "[dbg-spi] frame0 spi={} read-mark call insn={} mask=0x{:x} enabled={} replay={}",
+            spi, insn_idx, mask, env.live_stack.enabled, env.replay_mode
+        );
+    }
     if !env.live_stack.enabled || env.replay_mode || mask == 0 {
         return;
     }

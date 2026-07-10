@@ -431,6 +431,18 @@ fn handle_standard_pruning(
     // approximation) protected everything and locked the bucket.
     let mut add_now = would_add_new_state_base(env, state, pc);
     let mut counted_miss_idxs: Vec<usize> = Vec::new();
+    // Event-stream probe (trace-range-gated): kernel [ZK sv<pc>] ARRIVE
+    // analog — every arrival at a traced pc with its lineage (parent cid)
+    // and the running add decision.
+    if crate::analysis::trace_pc_in_range(pc) {
+        eprintln!(
+            "[SUBSUM_ARRIVE] pc={} parent_cid={:?} add_now={} n_cands={}",
+            pc,
+            state.parent_cache_id,
+            add_now,
+            env.explored_states.get(&pc).map(|v| v.len()).unwrap_or(0)
+        );
+    }
     if let Some(prev_states) = env.explored_states.get(&pc) {
         for (i, prev) in prev_states.iter().enumerate().rev() {
             // Kernel children_unsafe (bcf_refine, verifier.c:24580-81):
@@ -442,6 +454,12 @@ fn handle_standard_pruning(
                 local_children_unsafe_skips += 1;
                 if add_now {
                     counted_miss_idxs.push(i);
+                }
+                if crate::analysis::trace_pc_in_range(pc) {
+                    eprintln!(
+                        "[SUBSUM_CHILDUNSAFE] pc={} prev_idx={} cache_id={:?}",
+                        pc, i, prev.cache_id,
+                    );
                 }
                 dbg_skip_pc(pc);
                 continue;
@@ -522,7 +540,7 @@ fn handle_standard_pruning(
                                     prev.precise_regs.contains(&r),
                                 );
                             }
-                            for off in [-64i16, -60, -57, -56] {
+                            for off in [-64i16, -60, -57, -56, -232] {
                                 let cs = state.frames.current().stack.get_slot(off);
                                 let ps = prev.frames.current().stack.get_slot(off);
                                 eprintln!(
