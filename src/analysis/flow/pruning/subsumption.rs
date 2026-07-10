@@ -972,7 +972,114 @@ fn stack_subsumed_by(
         // compare — the sound direction).
         let frame_ls = frame_live_slots.get(frame_i).and_then(|o| o.as_ref());
 
+        // Kernel `scalar_reg_for_stack` slot-pair rule (stacksafe
+        // verifier.c:19736): when BOTH slots read as scalars — (a) a
+        // full 8-byte scalar spill (`is_spilled_scalar_reg64`: kernel
+        // slot_type[0]==SPILL, i.e. zovia's byte base+7 under the
+        // top-down↔bottom-up mirror, plus base anchor SPILL + scalar),
+        // or (b) `is_stack_all_misc`: every byte MISC or (privileged)
+        // INVALID/never-written — the whole slot compares as ONE
+        // regsafe scalar (old imprecise ⇒ covers ANY cur; precise ⇒
+        // range_within+tnum_in; all-misc reads as the unbound
+        // imprecise fake) and the per-byte kind walk NEVER runs for
+        // it (`i += BPF_REG_SIZE - 1; continue`). zovia's old per-byte
+        // walk had only the (Spill,Misc) pair arm — a (Spill, None)
+        // byte (cache spilled, cur never written) fell to the
+        // catch-all kind mismatch and MISSed where the kernel HITs
+        // (to_lo 195/266: old fp-224 = imprecise 8-byte spill vs cur
+        // untouched — kernel prunes the 194-arm, zovia kept it alive
+        // → the second-266 ghost subtree; measured [ZK slot27] +
+        // [stack_miss] 2026-07-10). Slots consumed here skip their
+        // per-byte checks below.
+        let mut scalar_pair_slots: HashSet<i16> = HashSet::new();
+        if !force_exact {
+            let mut seen_bases: HashSet<i16> = HashSet::new();
+            for &offset in &all_offsets {
+                let base = offset.div_euclid(8) * 8;
+                if !seen_bases.insert(base) {
+                    continue;
+                }
+                use crate::analysis::machine::stack_state::StackSlotKind::*;
+                // None ⇒ not scalar-readable; Some(None) ⇒ unbound
+                // (all-misc/uninit); Some(Some(off)) ⇒ real 8-byte
+                // scalar spill anchored at `base`.
+                let scalar_read = |fr: &crate::analysis::machine::frame_stack::CallFrame|
+                    -> Option<Option<()>> {
+                    let structural = fr
+                        .stack
+                        .get_slot(base)
+                        .map(|s| {
+                            s.iterator.is_some() || s.dynptr.is_some() || s.irq_flag.is_some()
+                        })
+                        .unwrap_or(false);
+                    if structural {
+                        return None;
+                    }
+                    let spill64 = fr.stack.get_slot_kind(base) == Some(Spill)
+                        && fr.stack.get_slot_kind(base + 7) == Some(Spill)
+                        && fr
+                            .stack
+                            .get_slot(base)
+                            .map(|s| matches!(s.reg_type, RegType::ScalarValue))
+                            .unwrap_or(false);
+                    if spill64 {
+                        return Some(Some(()));
+                    }
+                    let all_misc = (base..base + 8)
+                        .all(|b| matches!(fr.stack.get_slot_kind(b), Some(Misc) | None));
+                    if all_misc {
+                        return Some(None);
+                    }
+                    None
+                };
+                let (Some(o), Some(c)) = (scalar_read(old_frame), scalar_read(new_frame))
+                else {
+                    continue;
+                };
+                // regsafe scalar under !exact (verifier.c:18357): an
+                // imprecise old covers any scalar cur; a precise old
+                // needs range_within + tnum_in (the unbound cur is only
+                // covered by a full-range old).
+                let ok = match o {
+                    None => true, // unbound old = imprecise ⇒ covers all
+                    Some(()) => {
+                        let os = old_frame.stack.get_slot(base).unwrap();
+                        if !os.precise {
+                            true
+                        } else {
+                            match c {
+                                Some(()) => {
+                                    let cs = new_frame.stack.get_slot(base).unwrap();
+                                    cs.bounds.min >= os.bounds.min
+                                        && cs.bounds.max <= os.bounds.max
+                                        && tnum_covers(&cs.tnum, &os.tnum)
+                                }
+                                None => {
+                                    os.bounds.min == i64::MIN
+                                        && os.bounds.max == i64::MAX
+                                        && os.tnum.mask == u64::MAX
+                                }
+                            }
+                        }
+                    }
+                };
+                if !ok {
+                    if std::env::var("ZOVIA_DUMP_STACK_MISS").ok().as_deref() == Some("1") {
+                        eprintln!(
+                            "[stack_miss] pc={} frame={} base={} (scalar-pair regsafe)",
+                            cur.pc, frame_i, base
+                        );
+                    }
+                    return false;
+                }
+                scalar_pair_slots.insert(base);
+            }
+        }
+
         for offset in all_offsets {
+            if scalar_pair_slots.contains(&(offset.div_euclid(8) * 8)) {
+                continue;
+            }
             // Dead-slot skip: if no byte in this 8-byte slot is live at
             // frame i's resume pc, the kernel would have STACK_INVALID'd
             // it — skip, mirroring stacksafe. ITER / DYNPTR / IRQ slots
