@@ -688,25 +688,34 @@ fn try_prove_unreachable_via_replay(
     }
 
     // 3. Reset points: None = the plain replay (bcf reset at the suffix base).
-    //    NARROWBASE (default-ON) adds one per CONDITIONAL branch step k whose
-    //    LHS reg NARROWS on the taken side — re-anchoring the bcf base PAST the
-    //    narrowing so the LHS materializes POST-narrow (kernel bcf_track base =
-    //    st->parent past the narrowing branch). Emitted ADDITIVELY (caller
-    //    dedups by cond_hash). from_nat_fib pc748: the `s>5`@523 reset point
-    //    yields d53387e3 (proto `[u>=6,u<=0xff]`) the plain replay misses
-    //    (it re-executes 523 → proto pre-narrow = 2af13624 shape).
+    //    NARROWBASE (default-ON) adds TWO per CONDITIONAL branch step k,
+    //    mirroring the two kernel base shapes around an If:
+    //    - post-If reset (pre=false): bcf base PAST the narrowing — the LHS
+    //      materializes POST-narrow (kernel bcf_track base = st->parent past
+    //      the narrowing branch). from_nat_fib pc748: the `s>5`@523 reset
+    //      point yields d53387e3 (proto `[u>=6,u<=0xff]`) the plain replay
+    //      misses (it re-executes 523 → proto pre-narrow = 2af13624 shape).
+    //    - pre-If reset (pre=true): kernel checkpoint AT the If insn — the
+    //      replay's fresh bcf sees the If itself, so the cond records with
+    //      PRE-branch materialization (VAR + current bounds, no const fold).
+    //      from_nat_fib clang-16 pc230: kernel base = the pc142 checkpoint
+    //      (segment [124,141]); its goal 0xcf57c36a carries
+    //      `(V u<= 0x400)` + `(V==0)` where the post-If reset folds to
+    //      `(0x0 == 0x0)` (r1 already narrowed to [0,0]) = cb71b139, a miss.
+    //    Emitted ADDITIVELY (caller dedups by cond_hash).
     let narrowbase = crate::common::config::bcf_mirror_knob("ZOVIA_BCF_REPLAY_NARROWBASE", true);
-    let mut reset_points: Vec<Option<usize>> = vec![None];
+    let mut reset_points: Vec<(Option<usize>, bool)> = vec![(None, false)];
     if narrowbase {
         for i in 0..n_exec {
             if matches!(path[i].1, Instr::If { .. }) {
-                reset_points.push(Some(i));
+                reset_points.push((Some(i), false));
+                reset_points.push((Some(i), true));
             }
         }
     }
 
     let mut goals = Vec::new();
-    for reset_after_idx in reset_points {
+    for (reset_after_idx, pre_reset) in reset_points {
         let mut base_state = base_state.clone();
         base_state.reset_bcf_for_replay();
         env.replay_mode = true;
@@ -717,11 +726,16 @@ fn try_prove_unreachable_via_replay(
             let st = match holder.take() { Some(s) => s, None => break };
             let mut st = st;
             st.pc = pc;
+            if pre_reset && Some(i) == reset_after_idx {
+                // Kernel checkpoint-at-If base: fresh bcf BEFORE the If's
+                // transfer — the cond below records into it pre-narrow.
+                st.reset_bcf_for_replay();
+            }
             let succ = crate::analysis::transfer::transfer(env, st, &instr);
             let next_pc = if i + 1 < path.len() { path[i + 1].0 } else { dead_target };
             holder = succ.into_iter().find(|s| s.pc == next_pc);
             if holder.is_none() { break; }
-            if Some(i) == reset_after_idx {
+            if !pre_reset && Some(i) == reset_after_idx {
                 if let (Some(h), Instr::If { width, left, op, right, target }) =
                     (holder.as_mut(), &instr)
                 {
