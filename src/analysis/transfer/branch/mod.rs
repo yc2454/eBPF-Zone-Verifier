@@ -711,6 +711,18 @@ fn try_prove_unreachable_via_replay(
                 reset_points.push((Some(i), false));
                 reset_points.push((Some(i), true));
             }
+            // Kernel checkpoint-at-post-call-fallthrough base (pre-reset
+            // only): helper-call fallthroughs are kernel jmp/prune points;
+            // when the kernel's counters fire there, the demanded goal's
+            // suffix starts at the post-call insn with first-refs
+            // materializing fresh bounds. to_wep_debug 0xc70002dc: kernel
+            // base = the pc1599 checkpoint after `call 6`@1598 (segment
+            // [1519,1598]); zovia's exploration is counter-cold there
+            // (env-wide reset-history skew — its extra corridor adds) so
+            // no cached anchor exists; the reset-rung supplies the shape.
+            if i > 0 && matches!(path[i - 1].1, Instr::Call { .. }) {
+                reset_points.push((Some(i), true));
+            }
         }
     }
 
