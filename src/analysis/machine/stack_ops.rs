@@ -53,6 +53,9 @@ impl State {
                 self.precise_regs.insert(reg);
             }
             let stack = &mut self.frames.get_mut(level).stack;
+            // Kernel else-branch whole-slot scrub (verifier.c:5641) —
+            // see scrub_spilled_slots_for_write.
+            stack.scrub_spilled_slots_for_write(offset, size.bytes());
             for i in 0..size.bytes() {
                 stack.insert(
                     offset + i as i16,
@@ -380,6 +383,11 @@ impl State {
         };
 
         let stack = &mut self.frames.get_mut(level).stack;
+        // Kernel else-branch whole-slot scrub (verifier.c:5641) applies to
+        // the UNALIGNED BPF_ST path too — see scrub_spilled_slots_for_write.
+        if !is_aligned {
+            stack.scrub_spilled_slots_for_write(offset, size.bytes());
+        }
         for i in 0..size.bytes() {
             let current_byte = offset + i as i16;
             if i == 0 {

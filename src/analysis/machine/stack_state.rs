@@ -449,6 +449,56 @@ impl StackState {
         }
     }
 
+    /// Kernel `check_stack_write_fixed_off` else-branch scrub
+    /// (verifier.c:5641): a misc-class write (unaligned / non-spillable)
+    /// into a slot that "belonged to spilled ptr/dynptr/iter"
+    /// (`is_stack_slot_special` — the slot's ANCHOR byte, kernel
+    /// `slot_type[7]` ≡ zovia's BASE byte, is SPILL) destroys the tracked
+    /// spill and runs `scrub_spilled_slot` on EVERY byte: STACK_INVALID
+    /// stays, everything else — including STACK_ZERO — becomes STACK_MISC.
+    /// zovia previously only overwrote the WRITTEN bytes, so a stale sub-8
+    /// spill survived beside them (from_l3 1716-join first-divergence:
+    /// zovia old [Spill×4,Misc×4] vs kernel all-MISC → kernel HIT, zovia
+    /// Stack-MISS → ghost route → env-counter phase shift → the 512/527
+    /// checkpoint displacement that extinguishes the demanded route).
+    pub fn scrub_spilled_slots_for_write(&mut self, write_off: i16, write_size: usize) {
+        let first_base = write_off.div_euclid(8) * 8;
+        let last_base = (write_off + write_size as i16 - 1).div_euclid(8) * 8;
+        let mut base = first_base;
+        while base <= last_base {
+            if self.get_slot_kind(base) == Some(StackSlotKind::Spill) {
+                for b in base..base + 8 {
+                    if self.get_slot_kind(b).is_some() {
+                        self.insert(
+                            b,
+                            SpilledReg {
+                                source_reg: None,
+                                reg_type: RegType::ScalarValue,
+                                tnum: Tnum::unknown(),
+                                bounds: ScalarBounds {
+                                    min: i64::MIN,
+                                    max: i64::MAX,
+                                },
+                                size: MemSize::U64,
+                                ptr_bounds: None,
+                                scalar_id: None,
+                                scalar_id_off: None,
+                                precise: false,
+                                ptr_const_off: None,
+                                iterator: None,
+                                dynptr: None,
+                                irq_flag: None,
+                                bcf_expr: None,
+                                kind: StackSlotKind::Misc,
+                            },
+                        );
+                    }
+                }
+            }
+            base += 8;
+        }
+    }
+
     pub fn invalidate_packet_pointers(&mut self) {
         for (_, spilled) in self.slots_mut().iter_mut() {
             if spilled.reg_type == RegType::PtrToPacket {
