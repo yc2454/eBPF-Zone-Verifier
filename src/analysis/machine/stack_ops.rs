@@ -142,25 +142,55 @@ impl State {
         // Only track as proper spill if 8-byte aligned
         let source_reg = if is_aligned { Some(reg) } else { None };
 
-        // Allocate (or reuse) a scalar id for any aligned scalar spill so
-        // the slot — and any same-width fill — joins the source's scalar
-        // equivalence class. Mirrors kernel's `assign_scalar_id_before_mov`
-        // at spill time. Without this, post-spill branch refinements on
-        // the source can't fan out to slot/fill, which leaves dead
-        // branches reachable in the verifier_spill_fill::*_ok tests.
+        // Scalar-id at spill — kernel check_stack_write_fixed_off
+        // (verifier.c:5604-5615): an ALIGNED scalar spill links slot and
+        // source ONLY when the value FITS the store width
+        // (`reg_value_fits = get_reg_width(reg) <= size*8`, fls64 of
+        // umax) — then `assign_scalar_id_before_mov` (a) clears an
+        // ADD_CONST link on the source, (b) assigns a fresh id only if
+        // the source has none AND `!tnum_is_const(var_off)` (consts
+        // never link). A NARROWING spill breaks the relation
+        // (`spilled_ptr.id = 0`). The old zovia gate (`size <= 8`, no
+        // const/width checks) linked consts and truncated values the
+        // kernel keeps unlinked, feeding the sync_linked_regs-mirror
+        // fanout with links the kernel can't have.
         let slot_scalar_id = if is_aligned
-            && size.bytes() <= 8
             && matches!(preserved_type, RegType::ScalarValue)
         {
-            let id = match self.scalar_ids.get(&reg).copied() {
-                Some(id) => id,
-                None => {
-                    let new_id = crate::analysis::machine::reg_types::new_scalar_id();
-                    self.scalar_ids.insert(reg, new_id);
-                    new_id
+            let umax: u64 = if min < 0 { u64::MAX } else { max as u64 };
+            let reg_width = 64 - umax.leading_zeros() as usize;
+            let reg_value_fits = reg_width <= size.bytes() * 8;
+            if reg_value_fits {
+                // assign_scalar_id_before_mov: ADD_CONST links are
+                // cleared on the source first (multiple `+= const`
+                // chains unsupported, kernel comment).
+                if self.scalar_id_off.contains_key(&reg) {
+                    self.scalar_ids.remove(&reg);
+                    self.scalar_id_off.remove(&reg);
                 }
-            };
-            Some(id)
+                // Kernel `tnum_is_const(var_off)`; zovia's tnum map can
+                // lag the interval domain, so a pinned interval counts
+                // as const too (a kernel reg with umin==umax always has
+                // const var_off).
+                let is_const = min == max
+                    || self
+                        .tnums
+                        .get(&reg)
+                        .map(|t| t.is_const())
+                        .unwrap_or(false);
+                match self.scalar_ids.get(&reg).copied() {
+                    Some(id) => Some(id),
+                    None if !is_const => {
+                        let new_id =
+                            crate::analysis::machine::reg_types::new_scalar_id();
+                        self.scalar_ids.insert(reg, new_id);
+                        Some(new_id)
+                    }
+                    None => None,
+                }
+            } else {
+                None // narrowing spill: kernel breaks the relation
+            }
         } else if size == MemSize::U64 && is_aligned {
             self.scalar_ids.get(&reg).copied()
         } else {

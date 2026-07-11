@@ -37,6 +37,19 @@ pub(crate) fn transfer_load(
     // value is fresh from memory, with whatever bounds we infer from
     // the access width, not from any prior chain through DIV/MOD.
     state.kernel_tnum_imprecise.remove(&dst);
+    // Kernel: every non-fill load lands in `mark_reg_unknown`, which
+    // zeroes `reg->id` — a freshly loaded value never inherits the old
+    // register's scalar-equivalence class. zovia kept the stale id, so
+    // a later branch refinement on dst fanned out (`sync_linked_regs`
+    // mirror in branch/refinement.rs) into slots/regs holding UNRELATED
+    // older values — measured on from_tnl_fib_no_log_v6 c16: the id
+    // allocated at the pc-639 4-byte spill stayed on R1 across the
+    // 640..654 map loads, the pc-656 `==6` refinement wrote const 6
+    // into fp-344/fp-352, and the pc-1026..1033 compare ladder folded
+    // where the kernel forks (the fd0bf575781bb399 route). The
+    // stack-fill path below re-installs the SLOT's saved id (kernel
+    // copy_register_state on fill), so clearing first is kernel order.
+    state.clear_scalar_id(dst);
     // BCF: a load is a full register write; clear any prior `bcf_expr`
     // so future uses lazy-materialize against the post-load bounds
     // rather than dragging in a stale pre-load expression (e.g. an
