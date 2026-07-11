@@ -1174,8 +1174,22 @@ fn stack_subsumed_by(
                                 )
                             })
                         };
+                        // Kernel `is_spilled_scalar_reg64` = slot_type[0] ==
+                        // STACK_SPILL, i.e. a FULL 8-byte scalar spill (zovia
+                        // mirror: base AND base+7 Spill). A sub-8 spill leaves
+                        // the kernel's slot_type[0] non-SPILL, so
+                        // `scalar_reg_for_stack` returns NULL and the per-byte
+                        // walk TYPEFAILs the (SPILL, MISC) byte. The old
+                        // base-anchor-only check HIT sub-8 spills vs all-misc
+                        // where the kernel misses — measured at
+                        // from_tnl_fib_no_log_v6 c16 pc 2183 (old fp-208 u32
+                        // spill [S,S,S,S,M,M,M,M] vs cur all-misc; [ZK stk]
+                        // TYPEFAIL i=204, probe #105) — the 2314-re-add arm
+                        // whose 607-route ladder the kernel demands
+                        // (0x8170abde8cb5e828).
                         let scalar_spill64 = |fr: &crate::analysis::machine::frame_stack::CallFrame| {
                             matches!(fr.stack.get_slot_kind(slot_base), Some(Spill))
+                                && matches!(fr.stack.get_slot_kind(slot_base + 7), Some(Spill))
                                 && fr
                                     .stack
                                     .get_slot(slot_base)

@@ -40,14 +40,6 @@ impl State {
         if !(is_aligned && (matches!(reg_type, RegType::ScalarValue) || size == MemSize::U64)) {
             let is_null =
                 matches!(reg_type, RegType::ScalarValue) && self.domain.proven_zero(reg);
-            if std::env::var("ZOVIA_DBG_ZSTORE").ok().as_deref() == Some("1") {
-                let (lo, hi) = self.domain.get_interval(reg);
-                eprintln!(
-                    "[zstore] pc={} off={} size={} reg={:?} ty={:?} is_null={} ivl=[{},{}] tn={:?}",
-                    self.pc, offset, size.bytes(), reg, reg_type, is_null, lo, hi,
-                    self.get_tnum(reg)
-                );
-            }
             let kind = if is_null {
                 crate::analysis::machine::stack_state::StackSlotKind::Zero
             } else {
