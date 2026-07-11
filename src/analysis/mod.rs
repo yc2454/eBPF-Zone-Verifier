@@ -816,9 +816,34 @@ fn run_worklist(
                 *b == Reg::R10
                     || matches!(state.types.get(*b), RegType::PtrToStack { .. })
             };
+            // Kernel write-side gate (check_stack_write_fixed_off:5664):
+            // the else-branch — an UNALIGNED / misc-class write — zeroes
+            // insn_flags ("not a register spill") and pushes NO history
+            // entry. Only slot-aligned writes (scalar-reg spill, BPF_ST
+            // const, 8-byte pointer spill) push. zovia counted EVERY
+            // reg-store to stack, so store-dense straight-line blocks
+            // with 4-mod-8 u32 / u8 / u16 members (wep17 c17 insns
+            // 1503-1580: ~50 stores, half unaligned) crossed the >40
+            // force-checkpoint cap where the kernel stayed under it —
+            // a spurious forced add at the next PP (post-call 1581) and
+            // a schedule shift (seam #95, probe #109). Also count
+            // aligned ST-imm stores (kernel is_bpf_st_mem branch keeps
+            // its flags), which the old Reg-only match missed.
+            let effective_off = |b: &Reg, insn_off: i16| -> Option<i64> {
+                if *b == Reg::R10 {
+                    Some(insn_off as i64)
+                } else {
+                    state
+                        .domain
+                        .get_distance_fixed(*b, Reg::R10)
+                        .map(|d| d + insn_off as i64)
+                }
+            };
             match prog.instrs.get(state.pc) {
-                Some(&Instr::Store { ref base, ref src, .. }) => {
-                    is_stack_base(base) && matches!(src, crate::ast::Operand::Reg(_))
+                Some(&Instr::Store { ref base, off, .. }) => {
+                    is_stack_base(base)
+                        && effective_off(base, off)
+                            .is_some_and(|o| o % 8 == 0)
                 }
                 Some(&Instr::StoreRel { ref base, .. }) => is_stack_base(base),
                 Some(&Instr::Load { ref base, ref off, .. })
