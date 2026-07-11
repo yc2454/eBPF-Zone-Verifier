@@ -302,9 +302,14 @@ fn handle_loop_pruning(
                 Ok(()) => {
                     zhit_seq(pc, state, prev);
                     if crate::analysis::trace_pc_in_range(pc) {
+                        use crate::analysis::machine::reg::Reg;
+                        let cu = state.domain.get_u64_bounds(Reg::R8);
+                        let pu = prev.domain.get_u64_bounds(Reg::R8);
                         eprintln!(
-                            "[SUBSUM_HIT] pc={} prev_idx={} prev.dfs_paths={} force_exact={}",
+                            "[SUBSUM_HIT] pc={} prev_idx={} prev.dfs_paths={} force_exact={} curR8=u[{:#x}..{:#x}]prec={} prevR8=u[{:#x}..{:#x}]prec={}",
                             pc, i, prev.dfs_paths, force_exact,
+                            cu.0, cu.1, state.precise_regs.contains(&Reg::R8),
+                            pu.0, pu.1, prev.precise_regs.contains(&Reg::R8),
                         );
                     }
                     h = Some(i);
