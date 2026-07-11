@@ -435,6 +435,17 @@ pub(crate) fn get_combined_bounds(state: &State, reg: Reg, width: Width) -> Opti
     let mut lo = tnum_min;
     let mut hi = tnum_max;
 
+    // Dedicated u64 bounds (kernel umin/umax). Carries the `!= 0`
+    // edge-bump (refine_ne_imm's unsigned pair) that neither the tnum
+    // nor the signed interval can represent for a full-range scalar —
+    // without this channel the later `if reg != 0` retest cannot fold
+    // and the dead ==0 arm gets walked (the pc2917 phantom corridor).
+    if width == Width::W64 {
+        let (u_lo, u_hi) = state.domain.get_u64_bounds(reg);
+        lo = lo.max(u_lo);
+        hi = hi.min(u_hi);
+    }
+
     if dbm_lo != i64::MIN && dbm_lo >= 0 {
         lo = lo.max(dbm_lo as u64);
     }

@@ -314,6 +314,22 @@ fn refine_ne_imm(domain: &mut NumericDomain, left: Reg, imm: i64) {
             d.assume_le_imm(r, hi.saturating_sub(1))
         });
     }
+    // Kernel regs_refine_cond_op BPF_JNE (!is_jmp32), verifier.c:17124:
+    // the UNSIGNED edges are bumped independently of the signed pair —
+    // for a full-range scalar (helper RET_INTEGER), `!= 0` gives
+    // umin 0→1 while smin stays S64_MIN (the value may be a negative
+    // errno). The signed interval above cannot carry this fact; without
+    // it a later `if reg != 0` cannot fold one-sided and zovia walks the
+    // contradictory arm the kernel never visits (from_hep_debug c16
+    // calico_tc_main pc2913 → the 480-reject phantom site at pc2917 =
+    // 89% of the 15MB bundle).
+    let uval = imm as u64;
+    let (umin, umax) = domain.get_u64_bounds(left);
+    let new_umin = if umin == uval { umin.saturating_add(1) } else { umin };
+    let new_umax = if umax == uval { umax.saturating_sub(1) } else { umax };
+    if (new_umin, new_umax) != (umin, umax) && new_umin <= new_umax {
+        domain.set_u64_bounds(left, new_umin, new_umax);
+    }
 }
 
 fn apply_eq_refinements(

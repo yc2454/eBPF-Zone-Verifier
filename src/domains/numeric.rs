@@ -325,6 +325,32 @@ impl NumericDomain {
         }
     }
 
+    /// Explicitly narrows the 64-bit unsigned bounds for a register
+    /// (kernel `umin_value`/`umax_value`). Intersect-only, then re-sync,
+    /// mirroring `set_u32_bounds`. Used by the branch `!=` edge-bump
+    /// (kernel `regs_refine_cond_op` BPF_JNE, verifier.c:17124) — the
+    /// signed interval cannot carry `umin=1` for a full-range scalar
+    /// (smin stays S64_MIN), so the fact must live in the u64 pair.
+    pub fn set_u64_bounds(&mut self, x: Reg, min: u64, max: u64) {
+        match self {
+            NumericDomain::Zone(dbm) => {
+                let b = &mut dbm.bounds[x.idx()];
+                b.u64_min = b.u64_min.max(min);
+                b.u64_max = b.u64_max.min(max);
+                zone_ops::sync_bounds(dbm, x);
+            }
+            NumericDomain::Interval(ivl) => {
+                if x == Reg::Zero || x.is_anchor() {
+                    return;
+                }
+                let b = ivl.get_bounds_mut(x);
+                b.umin = b.umin.max(min);
+                b.umax = b.umax.min(max);
+                b.sync_bounds();
+            }
+        }
+    }
+
     /// Establishes the relationship dst = src + imm
     pub fn assign_reg_offset(&mut self, dst: Reg, src: Reg, imm: i64) {
         match self {
