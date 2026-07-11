@@ -483,7 +483,14 @@ pub fn bcf_suffix_base_pc(
     parent_cache_id: Option<u32>,
     target_regs: &[Reg],
 ) -> Option<usize> {
-    let debug = std::env::var("ZOVIA_BCF_TRACK_DEBUG").is_ok();
+    // ZOVIA_BCF_TRACK_DEBUG_PC=<pc>: per-insn walk trace ONLY for walks
+    // whose reject breadcrumb sits at <pc> — the global flag drowns big
+    // objects (one trace per discharge attempt).
+    let debug = std::env::var("ZOVIA_BCF_TRACK_DEBUG").is_ok()
+        || std::env::var("ZOVIA_BCF_TRACK_DEBUG_PC")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .is_some_and(|p| env.history.get(history_idx).map(|s| s.pc) == Some(p));
     let probe = std::env::var("ZOVIA_DUMP_DISCHARGE").ok().as_deref() == Some("1");
     if probe {
         eprintln!("[bcf-track-start] history_idx={} targets={:?}", history_idx, target_regs);

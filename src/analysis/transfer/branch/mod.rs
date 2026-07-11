@@ -726,8 +726,21 @@ fn try_prove_unreachable_via_replay(
         }
     }
 
+    // Kernel bcf_track replays run in a CLEAN verification context: the
+    // original reject's errno is a local in the caller (check_helper_call's
+    // -EACCES → bcf_prove_unreachable), not verifier-global state, so the
+    // replay's own check_helper_call passes and path conds keep recording.
+    // zovia's env.error is global and still holds the triggering reject
+    // here; without the stash, transfer_call's `env.failed()` kills the
+    // replay at the FIRST helper call on the suffix (hep_dsr pc247: every
+    // rung died at the pc153 trace_printk → no replay goals → the lean
+    // fallback emitted loop-ladder reconstruction goals → kernel e4e3
+    // missed). Each rung starts error-free; a rung's own fresh failure
+    // dies with that rung and must not leak into the next (or the caller).
+    let saved_error = env.error.take();
     let mut goals = Vec::new();
     for (reset_after_idx, pre_reset) in reset_points {
+        env.error = None;
         let mut base_state = base_state.clone();
         base_state.reset_bcf_for_replay();
         // Kernel bcf_track START-PUSH (verifier.c:24499 `env->prev_insn_idx
@@ -794,7 +807,15 @@ fn try_prove_unreachable_via_replay(
             let succ = crate::analysis::transfer::transfer(env, st, &instr);
             let next_pc = if i + 1 < path.len() { path[i + 1].0 } else { dead_target };
             holder = succ.into_iter().find(|s| s.pc == next_pc);
-            if holder.is_none() { break; }
+            if holder.is_none() {
+                if dbg {
+                    eprintln!(
+                        "[replay] DIED rung={:?} pre={} i={} pc={} instr={:?} want_next={} env_err={:?}",
+                        reset_after_idx.map(|k| path[k].0), pre_reset, i, pc, instr, next_pc, env.error
+                    );
+                }
+                break;
+            }
             if !pre_reset && Some(i) == reset_after_idx {
                 if let (Some(h), Instr::If { width, left, op, right, target }) =
                     (holder.as_mut(), &instr)
@@ -815,16 +836,29 @@ fn try_prove_unreachable_via_replay(
         env.replay_mode = false;
         if let Some(mut final_state) = holder {
             if let Some(symb) = final_state.bcf.take() {
-                if let Some(g) = crate::refinement::refine_unreachable::build_unreachable_from_replay(*symb) {
+                let g = crate::refinement::refine_unreachable::build_unreachable_from_replay(*symb);
+                if dbg {
+                    eprintln!(
+                        "[replay] END rung={:?} pre={} built={}",
+                        reset_after_idx.map(|k| path[k].0), pre_reset, g.is_some()
+                    );
+                }
+                if let Some(g) = g {
                     let rung = match reset_after_idx {
                         None => -1,
                         Some(i) => path[i].0 as i32,
                     };
                     goals.push((rung, g));
                 }
+            } else if dbg {
+                eprintln!(
+                    "[replay] END rung={:?} pre={} bcf=None",
+                    reset_after_idx.map(|k| path[k].0), pre_reset
+                );
             }
         }
     }
+    env.error = saved_error;
     goals
 }
 
@@ -850,6 +884,17 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
     // No re-entrant discharge during a replay: the replay re-executes a
     // suffix only to rebuild the path condition; it must not itself attempt
     // to discharge (which would recurse and pollute the bundle).
+    if (env.replay_mode || state.bcf.is_none())
+        && std::env::var("ZOVIA_DUMP_DISCHARGE").ok().as_deref() == Some("1")
+    {
+        eprintln!(
+            "[disc-skip] reject@pc={} replay={} bcf_none={} parent_cid={:?}",
+            state.pc,
+            env.replay_mode,
+            state.bcf.is_none(),
+            state.parent_cache_id
+        );
+    }
     if env.replay_mode {
         return false;
     }
