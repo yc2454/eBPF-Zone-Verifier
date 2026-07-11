@@ -40,6 +40,14 @@ impl State {
         if !(is_aligned && (matches!(reg_type, RegType::ScalarValue) || size == MemSize::U64)) {
             let is_null =
                 matches!(reg_type, RegType::ScalarValue) && self.domain.proven_zero(reg);
+            if std::env::var("ZOVIA_DBG_ZSTORE").ok().as_deref() == Some("1") {
+                let (lo, hi) = self.domain.get_interval(reg);
+                eprintln!(
+                    "[zstore] pc={} off={} size={} reg={:?} ty={:?} is_null={} ivl=[{},{}] tn={:?}",
+                    self.pc, offset, size.bytes(), reg, reg_type, is_null, lo, hi,
+                    self.get_tnum(reg)
+                );
+            }
             let kind = if is_null {
                 crate::analysis::machine::stack_state::StackSlotKind::Zero
             } else {
@@ -302,16 +310,24 @@ impl State {
                 );
             }
         }
-        // Kernel `save_register_state` sub-8 spill scrub (verifier.c:5497
-        // `scrub_spilled_slot`): the REMAINDER of the 8-byte slot is
-        // scrubbed — STACK_INVALID stays invalid, anything else becomes
-        // STACK_MISC. Without this a stale full-spill's residue bytes
-        // survive as SPILL and stacksafe's per-byte kind rule diverges
-        // from the kernel (to_wep pc1017: zovia cur [Spill×8] vs kernel
-        // [Spill×4,Misc×4] → zovia hit where the kernel misses).
+        // Kernel `save_register_state` sub-8 spill remainder scrub — the
+        // remainder bytes go through `mark_stack_slot_misc`
+        // (verifier.c:1665), NOT `scrub_spilled_slot`: **STACK_ZERO and
+        // STACK_INVALID are PRESERVED**, only other kinds become
+        // STACK_MISC. zovia's old loop misc'd Zero bytes too, so an
+        // aligned u32 spill next to a known-zero u32 store (insn 26/27 of
+        // from_tnl_fib_no_log_v6 c16: [fp-36]=0 then u32 spill at fp-40)
+        // produced [S,S,S,S,M,M,M,M] where the kernel keeps
+        // [S,S,S,S,Z,Z,Z,Z] — the 2551-cache byte flip that HIT-killed
+        // the 607-route arm (0x8170abde8cb5e828). Stale SPILL residue
+        // still becomes MISC (to_wep pc1017, the original reason for
+        // this loop).
         if is_aligned && size.bytes() < 8 {
             for b in (offset + size.bytes() as i16)..(offset + 8) {
-                if stack.get_slot_kind(b).is_some() {
+                if matches!(
+                    stack.get_slot_kind(b),
+                    Some(k) if k != crate::analysis::machine::stack_state::StackSlotKind::Zero
+                ) {
                     stack.insert(
                         b,
                         SpilledReg {
@@ -448,6 +464,43 @@ impl State {
                         kind: store_kind,
                     },
                 );
+            }
+        }
+        // Kernel BPF_ST aligned path routes through save_register_state
+        // too (fake const reg), so a sub-8 ST-imm scrubs the slot
+        // remainder with the same `mark_stack_slot_misc` rule:
+        // STACK_ZERO and STACK_INVALID preserved, everything else
+        // becomes STACK_MISC. (Was previously missing entirely.)
+        if is_aligned && size.bytes() < 8 {
+            for b in (offset + size.bytes() as i16)..(offset + 8) {
+                if matches!(
+                    stack.get_slot_kind(b),
+                    Some(k) if k != crate::analysis::machine::stack_state::StackSlotKind::Zero
+                ) {
+                    stack.insert(
+                        b,
+                        SpilledReg {
+                            source_reg: None,
+                            reg_type: RegType::ScalarValue,
+                            tnum: Tnum::unknown(),
+                            bounds: ScalarBounds {
+                                min: i64::MIN,
+                                max: i64::MAX,
+                            },
+                            size,
+                            ptr_bounds: None,
+                            scalar_id: None,
+                            scalar_id_off: None,
+                            precise: false,
+                            ptr_const_off: None,
+                            iterator: None,
+                            dynptr: None,
+                            irq_flag: None,
+                            bcf_expr: None,
+                            kind: crate::analysis::machine::stack_state::StackSlotKind::Misc,
+                        },
+                    );
+                }
             }
         }
     }
