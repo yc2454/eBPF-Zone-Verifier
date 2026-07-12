@@ -1019,6 +1019,17 @@ pub(crate) fn try_emit_path_unreachable_entry(env: &mut VerifierEnv, state: &Sta
         }
     }
     let Some(ok) = try_prove_unreachable(state, base_pc, prev_insn_pc) else {
+        // Kernel bcf_refine marks parents[] children_unsafe UNCONDITIONALLY
+        // at its tail (verifier.c:24822) — after discharge FOUND, MISS, or
+        // any goal/proof-formation failure alike. Returning here without
+        // marking left the reject's ancestor chain prune-safe, so later
+        // arrivals subsumed on it and their own rejects never happened:
+        // fibdsr16's 2838-backjump lineage planted absorbers at 1179/1165
+        // (cids 12995/13003) that extinguished the ICMP-arm descendant —
+        // the kernel-queried 0x003e1542d2fdd1d6 was never emitted. (Note
+        // the replay-family pushes above have already run by this point;
+        // the kernel's parallel is goals built, natural proof unavailable.)
+        crate::analysis::flow::pruning::cache::mark_path_children_unsafe(env, state, base_cid_dbg);
         return false;
     };
     let entry = RefineEntry::new(
