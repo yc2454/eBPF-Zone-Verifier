@@ -1074,6 +1074,26 @@ impl SymbolicState {
             Some(idx) => idx,
             None => {
                 let idx = self.materialize_reg(reg, bounds);
+                // DIAGNOSIS-ONLY (b809 chase 2026-07-12): print every VAR
+                // materialization with its bounds to pinpoint which site
+                // emits orphaned bound-preds the kernel doesn't.
+                if std::env::var("ZOVIA_DBG_MAT").ok().as_deref() == Some("1") {
+                    eprintln!(
+                        "[mat] reg=r{} pc={} const={:?} smin={:#x} smax={:#x} umin={:#x} umax={:#x}",
+                        reg, self.current_pc, bounds.const_val,
+                        bounds.smin, bounds.smax, bounds.umin, bounds.umax
+                    );
+                    // One-shot caller identification for the orphan-pair
+                    // signature (b809 chase): print a backtrace for the
+                    // first few matching materializations.
+                    if reg == 0 && bounds.smin == -4095 {
+                        use std::sync::atomic::{AtomicU32, Ordering};
+                        static N: AtomicU32 = AtomicU32::new(0);
+                        if N.fetch_add(1, Ordering::Relaxed) < 2 {
+                            eprintln!("[mat-bt] {}", std::backtrace::Backtrace::force_capture());
+                        }
+                    }
+                }
                 self.reg_expr[reg] = Some(idx);
                 self.reg_expr_pc[reg] = Some(self.current_pc);
                 idx
