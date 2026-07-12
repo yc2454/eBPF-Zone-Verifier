@@ -631,6 +631,17 @@ fn handle_standard_pruning(
 /// heuristic. The in-loop dampener then flips it false DURING the scan
 /// (see dampener_would_suppress). Keep in sync with run_worklist A.c.
 fn would_add_new_state_base(env: &VerifierEnv, state: &State, pc: usize) -> bool {
+    // ZOVIA_DBG_FORCE_ADD=1 — DIAGNOSIS ONLY (schedule-class ceiling
+    // measurement, 2026-07-11): checkpoint at EVERY prune-point visit
+    // (a superset of the kernel's add set — every kernel base pc gets an
+    // instance) while keeping subsumption-hit pruning intact. Answers
+    // "would the walk anchor at the kernel's base and emit the demanded
+    // hash if the add-cadence phase were gone" for the parked
+    // counter-schedule family (b9bc/003e/to_wep). NOT a fix — forced
+    // adds change exploration; never default this on.
+    if std::env::var("ZOVIA_DBG_FORCE_ADD").ok().as_deref() == Some("1") {
+        return true;
+    }
     let force_new_state = env
         .insn_aux_data
         .get(pc)
@@ -646,6 +657,11 @@ fn would_add_new_state_base(env: &VerifierEnv, state: &State, pc: usize) -> bool
 /// encountering an active (branches>0) cached state, suppress the add
 /// unless force or the loop thresholds are reached.
 fn dampener_would_suppress(env: &VerifierEnv, state: &State, pc: usize) -> bool {
+    // See would_add_new_state_base: the ceiling diagnostic must also
+    // bypass the in-loop dampener or it re-suppresses the forced adds.
+    if std::env::var("ZOVIA_DBG_FORCE_ADD").ok().as_deref() == Some("1") {
+        return false;
+    }
     let force_new_state = env
         .insn_aux_data
         .get(pc)
