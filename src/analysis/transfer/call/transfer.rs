@@ -739,19 +739,19 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
     initialize_uninit_mem_args(&mut state, &in_types, helper);
 
     // 3. Update DBM - forget caller-saved registers and reset Tnums.
-    // skip for fastcall helpers — kernel guarantees R1..R5 are
-    // preserved, so clang-emitted no-spill sequences must keep their
-    // pre-call values + tnums + scalar_ids visible to the verifier.
-    if !super::signatures::is_fastcall_helper(helper) {
+    // UNCONDITIONAL (see update_call_types): the kernel scratches r0-r5
+    // at every helper call regardless of bpf_fastcall — the old
+    // by-helper-id skip was unfaithful (probe #114: seed-mask 0x32f vs
+    // kernel 0x32b at fibdsr pc1342) and value preservation belongs to
+    // the spill/fill pattern, which is verified as-written.
+    {
         for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
             state.domain.forget(r);
             state.set_tnum(r, Tnum::unknown());
             state.clear_scalar_id(r);
         }
         // BCF symbolic-state caller-saved clear (β+ Step 0): mirror the
-        // domain/tnum/id clears above. fastcall preserves R1-R5 semantics
-        // so we preserve their symbolic exprs too — the assumption is that
-        // an unchanged value should keep its unchanged symbolic identity.
+        // domain/tnum/id clears above.
         if let Some(bcf) = state.bcf.as_mut() {
             for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
                 if let Some(i) = r.bcf_idx() {

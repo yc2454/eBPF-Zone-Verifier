@@ -6,7 +6,6 @@
 // Re-export proto tables so callers can still use `super::signatures::get_*`.
 pub(crate) use super::helper_protos::{
     get_helper_proto, get_nullable_ptr_size_pair, helper_rejects_packet_for_arg,
-    is_fastcall_helper,
 };
 pub(crate) use super::kfunc_protos::get_kfunc_proto;
 

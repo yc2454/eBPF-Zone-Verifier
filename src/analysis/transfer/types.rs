@@ -1442,13 +1442,22 @@ pub(crate) fn update_call_types(
     } // end if !routed
 
     // Clobber caller-saved registers - they are NOT readable after the call.
-    // fastcall helpers (v6.13) preserve R1..R5 — skip the regtype
-    // clobber so the values stay typed across the call. Paired with the
-    // DBM/Tnum skip in `transfer.rs`.
-    if !crate::analysis::transfer::call::signatures::is_fastcall_helper(helper) {
-        for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
-            state.types.set(r, RegType::NotInit);
-        }
+    // UNCONDITIONAL, incl. fastcall helpers: the kernel's
+    // clear_caller_saved_regs (verifier.c:10994 "after the call registers
+    // r0 - r5 were scratched") has no fastcall exception — bpf_fastcall
+    // preserves VALUES only via the spill/fill pattern around the call
+    // (mark_fastcall_pattern_for_call), and verification runs on the
+    // original program with those spills/fills intact. The old by-helper-id
+    // skip kept R1-R5 typed ScalarValue across fastcall calls, so
+    // bcf_refine's seed rule (skip NOT_INIT) included them where the
+    // kernel didn't: from_hep_fib_dsr_no_log_co-re pc1342 seeded
+    // reg_masks 0x32f vs the kernel's 0x32b (probe #114) — the extra R2
+    // chain dragged the suffix-base walk to 671/base-668 vs the kernel's
+    // 1187/base-600, and the (V==0)-anchored goal 0x003e1542d2fdd1d6 was
+    // never emitted. Same root as cont.20's from_nat 0x32f-vs-0x32b.
+    let _ = helper;
+    for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+        state.types.set(r, RegType::NotInit);
     }
 
     // 3. Invalidate packet pointers if needed

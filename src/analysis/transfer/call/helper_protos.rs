@@ -1832,6 +1832,7 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
     })
 }
 
+#[allow(dead_code)] // kernel bpf_fastcall pattern id-list; reg-clobber use removed (unfaithful)
 pub(crate) fn is_fastcall_helper(helper: u32) -> bool {
     matches!(
         helper,
