@@ -642,6 +642,13 @@ fn would_add_new_state_base(env: &VerifierEnv, state: &State, pc: usize) -> bool
     if std::env::var("ZOVIA_DBG_FORCE_ADD").ok().as_deref() == Some("1") {
         return true;
     }
+    // Range-scoped variant (ZOVIA_DBG_FORCE_ADD_RANGE=LO:HI): forced adds
+    // ONLY inside the window — surgical base-placement tests without the
+    // global state blowup (the unscoped knob timed out at 1800s on
+    // fibdsr16 before reaching its rejects).
+    if force_add_in_range(pc) {
+        return true;
+    }
     let force_new_state = env
         .insn_aux_data
         .get(pc)
@@ -653,13 +660,26 @@ fn would_add_new_state_base(env: &VerifierEnv, state: &State, pc: usize) -> bool
     force_new_state || (dj >= 2 && di >= 8)
 }
 
+/// ZOVIA_DBG_FORCE_ADD_RANGE=LO:HI (diagnosis-only).
+fn force_add_in_range(pc: usize) -> bool {
+    std::env::var("ZOVIA_DBG_FORCE_ADD_RANGE")
+        .ok()
+        .and_then(|s| {
+            let (lo, hi) = s.split_once(':')?;
+            Some((lo.parse::<usize>().ok()?, hi.parse::<usize>().ok()?))
+        })
+        .is_some_and(|(lo, hi)| pc >= lo && pc <= hi)
+}
+
 /// Kernel skip_inf_loop_check condition (verifier.c ~20320): on
 /// encountering an active (branches>0) cached state, suppress the add
 /// unless force or the loop thresholds are reached.
 fn dampener_would_suppress(env: &VerifierEnv, state: &State, pc: usize) -> bool {
     // See would_add_new_state_base: the ceiling diagnostic must also
     // bypass the in-loop dampener or it re-suppresses the forced adds.
-    if std::env::var("ZOVIA_DBG_FORCE_ADD").ok().as_deref() == Some("1") {
+    if std::env::var("ZOVIA_DBG_FORCE_ADD").ok().as_deref() == Some("1")
+        || force_add_in_range(pc)
+    {
         return false;
     }
     let force_new_state = env
