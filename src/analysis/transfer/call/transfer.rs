@@ -980,6 +980,17 @@ pub(super) fn apply_return_bounds(state: &mut State, helper: u32) {
             | constants::BPF_SKB_VLAN_PUSH
             | constants::BPF_SKB_VLAN_POP
             | constants::BPF_SOCK_MAP_UPDATE
+            // CSUM_DIFF: zovia narrows R0 to [-MAX_ERRNO, 0xffffffff]
+            // (apply_return_bounds below) but the kernel's
+            // do_refine_retval_range does NOT — its R0 stays a fully
+            // unbounded scalar, so bcf_reg_expr at the first read emits a
+            // bare VAR_64 with NO bound preds. Without the pre-cache,
+            // zovia's first read (e.g. `r0 <<= 32` right after the call,
+            // from_wep_fib_debug_co-re_v6 accepted_entrypoint insn 8268)
+            // emitted an orphaned [-4095, u32max] bound pair — the ONLY
+            // byte diff between zovia's goal d6073e8ede738404 and the
+            // kernel-queried 0xb809d31ada13b036 (b809 chase 2026-07-12).
+            | constants::BPF_CSUM_DIFF
     );
     if zovia_narrower_than_kernel {
         if let Some(bcf) = state.bcf.as_mut() {
