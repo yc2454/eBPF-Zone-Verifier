@@ -417,6 +417,18 @@ impl StackState {
     }
 
     pub fn set_slot_type(&mut self, offset: i16, reg_type: RegType, source_reg: Option<Reg>) {
+        // ZOVIA_DBG_SLOTW: trace kind-affecting writes in a byte window
+        // (2af5badd seed chase 2026-07-16 — who stamps Spill at -222/-221?).
+        if (-224..=-217).contains(&offset)
+            && std::env::var("ZOVIA_DBG_SLOTW").ok().as_deref() == Some("1")
+        {
+            eprintln!(
+                "[slotw] set_slot_type off={} absent={} ty={:?}",
+                offset,
+                !self.slots.contains_key(&offset),
+                reg_type
+            );
+        }
         let map = self.slots_mut();
         if let Some(spilled) = map.get_mut(&offset) {
             spilled.reg_type = reg_type;
@@ -512,6 +524,11 @@ impl StackState {
     }
 
     pub fn invalidate_slot(&mut self, offset: i16) {
+        if (-224..=-217).contains(&offset)
+            && std::env::var("ZOVIA_DBG_SLOTW").ok().as_deref() == Some("1")
+        {
+            eprintln!("[slotw] invalidate_slot off={}", offset);
+        }
         self.slots_mut().insert(
             offset,
             SpilledReg {
