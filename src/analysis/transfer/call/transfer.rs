@@ -805,7 +805,26 @@ fn initialize_uninit_mem_args(
                         {
                             if max_size != i64::MAX && max_size > 0 {
                                 let max_bytes = (max_size as usize).min(512); // Bound to max stack size just in case
+                                if std::env::var("ZOVIA_DBG_SLOTW").ok().as_deref() == Some("1") {
+                                    eprintln!("[slotw] memsize-clobber pc={} off={} n={}", state.pc, off, max_bytes);
+                                }
                                 let stack = state.stack_at_mut(frame_level);
+                                // Kernel check_stack_range_initialized clobber
+                                // (verifier.c:8635-8640): a helper WRITE into a
+                                // slot holding a spilled reg does
+                                // __mark_reg_unknown(spilled_ptr) + scrub_spilled_slot
+                                // on EVERY byte of that slot — not just the written
+                                // bytes. Without this, a partial helper write (e.g.
+                                // skb_load_bytes len=2 at fp-224 over an aligned u32
+                                // spill) left zovia's unwritten spill bytes as SPILL
+                                // where the kernel scrubs them to MISC: the cached
+                                // 2244-state's spi27 [M,M,S,S,M×4] vs kernel [M×8] —
+                                // the measured seed-verdict flip of the
+                                // 0x2af5baddb8c6c1fb family (from_tnl c15, probe
+                                // #132 vs [slots3], 2026-07-16).
+                                if let Ok(off16) = i16::try_from(off) {
+                                    stack.scrub_spilled_slots_for_write(off16, max_bytes);
+                                }
                                 for i in 0..max_bytes {
                                     if let Ok(slot) = i16::try_from(off + i as i64) {
                                         update_store_types(

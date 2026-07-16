@@ -1409,13 +1409,23 @@ pub(crate) fn update_call_types(
                 let (_, hi) = state.domain.get_interval(Reg::R4);
                 let len = if hi <= 0xFFFF { hi as i16 } else { 0 };
                 if len > 0 {
-                    // Mark the stack range as initialized scalars
+                    if std::env::var("ZOVIA_DBG_SLOTW").ok().as_deref() == Some("1") {
+                        eprintln!("[slotw] skb_load_bytes pc={} off={} len={}", state.pc, off, len);
+                    }
+                    // Kernel check_stack_range_initialized clobber semantics
+                    // (verifier.c:8630 "helper can write anything into the
+                    // stack" → STACK_MISC; :8635-8640 spilled slot →
+                    // __mark_reg_unknown + whole-slot scrub_spilled_slot).
+                    // Was set_slot_type(ScalarValue) which stamps kind=Spill
+                    // on absent bytes and leaves neighboring spill bytes
+                    // untouched — the 0x2af5baddb8c6c1fb seed (see the
+                    // mem_size_pairs clobber in call/transfer.rs).
+                    let stack = state.stack_at_mut(frame_level);
+                    if let Ok(off16) = i16::try_from(off) {
+                        stack.scrub_spilled_slots_for_write(off16, len as usize);
+                    }
                     for i in 0..len {
-                        state.stack_at_mut(frame_level).set_slot_type(
-                            (off + i as i64) as i16,
-                            RegType::ScalarValue,
-                            None,
-                        );
+                        stack.invalidate_slot((off + i as i64) as i16);
                     }
                 }
             }
