@@ -414,6 +414,12 @@ fn handle_loop_pruning(
             }
         }
         env.pruning_stats.loop_walks_pruned_via_convergence += 1;
+        // Kernel `miss:` runs per candidate DURING the scan — pre-hit
+        // counted misses keep their miss_cnt++/eviction (see the
+        // matching block in handle_standard_pruning; probe #134
+        // measured drift, 2af5badd chase 2026-07-16). After hit
+        // bookkeeping — evictions shift indices.
+        record_pruning_misses(env, pc, &counted_miss_idxs);
         return true;
     }
 
@@ -657,6 +663,20 @@ fn handle_standard_pruning(
         if let Some(prev) = env.explored_states.get(&pc).and_then(|v| v.get(idx)).cloned() {
             crate::analysis::flow::precision::propagate_precision(env, state, &prev);
         }
+        // Kernel miss-label semantics run PER CANDIDATE DURING the scan
+        // (verifier.c `miss:` inside list_for_each): candidates that
+        // EQFAILed/skipped BEFORE the eventual hit keep their miss_cnt++
+        // and can be evicted on this same arrival. zovia dropped these
+        // pre-hit counted misses, permanently under-counting whichever
+        // candidates sit after the hot state in scan order — measured on
+        // from_tnl c15 pc1770 (probe #134 [ZK ev] vs [ev]): identical
+        // per-arrival verdict streams, first drift exactly at the first
+        // hit-ending arrival, cascading into COMPLEMENTARY eviction sets
+        // (kernel kept r1={0x205,0x2205,0x405,0x2405}, zovia kept
+        // {...,0x605,0x2605,0x5}) → the post-80c1b7e first walk
+        // divergence at ip9771 (0x2af5baddb8c6c1fb chase). Do the hit
+        // bookkeeping first (idx is invalidated by evictions below).
+        record_pruning_misses(env, pc, &counted_miss_idxs);
         true
     } else {
         // Kernel miss-label semantics: only the misses counted while the
@@ -1222,6 +1242,28 @@ fn record_pruning_misses(env: &mut VerifierEnv, pc: usize, miss_idxs: &[usize]) 
         std::collections::HashMap::new()
     };
 
+    // [ev] event log (1770 eviction-divergence link, 2026-07-16): candidate
+    // identity = cid + R1 smin (the 0x205/0x405/... flag-ladder consts) —
+    // diff against kernel probe #134 [ZK ev].
+    let id_by_idx: std::collections::HashMap<usize, (Option<u32>, i64)> =
+        if crate::analysis::trace_pc_in_range(pc) {
+            env.explored_states
+                .get(&pc)
+                .map(|states| {
+                    miss_idxs
+                        .iter()
+                        .filter_map(|&i| {
+                            states.get(i).map(|s| {
+                                use crate::analysis::machine::reg::Reg;
+                                (i, (s.cache_id, s.domain.get_interval(Reg::R1).0))
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            Default::default()
+        };
     let mut to_evict: Vec<usize> = Vec::new();
     if let Some(metrics) = env.state_metrics.get_mut(&pc) {
         for &i in miss_idxs {
@@ -1230,7 +1272,21 @@ fn record_pruning_misses(env: &mut VerifierEnv, pc: usize, miss_idxs: &[usize]) 
                 // Kernel L20444 exactly: n = force_checkpoint && branches>0 ? 64 : 3
                 let branches = branches_by_idx.get(&i).copied().unwrap_or(0);
                 let n: u32 = if force && branches > 0 { 64 } else { 3 };
+                if crate::analysis::trace_pc_in_range(pc) {
+                    let (cid, r1) = id_by_idx.get(&i).copied().unwrap_or((None, i64::MIN));
+                    eprintln!(
+                        "[ev] pc={} MISS cid={:?} r1={} cnt={}/{}",
+                        pc, cid, r1, m.miss_cnt, m.hit_cnt
+                    );
+                }
                 if m.miss_cnt > m.hit_cnt.saturating_mul(n).saturating_add(n) {
+                    if crate::analysis::trace_pc_in_range(pc) {
+                        let (cid, r1) = id_by_idx.get(&i).copied().unwrap_or((None, i64::MIN));
+                        eprintln!(
+                            "[ev] pc={} EVICT cid={:?} r1={} cnt={}/{} n={}",
+                            pc, cid, r1, m.miss_cnt, m.hit_cnt, n
+                        );
+                    }
                     to_evict.push(i);
                 }
             }
@@ -1285,10 +1341,24 @@ fn record_pruning_misses(env: &mut VerifierEnv, pc: usize, miss_idxs: &[usize]) 
 /// bump hit_cnt for the cached state at `prev_idx`.
 fn record_pruning_hit(env: &mut VerifierEnv, pc: usize, prev_idx: usize) {
     env.pruning_stats.lifetime_hits += 1;
+    let id = if crate::analysis::trace_pc_in_range(pc) {
+        env.explored_states.get(&pc).and_then(|v| v.get(prev_idx)).map(|s| {
+            use crate::analysis::machine::reg::Reg;
+            (s.cache_id, s.domain.get_interval(Reg::R1).0)
+        })
+    } else {
+        None
+    };
     if let Some(metrics) = env.state_metrics.get_mut(&pc)
         && let Some(m) = metrics.get_mut(prev_idx)
     {
         m.hit_cnt = m.hit_cnt.saturating_add(1);
+        if let Some((cid, r1)) = id {
+            eprintln!(
+                "[ev] pc={} HIT cid={:?} r1={} cnt={}/{}",
+                pc, cid, r1, m.miss_cnt, m.hit_cnt
+            );
+        }
     }
 }
 
