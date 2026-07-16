@@ -32,6 +32,19 @@ pub struct AnalysisResult {
     pub error: Option<VerificationError>,
 }
 
+
+/// ZOVIA_DBG_JMPCNT=LO:HI (diagnosis-only): absolute insn_processed window
+/// for the [jmpcnt] jump-stream dump.
+fn jmpcnt_in_range(ip: usize) -> bool {
+    std::env::var("ZOVIA_DBG_JMPCNT")
+        .ok()
+        .and_then(|s| {
+            let (lo, hi) = s.split_once(':')?;
+            Some((lo.parse::<usize>().ok()?, hi.parse::<usize>().ok()?))
+        })
+        .is_some_and(|(lo, hi)| ip >= lo && ip <= hi)
+}
+
 pub fn analyze_program(
     ctx: &ExecContext,
     prog: &Program,
@@ -1198,6 +1211,12 @@ fn run_worklist(
             // :2073). last_insn_idx is unchanged (it's the arrival pc, set on
             // this state at successor-creation).
             state.first_insn_idx = state.pc;
+            if jmpcnt_in_range(env.insn_processed) {
+                eprintln!(
+                    "[jmpcnt] ADD ip={} jp={} pc={}",
+                    env.insn_processed, env.jmps_processed, state.pc
+                );
+            }
             env.prev_jmps_processed = env.jmps_processed;
             env.prev_insn_processed = env.insn_processed;
             state.prev_jmp_at_cache = state.path_jmp_count;
@@ -1369,6 +1388,16 @@ fn run_worklist(
         if is_jmp_class {
             env.jmps_processed += 1;
             state.path_jmp_count = state.path_jmp_count.saturating_add(1);
+            // ZOVIA_DBG_JMPCNT=LO:HI (2af5badd chase 2026-07-13): name every
+            // jmp-class increment in an absolute insn_processed window, to
+            // diff the jump STREAM against the kernel's dj on the same
+            // window (kernel dj=1 vs zovia jd=2 at the pc632 add).
+            if jmpcnt_in_range(env.insn_processed) {
+                eprintln!(
+                    "[jmpcnt] JMP ip={} jp={} pc={}",
+                    env.insn_processed, env.jmps_processed, state.pc
+                );
+            }
         }
         // Kernel do_check: `bpf_reset_stack_write_marks(env, insn_idx)`
         // before do_check_insn, `bpf_commit_stack_write_marks` after.

@@ -530,6 +530,16 @@ fn scalar_id_links_subsumed_by(
 fn types_subsumed_by(cur: &TypeState, old: &TypeState, live_regs: &HashSet<Reg>) -> bool {
     for &r in live_regs {
         if !type_subsumed_by(&cur.get(r), &old.get(r)) {
+            // ZOVIA_DUMP_TYPES_MISS=1 (2af5badd seed chase 2026-07-13):
+            // name the live reg + type pair that blocks the Types verdict.
+            if std::env::var("ZOVIA_DUMP_TYPES_MISS").ok().as_deref() == Some("1") {
+                eprintln!(
+                    "[types_miss] reg={:?} old={:?} cur={:?}",
+                    r,
+                    old.get(r),
+                    cur.get(r)
+                );
+            }
             return false;
         }
     }
