@@ -645,6 +645,48 @@ pub(crate) fn trace_pc_in_range(pc: usize) -> bool {
     }
 }
 
+/// ZOVIA_DBG_PUSHDUMP=<pc>: dump R5 + stack bytes -216..-209 (spi26) at every
+/// worklist PUSH of a successor whose resume pc == <pc> and every POP of a
+/// state at that pc. 2af5badd seed chase (2026-07-16): the kernel's pending
+/// states are immutable full copies (push_stack → copy_verifier_state), so its
+/// 2033-arm state (resume 2050) pops with the push-time spi26=[Spill×8];
+/// zovia's same state arrives at 2244 with [Spill×4,Misc×4] — the signature of
+/// the pc2039 u32 store executed AFTER the push on the continued fall arm.
+/// This instrument shows whether zovia's pushed snapshot mutates between push
+/// and pop.
+pub(crate) fn pushdump_pc() -> Option<usize> {
+    static PC: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
+    *PC.get_or_init(|| {
+        std::env::var("ZOVIA_DBG_PUSHDUMP")
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+    })
+}
+
+fn pushdump(side: &str, state: &crate::analysis::machine::state::State) {
+    use crate::analysis::machine::reg::Reg;
+    let mut slots = String::new();
+    for off in -216i16..=-209 {
+        match state.frames.current().stack.get_slot(off) {
+            Some(s) => slots.push_str(&format!(" {}:{:?}/{:?}", off, s.kind, s.reg_type)),
+            None => slots.push_str(&format!(" {}:-", off)),
+        }
+    }
+    let (r5lo, r5hi) = state.domain.get_interval(Reg::R5);
+    eprintln!(
+        "[pushdump] {} pc={} parent={:?} jd={} id={} r5={:?}[{}..{}] spi26={}",
+        side,
+        state.pc,
+        state.parent_cache_id,
+        state.path_jmp_count,
+        state.path_insn_count,
+        state.types.get(Reg::R5),
+        r5lo,
+        r5hi,
+        slots
+    );
+}
+
 fn check_map_prog_compatibility(env: &VerifierEnv) -> Option<VerificationError> {
     use crate::ast::ProgramKind;
     use crate::parsing::btf::SpecialFieldKind;
@@ -792,6 +834,9 @@ fn run_worklist(
                 "[WL_POP] pc={} parent_cache_id={:?} R2=[{}..{}]",
                 state.pc, state.parent_cache_id, r2lo, r2hi,
             );
+        }
+        if pushdump_pc() == Some(state.pc) {
+            pushdump("POP", &state);
         }
         // Per-path counter bump for the kernel-engine sparse-cache
         // heuristic (`ZOVIA_KERNEL_ENGINE=1`). Counts THIS path's
@@ -1547,6 +1592,9 @@ fn run_worklist(
             crate::analysis::flow::scc::complete_dfs_branch(env, cur_parent_cache_id);
         }
         for succ in loop_back {
+            if pushdump_pc() == Some(succ.pc) {
+                pushdump("PUSH-lb", &succ);
+            }
             worklist.push_back(succ);
         }
         for succ in other.into_iter().rev() {
@@ -1555,6 +1603,9 @@ fn run_worklist(
                     "[WL_PUSH] pc={} parent_cache_id={:?} (worklist_len_before={})",
                     succ.pc, succ.parent_cache_id, worklist.len()
                 );
+            }
+            if pushdump_pc() == Some(succ.pc) {
+                pushdump("PUSH", &succ);
             }
             worklist.push_back(succ);
         }

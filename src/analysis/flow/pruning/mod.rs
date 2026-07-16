@@ -32,6 +32,38 @@ use widening::{
 /// gate on the insn kind plus the flag so MayGoto pcs (also
 /// force-checkpoint) still run the inf-loop check, matching the kernel's
 /// fall-through at L19103-L19109.
+/// ZOVIA_DUMP_SLOTS3: per-byte kinds + base-spill (type, prec, bounds) for
+/// spi25/26/27 (bases -208/-216/-224) on cur and the compared candidate.
+/// 2af5badd seed chase 2026-07-16 — diff vs kernel probe #132.
+fn dump_slots3(pc: usize, verdict: &str, state: &State, prev: &State) {
+    for base in [-208i16, -216, -224] {
+        let kinds = |fr: &crate::analysis::machine::frame_stack::CallFrame| {
+            (base..base + 8)
+                .map(|b| match fr.stack.get_slot_kind(b) {
+                    Some(k) => format!("{:?}", k).chars().next().unwrap(),
+                    None => '-',
+                })
+                .collect::<String>()
+        };
+        let basereg = |fr: &crate::analysis::machine::frame_stack::CallFrame| {
+            fr.stack
+                .get_slot(base)
+                .map(|s| format!("{:?}/p{}[{},{}]", s.reg_type, s.precise, s.bounds.min, s.bounds.max))
+                .unwrap_or_else(|| "-".into())
+        };
+        eprintln!(
+            "[slots3] pc={} {} base={} cur={} old={} cur_base={} old_base={}",
+            pc,
+            verdict,
+            base,
+            kinds(state.frames.current()),
+            kinds(prev.frames.current()),
+            basereg(state.frames.current()),
+            basereg(prev.frames.current()),
+        );
+    }
+}
+
 fn is_inf_loop_skip_pc(prog: &Program, pc: usize) -> bool {
     matches!(prog.instrs.get(pc), Some(Instr::Call { .. }))
 }
@@ -532,6 +564,9 @@ fn handle_standard_pruning(
                             "[SUBSUM_HIT] pc={} prev_idx={} cache_id={:?} (standard)",
                             pc, i, prev.cache_id,
                         );
+                        if std::env::var("ZOVIA_DUMP_SLOTS3").ok().as_deref() == Some("1") {
+                            dump_slots3(pc, "HIT", state, prev);
+                        }
                         // Precision-seam probe (route-B 140 hit): dump the
                         // compared live dims of cur vs the matched cache.
                         if std::env::var("ZOVIA_DUMP_HIT_DIMS").ok().as_deref() == Some("1") {
@@ -577,6 +612,13 @@ fn handle_standard_pruning(
                             "[SUBSUM_MISS] pc={} prev_idx={} reason={:?} prev.dfs_paths={} force_exact={} (non-loop site)",
                             pc, i, reason, prev.dfs_paths, force_exact,
                         );
+                        // ZOVIA_DUMP_SLOTS3 (2af5badd seed chase 2026-07-16):
+                        // per-byte kinds + base spill (type,prec,bounds) for
+                        // spi25/26/27 on BOTH cur and the candidate — diffed
+                        // against kernel probe #132's same dump per arrival.
+                        if std::env::var("ZOVIA_DUMP_SLOTS3").ok().as_deref() == Some("1") {
+                            dump_slots3(pc, "MISS", state, prev);
+                        }
                         // Miss-dim probe (124 re-entry seam): same dims as
                         // [hit_dim] but on the miss path, cur vs the missed
                         // cache. Env-gated, trace-range-gated.
