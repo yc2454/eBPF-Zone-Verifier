@@ -820,6 +820,13 @@ fn run_worklist(
         }
     }
 
+    // probe #141 companion ([ZK pop] mirror): a zovia pop is
+    // kernel-comparable iff the PREVIOUS iteration died (prune-hit /
+    // zero successors / fetch-fail) — otherwise it's the continuation
+    // pop the kernel never makes. First pop = the initial state (no
+    // kernel analog).
+    let zpop_on = std::env::var("ZOVIA_DBG_PUSHLOG").ok().as_deref() == Some("1");
+    let mut prev_died = false;
     while let Some(mut state) = worklist.pop_back() {
         // Retry-round mirror: the first uncovered reject ended this round
         // (kernel: the load fails at mark_bcf_requested; nothing after it
@@ -827,6 +834,13 @@ fn run_worklist(
         if env.bcf_round_stop {
             break;
         }
+        if zpop_on && prev_died {
+            eprintln!(
+                "[zpop] resume={} ip={} jp={}",
+                state.pc, env.insn_processed, env.jmps_processed
+            );
+        }
+        prev_died = true;
         if trace_pc_in_range(state.pc) {
             use crate::analysis::machine::reg::Reg;
             let (r2lo, r2hi) = state.domain.get_interval(Reg::R2);
@@ -1628,6 +1642,9 @@ fn run_worklist(
         // analog: at=branch pc, resume=arm pc). probe #140 companion.
         let pushlog = std::env::var("ZOVIA_DBG_PUSHLOG").ok().as_deref() == Some("1");
         let n_push = loop_back.len() + other.len();
+        // probe #141 companion: a continuation gets pushed iff n_push>0 —
+        // the next pop is then NOT kernel-comparable.
+        prev_died = n_push == 0;
         let mut push_i = 0usize;
         let mut plog = |pc: usize, at: usize, i: usize| {
             if pushlog && i + 1 < n_push {
