@@ -643,7 +643,7 @@ fn handle_standard_pruning(
                         if std::env::var("ZOVIA_DUMP_MISS_DIMS").ok().as_deref() == Some("1") {
                             use crate::analysis::machine::reg::Reg;
                             for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4,
-                                      Reg::R6, Reg::R7, Reg::R8, Reg::R9] {
+                                      Reg::R5, Reg::R6, Reg::R7, Reg::R8, Reg::R9] {
                                 let (clo, chi) = state.domain.get_interval(r);
                                 let (plo, phi) = prev.domain.get_interval(r);
                                 eprintln!(
