@@ -310,18 +310,44 @@ pub struct SpilledReg {
 /// which is CoW: free on a uniquely-owned value, one full clone the first
 /// time a shared value is mutated. Forks that don't touch the stack — the
 /// common case on register-only insns — pay nothing.
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Default)]
 pub struct StackState {
     slots: std::sync::Arc<BTreeMap<i16, SpilledReg>>,
+    /// Kernel `bpf_func_state::allocated_stack` mirror: high-water mark
+    /// (bytes, multiple of BPF_REG_SIZE, positive) of the deepest stack
+    /// byte this frame has materialized. Kernel grows it on EVERY bounds-
+    /// checked access (`grow_stack_state` via
+    /// `check_stack_access_within_bounds`, verifier.c:8010) and never
+    /// shrinks it; `stacksafe` hard-fails any old non-INVALID/non-MISC
+    /// byte at `i >= cur->allocated_stack` (verifier.c:19816) BEFORE the
+    /// `scalar_reg_for_stack` bridge — no imprecise-old wildcard applies
+    /// across the boundary. zovia grows on slot materialization (every
+    /// write path lands in `insert`/`set_slot_type`/`invalidate_slot`);
+    /// pure reads of never-written stack don't grow it — strict-side
+    /// approximation, validated stream-identical on the probe objects.
+    allocated_stack: u16,
 }
 
 // Explicit `Clone` for visibility: this is the cheap pointer-bump, not a
 // deep copy. The deep copy happens lazily inside `slots_mut`.
 impl Clone for StackState {
     fn clone(&self) -> Self {
-        Self { slots: std::sync::Arc::clone(&self.slots) }
+        Self {
+            slots: std::sync::Arc::clone(&self.slots),
+            allocated_stack: self.allocated_stack,
+        }
     }
 }
+
+// `allocated_stack` is deliberately EXCLUDED from equality: it feeds only
+// the stacksafe allocation-boundary gate in `stack_subsumed_by`; every
+// pre-existing `==` (caller-frame snapshots etc.) keeps its semantics.
+impl PartialEq for StackState {
+    fn eq(&self, other: &Self) -> bool {
+        self.slots == other.slots
+    }
+}
+impl Eq for StackState {}
 
 impl std::fmt::Display for StackState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -350,6 +376,26 @@ impl StackState {
     #[inline]
     fn slots_mut(&mut self) -> &mut BTreeMap<i16, SpilledReg> {
         std::sync::Arc::make_mut(&mut self.slots)
+    }
+
+    /// Kernel `grow_stack_state` (verifier.c:1783): needed size for a byte
+    /// at (negative) `offset` is `-offset`, rounded up to BPF_REG_SIZE;
+    /// monotone.
+    #[inline]
+    fn grow_allocated(&mut self, offset: i16) {
+        if offset >= 0 {
+            return;
+        }
+        let need = ((-(offset as i32) + 7) & !7) as u16;
+        if need > self.allocated_stack {
+            self.allocated_stack = need;
+        }
+    }
+
+    /// Kernel `bpf_func_state::allocated_stack` analog (bytes, ≥0).
+    #[inline]
+    pub fn allocated_stack(&self) -> u16 {
+        self.allocated_stack
     }
 
     /// Mark every spilled slot's `bcf_expr` uncached for a faithful
@@ -429,6 +475,7 @@ impl StackState {
                 reg_type
             );
         }
+        self.grow_allocated(offset);
         let map = self.slots_mut();
         if let Some(spilled) = map.get_mut(&offset) {
             spilled.reg_type = reg_type;
@@ -520,6 +567,7 @@ impl StackState {
     }
 
     pub fn insert(&mut self, offset: i16, spilled: SpilledReg) {
+        self.grow_allocated(offset);
         self.slots_mut().insert(offset, spilled);
     }
 
@@ -529,6 +577,7 @@ impl StackState {
         {
             eprintln!("[slotw] invalidate_slot off={}", offset);
         }
+        self.grow_allocated(offset);
         self.slots_mut().insert(
             offset,
             SpilledReg {

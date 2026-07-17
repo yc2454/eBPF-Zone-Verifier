@@ -982,6 +982,16 @@ fn stack_subsumed_by(
         // compare — the sound direction).
         let frame_ls = frame_live_slots.get(frame_i).and_then(|o| o.as_ref());
 
+        // Kernel stacksafe allocation-boundary gate. EXACT mode
+        // (verifier.c:19800): any old-allocation byte at
+        // `i >= cur->allocated_stack` fails outright — old INVALID bytes
+        // included — so old_alloc > cur_alloc is an immediate mismatch.
+        if force_exact
+            && old_frame.stack.allocated_stack() > new_frame.stack.allocated_stack()
+        {
+            return false;
+        }
+
         // Kernel `scalar_reg_for_stack` slot-pair rule (stacksafe
         // verifier.c:19736): when BOTH slots read as scalars — (a) a
         // full 8-byte scalar spill (`is_spilled_scalar_reg64`: kernel
@@ -1010,6 +1020,49 @@ fn stack_subsumed_by(
                     continue;
                 }
                 use crate::analysis::machine::stack_state::StackSlotKind::*;
+                // Kernel stacksafe allocation-boundary gate
+                // (verifier.c:19816, ordered BEFORE the
+                // scalar_reg_for_stack bridge at :19824): for an old byte
+                // at `i >= cur->allocated_stack`, only STACK_INVALID
+                // (:19806) or privileged STACK_MISC (:19809) may skip;
+                // any other kind — including an IMPRECISE 8-byte scalar
+                // spill — is a hard mismatch ("explored stack has more
+                // populated slots than current stack and these slots
+                // were used"). The bridge's unbound-cur wildcard never
+                // sees the slot. Measured: co-re from_tnl c15 352-seed
+                // (0x2af5badd@709) — old -280 spill (pc446 mask, alloc
+                // 280) vs the 342-entry cur (alloc 272): kernel
+                // ALLOCFAIL i=272 (probe #144), zovia wildcard-HIT its
+                // newest cand → the 346-walk died at 352 and the
+                // high-half 709 corridor went extinct.
+                if -(base as i32) > new_frame.stack.allocated_stack() as i32 {
+                    let all_skippable = (base..base + 8).all(|b| {
+                        matches!(
+                            old_frame.stack.get_slot_kind(b),
+                            None | Some(Misc)
+                        )
+                    });
+                    if !all_skippable {
+                        if std::env::var("ZOVIA_DUMP_STACK_MISS").ok().as_deref()
+                            == Some("1")
+                        {
+                            eprintln!(
+                                "[stack_miss] pc={} frame={} base={} (alloc-boundary: cur_alloc={})",
+                                cur.pc,
+                                frame_i,
+                                base,
+                                new_frame.stack.allocated_stack()
+                            );
+                        }
+                        return false;
+                    }
+                    // All old bytes INVALID/MISC ⇒ kernel `continue`s
+                    // through the slot; nothing on the cur side can exist
+                    // beyond its own allocation. Settled — the per-byte
+                    // walk below must not re-judge it.
+                    scalar_pair_slots.insert(base);
+                    continue;
+                }
                 // None ⇒ not scalar-readable; Some(None) ⇒ unbound
                 // (all-misc/uninit); Some(Some(off)) ⇒ real 8-byte
                 // scalar spill anchored at `base`.
