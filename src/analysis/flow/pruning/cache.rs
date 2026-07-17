@@ -157,19 +157,6 @@ pub fn clean_verifier_state(env: &mut VerifierEnv, cid: u32) {
         return;
     };
     let n_frames = st.frames.depth();
-    // Snapshot slot_anchored BEFORE any slot cleaning (subsequent
-    // per-frame loop drops dead slots).
-    let mut slot_anchored: std::collections::HashSet<Reg> = std::collections::HashSet::new();
-    for fi in 0..n_frames {
-        let frame = st.frames.get(FrameLevel::from_index(fi));
-        for off in frame.stack.slot_offsets() {
-            if let Some(slot) = frame.stack.get_slot(off)
-                && let Some(src) = slot.source_reg
-            {
-                slot_anchored.insert(src);
-            }
-        }
-    }
     for (i, (live_regs, alive_mask)) in frame_live.iter().enumerate() {
         let level = FrameLevel::from_index(i);
         let frame = st.frames.get_mut(level);
@@ -211,15 +198,19 @@ pub fn clean_verifier_state(env: &mut VerifierEnv, cid: u32) {
             }
         }
     }
-    // Innermost frame: regs in st.types. Don't clean a reg whose
-    // value is currently anchored to a spilled scalar slot via
-    // `source_reg` — the spill/fill chain depends on the reg's
-    // value being recoverable from the slot, and the kernel's
-    // `clean_func_state` is sound here only because
-    // `bpf_live_stack_query_init` propagates per-path read marks
-    // we don't yet mirror. Carve-out preserves
-    // `tracking_for_u32_spill_fill`-style soundness without
-    // requiring the full per-path liveness port.
+    // Innermost frame: regs in st.types. Kernel `clean_func_state`
+    // (verifier.c:19499) marks EVERY reg not in `live_regs_before`
+    // NOT_INIT — unconditionally; there is no spilled-slot-anchor
+    // exemption (slots carry their own self-contained value, and the
+    // dynamic live-stack query above governs slot survival
+    // independently). The former `slot_anchored` carve-out (pre-
+    // live_stack-port stopgap) kept statically-dead regs alive in
+    // cached states, making them stricter than the kernel's:
+    // to_lo_fib_no_log_co-re_v6 pc754/0xf00d1f29 — kernel's 762
+    // checkpoint has r8=NOT_INIT (cleaned) and HITs the ip6680
+    // arrival (probe #145 [ZK sv2]); zovia kept r8=[6,6] (later
+    // precise via the 1297-demand walk) and MISSed on the tnum dim,
+    // diverging the whole add schedule after add #451.
     let inner_live = frame_live
         .last()
         .map(|(r, _)| r.clone())
@@ -228,7 +219,7 @@ pub fn clean_verifier_state(env: &mut VerifierEnv, cid: u32) {
         if r == Reg::R10 || r == Reg::Zero {
             continue;
         }
-        if !inner_live.contains(&r) && !slot_anchored.contains(&r) {
+        if !inner_live.contains(&r) {
             st.types.set(r, RegType::NotInit);
             st.tnums.remove(&r);
             st.scalar_ids.remove(&r);
