@@ -301,7 +301,33 @@ pub fn mark_chain_precision_backward_seeded(
                 current_parent_id.and_then(|id| env.state_by_cache_id_mut(id))
             {
                 for &r in &frontier {
-                    s.mark_reg_precise(r);
+                    // ZOVIA_DBG_PREG=<RegDebug>:<cid> — who marks this reg
+                    // precise on this cached state (1482/-312 chase level N+1).
+                    if let Ok(v) = std::env::var("ZOVIA_DBG_PREG")
+                        && let Some((rs, cs)) = v.split_once(':')
+                        && format!("{:?}", r) == rs
+                        && s.cache_id.map(|c| c.to_string()).as_deref() == Some(cs)
+                        && !s.precise_regs.contains(&r)
+                    {
+                        eprintln!(
+                            "[prec-reg] {:?} marked cid={:?} (cache pc={}) sink_regs={:?} sink_slots={:?} hidx={}",
+                            r, s.cache_id, s.pc, sink_regs, sink_slots, history_idx
+                        );
+                    }
+                    // Kernel parent-chain apply (verifier.c:5156-5170) marks
+                    // EXACTLY the bt frame regs — no scalar-id fan-out on the
+                    // ancestor state. The kernel's id-class propagation is
+                    // (a) mark_precise_scalar_ids on CUR at walk start and
+                    // (b) hist->linked_regs during the walk (zovia mirrors it
+                    // in bt_sync_linked_regs). mark_reg_precise's fan-out
+                    // here marked ancestors' unrelated-in-that-state id
+                    // classes: cid2104@1507's R5 became precise via R8's
+                    // id-class ([prec-fanout], 2af5badd 1482 link) → R5
+                    // seeded the next propagate → R3 at 1506 → slot -312
+                    // precise → the 1482 seed MISS where the kernel HITs
+                    // (probes #137-139: kernel old prec_regs=0x104 {R2,R8},
+                    // zovia +R5; kernel never sets spi38 in bt).
+                    s.precise_regs.insert(r);
                 }
                 marked = s.precise_regs.iter().copied().collect();
                 // Stack-slot precision (gated, cont.19i): mark the

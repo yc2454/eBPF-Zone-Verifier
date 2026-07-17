@@ -670,6 +670,20 @@ impl State {
                 .filter_map(|(&other, &oid)| if oid == id { Some(other) } else { None })
                 .collect();
             for other in linked {
+                // ZOVIA_DBG_PREG2=<RegDebug>:<cid> — trace scalar-id
+                // fan-out marks (1482/-312 chase: who makes cid2104's R5
+                // precise — kernel apply marks exactly the bt regs).
+                if let Ok(v) = std::env::var("ZOVIA_DBG_PREG2")
+                    && let Some((rs, cs)) = v.split_once(':')
+                    && format!("{:?}", other) == rs
+                    && self.cache_id.map(|c| c.to_string()).as_deref() == Some(cs)
+                    && !self.precise_regs.contains(&other)
+                {
+                    eprintln!(
+                        "[prec-fanout] {:?} marked via id-class of {:?} (id={}) cid={:?} pc={}",
+                        other, r, id, self.cache_id, self.pc
+                    );
+                }
                 self.precise_regs.insert(other);
             }
         }
