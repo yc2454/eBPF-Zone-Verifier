@@ -248,8 +248,13 @@ pub(crate) fn handle_and(state: &mut State, width: Width, dst: Reg, src: &Operan
     // Post-op tnum FIRST — kernel order: `dst_reg->var_off = tnum_and(...)`
     // (verifier.c:16225) precedes both min/max helpers, which read the
     // POST-op var_off for their tnum-derived minima and const checks.
+    // For W32 the kernel's zext_32_to_64 tail (verifier.c:16262) subregs
+    // the var_off (upper 32 bits KNOWN ZERO — an alu32 result is
+    // zero-extended); AND always reaches that tail (is_safe set), so
+    // mirror the subreg here (a no-op for the imm case, whose zext'd
+    // mask already zeroes the uppers; real effect on reg-src W32).
     let t = state.get_tnum(dst);
-    let new_t = match src {
+    let full_t = match src {
         Operand::Imm(mask) => {
             let mask = if width == Width::W32 {
                 (*mask as u32) as u64
@@ -259,6 +264,11 @@ pub(crate) fn handle_and(state: &mut State, width: Width, dst: Reg, src: &Operan
             t.and_imm(mask)
         }
         Operand::Reg(_) => t.and(src_tnum),
+    };
+    let new_t = if width == Width::W32 {
+        Tnum { value: full_t.value & 0xFFFF_FFFF, mask: full_t.mask & 0xFFFF_FFFF }
+    } else {
+        full_t
     };
 
     state.domain.forget(dst);
@@ -446,35 +456,36 @@ pub(crate) fn handle_or(state: &mut State, width: Width, dst: Reg, src: &Operand
         _ => None,
     };
 
-    // Pre-op unsigned mins for the kernel `scalar_min_max_or` bound (umin =
-    // max of operand umins — OR can only set bits, so x|y >= x and >= y).
-    // Captured before `forget` clears them. Non-negative-only (signed
-    // interval lower bound used as the unsigned floor when >= 0).
-    let (dst_lo_pre, dst_hi_pre) = state.domain.get_interval(dst);
-    let dst_umin_pre = if dst_lo_pre >= 0 { dst_lo_pre as u64 } else { 0 };
-    // dst's unsigned max (only meaningful when non-negative; else u64::MAX).
-    let dst_umax_pre = if dst_lo_pre >= 0 && dst_hi_pre >= 0 {
-        dst_hi_pre as u64
-    } else {
-        u64::MAX
-    };
-    let (src_umin_pre, src_umax_pre) = match src {
-        Operand::Imm(c) => {
-            let c = if width == Width::W32 { (*c as u32) as u64 } else { *c as u64 };
-            (c, c)
-        }
-        Operand::Reg(r) => {
-            let (lo, hi) = state.domain.get_interval(*r);
-            let umin = if lo >= 0 { lo as u64 } else { 0 };
-            let umax = if lo >= 0 && hi >= 0 { hi as u64 } else { u64::MAX };
-            (umin, umax)
-        }
+    // Pre-op unsigned minima: the kernel's OR bounds are
+    //   u32_min = max(dst pre-op u32_min, src u32_min)  (scalar32_min_max_or, verifier.c:15809)
+    //   umin    = max(dst pre-op umin,    src umin)     (scalar_min_max_or,   verifier.c:15839)
+    // (OR only sets bits, so x|y >= x and >= y); the maxima come from the
+    // post-op tnum (value|mask). Captured before `forget` wipes dst.
+    // The former fill_ones() interval heuristic here predated fix #7
+    // (71f32b9: zero-extending loads set size-masked tnums), which makes
+    // the tnum tight enough for the kernel's own umax formula — e.g. the
+    // (u8<<3) feed of test_cls_redirect pc265/pc269 now carries tnum
+    // {0, 0x7f8}.
+    let (pre_u32_min, _) = state.domain.get_u32_bounds(dst);
+    let (pre_umin, _) = state.domain.get_u64_bounds(dst);
+    // Kernel src_reg: BPF_K = known reg from the SIGN-EXTENDED imm
+    // (__mark_reg_known(&off_reg, insn->imm), verifier.c:16355).
+    let (src_u32_min, src_umin, src_tnum) = match src {
+        Operand::Imm(c) => (*c as u32, *c as u64, Tnum::constant(*c as u64)),
+        Operand::Reg(r) => (
+            state.domain.get_u32_bounds(*r).0,
+            state.domain.get_u64_bounds(*r).0,
+            state.get_tnum(*r),
+        ),
     };
 
-    state.domain.forget(dst);
-
+    // Post-op tnum FIRST — kernel order: `var_off = tnum_or(...)`
+    // (verifier.c:16230) precedes both min/max helpers. For W32 the
+    // kernel's zext_32_to_64 tail (verifier.c:16262) subregs the var_off
+    // (upper 32 bits KNOWN ZERO — an alu32 result is zero-extended); OR
+    // always reaches that tail (is_safe set), so mirror the subreg here.
     let t = state.get_tnum(dst);
-    let new_t = match src {
+    let full_t = match src {
         Operand::Imm(c) => {
             let c = if width == Width::W32 {
                 (*c as u32) as u64
@@ -483,41 +494,58 @@ pub(crate) fn handle_or(state: &mut State, width: Width, dst: Reg, src: &Operand
             };
             t.or_imm(c)
         }
-        Operand::Reg(r) => {
-            let r_tnum = state.get_tnum(*r);
-            t.or(r_tnum)
-        }
+        Operand::Reg(_) => t.or(src_tnum),
     };
+    let new_t = if width == Width::W32 {
+        Tnum { value: full_t.value & 0xFFFF_FFFF, mask: full_t.mask & 0xFFFF_FFFF }
+    } else {
+        full_t
+    };
+
+    state.domain.forget(dst);
+
+    // scalar32_min_max_or (verifier.c:15794): u32_min = max of minima,
+    // u32_max = subreg-tnum value|mask, s32 by cast when the u32 range
+    // doesn't cross the sign boundary; both-subreg-known short-circuits
+    // to the const (__mark_reg32_known).
+    let sub_val = (new_t.value & 0xffff_ffff) as u32;
+    let sub_mask = (new_t.mask & 0xffff_ffff) as u32;
+    let src_sub_known = src_tnum.mask & 0xffff_ffff == 0;
+    if src_sub_known && sub_mask == 0 {
+        state.domain.set_u32_bounds(dst, sub_val, sub_val);
+        state.domain.set_s32_bounds(dst, sub_val as i32, sub_val as i32);
+    } else {
+        let u32_min_new = pre_u32_min.max(src_u32_min);
+        let u32_max_new = sub_val | sub_mask;
+        state.domain.set_u32_bounds(dst, u32_min_new, u32_max_new);
+        if (u32_min_new as i32) <= (u32_max_new as i32) {
+            state.domain.set_s32_bounds(dst, u32_min_new as i32, u32_max_new as i32);
+        }
+        // else: s32 stays unbounded (kernel sets S32_MIN/S32_MAX).
+    }
+
+    // scalar_min_max_or (verifier.c:15824), W64 only: an alu32 op's
+    // 64-bit result is overwritten by zext_32_to_64 at the ALU tail
+    // (zovia: alu/mod.rs W32 tail zext_32_into_64). The both-known case
+    // (__mark_reg_known) is equivalent to the const tail below.
+    if width == Width::W64 && !(src_tnum.mask == 0 && new_t.mask == 0) {
+        let umin_new = pre_umin.max(src_umin);
+        let umax_new = new_t.value | new_t.mask;
+        state.domain.set_u64_bounds(dst, umin_new, umax_new);
+        if (umin_new as i64) <= (umax_new as i64) {
+            state.domain.assume_range(dst, umin_new as i64, umax_new as i64);
+        }
+        // else: s64 stays unbounded (kernel sets S64_MIN/S64_MAX).
+    }
+
     state.set_tnum(dst, new_t);
 
+    // Kernel tail of scalar_min_max_or: __update_reg_bounds
+    // (verifier.c:15853) — the file-standard tnum→interval intersection.
     sync_tnum_to_bounds(state, dst);
 
-    // Kernel `scalar_min_max_or` (verifier.c v6.15 ~L14710): umin =
-    // max(operand umins) (OR only sets bits, so x|y >= x and >= y); umax is
-    // the largest value consistent with the result. The kernel reads umax
-    // from var_off (value|mask), but zovia's tnum here is loose (the
-    // upstream `(u8 << 3)` keeps a tight INTERVAL [0,2040] but not a tight
-    // tnum), so derive umax from the interval instead: for non-negative
-    // operands, x|y <= fill_ones(dst_umax | src_umax) — round the combined
-    // max up to all-ones of its bit-width (an upper bound for any OR of
-    // values within those ranges). `forget` dropped the interval and the
-    // tnum→dbm sync can't rebuild it, so a bounded `x | c` collapsed to full
-    // range → `pkt_ptr += that` rejected as "invalid pointer arithmetic"
-    // (test_cls_redirect::cls_redirect pc265/pc269). Sound over-approx ⇒
-    // FA-safe; only fires when both operands are provably non-negative.
-    if dst_umax_pre != u64::MAX && src_umax_pre != u64::MAX {
-        let combined = dst_umax_pre | src_umax_pre;
-        let umax = if combined == 0 {
-            0
-        } else {
-            // smallest (2^k - 1) >= combined
-            u64::MAX >> combined.leading_zeros()
-        };
-        let umax = if width == Width::W32 { umax & 0xFFFF_FFFF } else { umax };
-        let umin = dst_umin_pre.max(src_umin_pre);
-        if umax <= i64::MAX as u64 && umin <= umax {
-            state.domain.assume_range(dst, umin as i64, umax as i64);
-        }
+    if let Some(c) = new_t.const_value() {
+        state.domain.assume_eq_imm(dst, c as i64);
     }
 
     // BCF: kernel routes BPF_OR through bcf_alu (in is_safe set) —
@@ -542,10 +570,21 @@ pub(crate) fn handle_xor(state: &mut State, width: Width, dst: Reg, src: &Operan
         _ => None,
     };
 
-    state.domain.forget(dst);
+    // Kernel src tnum: BPF_K = known reg from the SIGN-EXTENDED imm
+    // (__mark_reg_known(&off_reg, insn->imm), verifier.c:16355). Needed
+    // for the src-known checks of the min/max mirrors below.
+    let src_tnum = match src {
+        Operand::Imm(c) => Tnum::constant(*c as u64),
+        Operand::Reg(r) => state.get_tnum(*r),
+    };
 
+    // Post-op tnum FIRST — kernel order: `var_off = tnum_xor(...)`
+    // (verifier.c:16235) precedes both min/max helpers. For W32 the
+    // kernel's zext_32_to_64 tail (verifier.c:16262) subregs the var_off
+    // (upper 32 bits KNOWN ZERO); XOR always reaches that tail (is_safe
+    // set), so mirror the subreg here.
     let t = state.get_tnum(dst);
-    let new_t = match src {
+    let full_t = match src {
         Operand::Imm(c) => {
             let c = if width == Width::W32 {
                 (*c as u32) as u64
@@ -554,14 +593,54 @@ pub(crate) fn handle_xor(state: &mut State, width: Width, dst: Reg, src: &Operan
             };
             t.xor_imm(c)
         }
-        Operand::Reg(r) => {
-            let r_tnum = state.get_tnum(*r);
-            t.xor(r_tnum)
-        }
+        Operand::Reg(_) => t.xor(src_tnum),
     };
+    let new_t = if width == Width::W32 {
+        Tnum { value: full_t.value & 0xFFFF_FFFF, mask: full_t.mask & 0xFFFF_FFFF }
+    } else {
+        full_t
+    };
+
+    state.domain.forget(dst);
+
+    // scalar32_min_max_xor (verifier.c:15857): both u32 bounds from the
+    // post-op subreg tnum (u32_min = value, u32_max = value|mask), s32 by
+    // cast when the u32 range doesn't cross the sign boundary;
+    // both-subreg-known short-circuits to the const (__mark_reg32_known,
+    // same values here).
+    let sub_val = (new_t.value & 0xffff_ffff) as u32;
+    let sub_mask = (new_t.mask & 0xffff_ffff) as u32;
+    let u32_max_new = sub_val | sub_mask;
+    state.domain.set_u32_bounds(dst, sub_val, u32_max_new);
+    if (sub_val as i32) <= (u32_max_new as i32) {
+        state.domain.set_s32_bounds(dst, sub_val as i32, u32_max_new as i32);
+    }
+    // else: s32 stays unbounded (kernel sets S32_MIN/S32_MAX).
+
+    // scalar_min_max_xor (verifier.c:15886), W64 only: an alu32 op's
+    // 64-bit result is overwritten by zext_32_to_64 at the ALU tail
+    // (zovia: alu/mod.rs W32 tail zext_32_into_64). umin = tnum value,
+    // umax = value|mask, s64 by the cast rule. The both-known case
+    // (__mark_reg_known) is equivalent to the const tail below.
+    if width == Width::W64 && !(src_tnum.mask == 0 && new_t.mask == 0) {
+        let umin_new = new_t.value;
+        let umax_new = new_t.value | new_t.mask;
+        state.domain.set_u64_bounds(dst, umin_new, umax_new);
+        if (umin_new as i64) <= (umax_new as i64) {
+            state.domain.assume_range(dst, umin_new as i64, umax_new as i64);
+        }
+        // else: s64 stays unbounded (kernel sets S64_MIN/S64_MAX).
+    }
+
     state.set_tnum(dst, new_t);
 
+    // Kernel tail of scalar_min_max_xor: __update_reg_bounds
+    // (verifier.c:15910) — the file-standard tnum→interval intersection.
     sync_tnum_to_bounds(state, dst);
+
+    if let Some(c) = new_t.const_value() {
+        state.domain.assume_eq_imm(dst, c as i64);
+    }
 
     // BCF: kernel routes BPF_XOR through bcf_alu (in is_safe set).
     // Was a STALE-bcf_expr gap (no build, no clear).
