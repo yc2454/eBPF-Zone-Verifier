@@ -820,9 +820,23 @@ pub fn get_helper_proto(helper: u32) -> Option<CallProto> {
         constants::BPF_TRACE_PRINTK => CallProto::with_args([
             PtrToMem,  // R1: fmt string
             ConstSize, // R2: fmt_size (MUST BE > 0)
-            Anything,  // R3: arg1
-            Anything,  // R4: arg2
-            Anything,  // R5: arg3
+            // R3-R5: the printk varargs are NOT proto args — kernel
+            // bpf_trace_printk_proto (kernel/trace/bpf_trace.c:386-392)
+            // declares only arg1/arg2; arg3-5 stay ARG_DONTCARE, so
+            // get_call_summary num_params=2 and compute_insn_live_regs
+            // (verifier.c:26141-26145, use=GENMASK(num_params,1)) kills
+            // r3-r5 liveness at every printk call. The old Anything×3
+            // kept R3/R4/R5 live across the CALI_DEBUG-saturated from_wep
+            // debug_v6 bodies — measured probe #146 [ZK lr] diff: all 40
+            // visited accepted_entrypoint prune pcs had zovia = kernel +
+            // {R4,R5} (881 also +R3) — blocking regsafe-parity prune hits
+            // (old=Scalar/cur=NotInit on a kernel-dead reg) and exploding
+            // the build (kernel: 10530 insns / max 6 states per insn;
+            // zovia: 300+ adds per loop pc at 705/811/831/930/990, BTO
+            // at 3600s).
+            DontCare,
+            DontCare,
+            DontCare,
         ])
         // Kernel bpf_trace_printk_proto: fmt/fmt_size ARE a checked
         // mem/size pair — the fmt bytes get bounds-checked and live-stack
