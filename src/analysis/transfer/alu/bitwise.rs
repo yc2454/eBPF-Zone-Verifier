@@ -207,10 +207,30 @@ pub(crate) fn handle_mov(state: &mut State, width: Width, dst: Reg, src: &Operan
 }
 
 pub(crate) fn handle_and(state: &mut State, width: Width, dst: Reg, src: &Operand) {
-    let (min_op, max_op) = state.domain.get_interval(dst);
-    let input_nonnegative = min_op >= 0;
-
-    let (old_s32_min, old_s32_max) = state.domain.get_s32_bounds(dst);
+    // Pre-op unsigned maxima: the kernel's AND bounds are
+    //   u32_max = min(dst pre-op u32_max, src u32_max)  (scalar32_min_max_and, verifier.c:15747)
+    //   umax    = min(dst pre-op umax,    src umax)     (scalar_min_max_and,   verifier.c:15778)
+    // Captured before `forget` wipes dst (and before the op mutates it,
+    // covering the self-AND dst==src case). Deriving the result from the
+    // mask alone (the old apply_and_imm [0,mask]) dropped the pre-op
+    // bound across `w2 &= 0xffff`: the to_wep_no_log c16/17 ext-header
+    // offset arrived at the pc-450 AND with u=[0x68,0x4028] and left with
+    // u=[0,0xffff], so the cached pc-326 rung materialized `u<= 0xffff`
+    // where the kernel's base has `u<= 0x4028` — the only two dims of the
+    // 0x3f523a3e3a0c2d7e @655 first-miss quartet.
+    let (_, pre_u32_max) = state.domain.get_u32_bounds(dst);
+    let (_, pre_umax) = state.domain.get_u64_bounds(dst);
+    // Kernel src_reg: for BPF_K a known reg from the SIGN-EXTENDED imm
+    // (__mark_reg_known(&off_reg, insn->imm), verifier.c:16355), whose
+    // subreg const is (u32)imm; for BPF_X the real src reg.
+    let (src_u32_max, src_umax, src_tnum) = match src {
+        Operand::Imm(imm) => (*imm as u32, *imm as u64, Tnum::constant(*imm as u64)),
+        Operand::Reg(r) => (
+            state.domain.get_u32_bounds(*r).1,
+            state.domain.get_u64_bounds(*r).1,
+            state.get_tnum(*r),
+        ),
+    };
 
     // Pre-op snapshot for BCF: capture dst's BCF bounds BEFORE the
     // abstract op modifies them. Mirrors the kernel's call ordering at
@@ -225,26 +245,9 @@ pub(crate) fn handle_and(state: &mut State, width: Width, dst: Reg, src: &Operan
         _ => None,
     };
 
-    state.domain.forget(dst);
-
-    if let Operand::Imm(mask) = src {
-        let mask = if width == Width::W32 {
-            (*mask as u32) as i64
-        } else {
-            *mask
-        };
-        if mask >= 0 {
-            state.domain.apply_and_imm(dst, mask);
-        } else if input_nonnegative {
-            state.domain.assume_ge_imm(dst, 0);
-            if max_op != i64::MAX {
-                state.domain.assume_le_imm(dst, max_op);
-            }
-        }
-    } else if let Operand::Reg(_) = src {
-        state.domain.assume_ge_imm(dst, 0);
-    }
-
+    // Post-op tnum FIRST — kernel order: `dst_reg->var_off = tnum_and(...)`
+    // (verifier.c:16225) precedes both min/max helpers, which read the
+    // POST-op var_off for their tnum-derived minima and const checks.
     let t = state.get_tnum(dst);
     let new_t = match src {
         Operand::Imm(mask) => {
@@ -255,12 +258,52 @@ pub(crate) fn handle_and(state: &mut State, width: Width, dst: Reg, src: &Operan
             };
             t.and_imm(mask)
         }
-        Operand::Reg(r) => {
-            let r_tnum = state.get_tnum(*r);
-            t.and(r_tnum)
-        }
+        Operand::Reg(_) => t.and(src_tnum),
     };
+
+    state.domain.forget(dst);
+
+    // scalar32_min_max_and (verifier.c:15730): u32_min from the post-op
+    // subreg tnum, u32_max via the min() above, s32 by casting when the
+    // u32 range doesn't cross the sign boundary; both-subreg-known
+    // short-circuits to the const (__mark_reg32_known).
+    let sub_val = (new_t.value & 0xffff_ffff) as u32;
+    let dst_sub_known = new_t.mask & 0xffff_ffff == 0;
+    let src_sub_known = src_tnum.mask & 0xffff_ffff == 0;
+    if src_sub_known && dst_sub_known {
+        state.domain.set_u32_bounds(dst, sub_val, sub_val);
+        state.domain.set_s32_bounds(dst, sub_val as i32, sub_val as i32);
+    } else {
+        let u32_max_new = pre_u32_max.min(src_u32_max);
+        state.domain.set_u32_bounds(dst, sub_val, u32_max_new);
+        if (sub_val as i32) <= (u32_max_new as i32) {
+            state.domain.set_s32_bounds(dst, sub_val as i32, u32_max_new as i32);
+        }
+        // else: s32 stays unbounded (kernel sets S32_MIN/S32_MAX).
+    }
+
+    // scalar_min_max_and (verifier.c:15761), W64 only: for a 32-bit op
+    // the kernel's 64-bit AND result is overwritten by zext_32_to_64 at
+    // the ALU tail (verifier.c:16262; zovia: alu/mod.rs W32 tail calls
+    // zext_32_into_64), so computing it here would intersect-in bounds
+    // the kernel discards. The both-known case (__mark_reg_known) is
+    // equivalent to the const tail below (the kernel's trailing
+    // __update_reg_bounds shrinks umax to the const either way).
+    if width == Width::W64 && !(src_tnum.mask == 0 && new_t.mask == 0) {
+        let umax_new = pre_umax.min(src_umax);
+        state.domain.set_u64_bounds(dst, new_t.value, umax_new);
+        if (new_t.value as i64) <= (umax_new as i64) {
+            state.domain.assume_range(dst, new_t.value as i64, umax_new as i64);
+        }
+        // else: s64 stays unbounded (kernel sets S64_MIN/S64_MAX).
+    }
+
     state.set_tnum(dst, new_t);
+
+    // Kernel tail of scalar_min_max_and: `__update_reg_bounds(dst_reg)`
+    // ("We may learn something more from the var_off", verifier.c:15792)
+    // — the file-standard tnum→interval intersection, same as or/xor.
+    sync_tnum_to_bounds(state, dst);
 
     if let Some(c) = new_t.const_value() {
         state.domain.assume_eq_imm(dst, c as i64);
@@ -279,7 +322,6 @@ pub(crate) fn handle_and(state: &mut State, width: Width, dst: Reg, src: &Operan
     // pc 246, hash 286d21e4fe094520). Keeping only kernel-derivable
     // bounds here is the mirror requirement; any program that NEEDS the
     // precise rule would fail in the real kernel anyway.
-    let _ = (old_s32_min, old_s32_max);
 
     // --- BCF symbolic mirror. Mirrors kernel `bcf_alu` (verifier.c:15166)
     //     with the kernel-shape width discipline. ---

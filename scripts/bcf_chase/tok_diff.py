@@ -27,6 +27,9 @@ Token encoding (observed, stable since probe era):
   03 01 AR 00 00                                  terminating AND, arity AR
 Ops: 11 '==' | 51 '!=' | b1 'u<=' | d1 's<=' | 31 's<' | 50 '&' |
      60 '<<' | 70 '>>' | 71 'u>' | 00 'op00(zext/sext?)'
+Unary (arity byte 1, params in bytes 3-4):
+  03 58 01 TO FROM   ZEXT  (e.g. 03 58 01 40 20 = zext64 of a 32-bit expr)
+  03 38 01 HI LO     EXTRACT (e.g. 03 38 01 00 1f = extract bits 31..0)
 A conjunct fails to decode -> printed raw; extend the table, don't guess.
 
 Reading the diff (the divergence taxonomy, one line each):
@@ -51,6 +54,7 @@ import difflib
 
 OPS = {0x11: '==', 0x51: '!=', 0xb1: 'u<=', 0xd1: 's<=', 0x31: 's<',
        0x50: '&', 0x60: '<<', 0x70: '>>', 0x71: 'u>', 0x00: 'op00'}
+UNARY = {0x58: 'zext', 0x38: 'extract'}
 
 
 def load_bytes(path):
@@ -115,6 +119,11 @@ def render(toks):
             op, ar = p[1], p[2]
             if op == 0x01:
                 lines.append(f'--- AND arity {ar} ({len(stack)} exprs)')
+                continue
+            if ar == 1:
+                a2 = stack.pop() if stack else '?'
+                nm = UNARY.get(op, hex(op))
+                stack.append(f'{nm}[{p[3]:02x},{p[4]:02x}]({a2})')
                 continue
             b = stack.pop() if stack else '?'
             a2 = stack.pop() if stack else '?'
