@@ -1238,6 +1238,36 @@ fn run_worklist(
                     env_heuristic,
                     outer_gate,
                 );
+                // ZOVIA_DUMP_SLOTS3: slot kinds+base value AT ADD TIME — is
+                // the cached old's content mutated later? (2af5badd seed
+                // chase). "1" = default bases -208/-216/-224; or a comma
+                // list of bases (e.g. "-296,-320").
+                if let Ok(v) = std::env::var("ZOVIA_DUMP_SLOTS3") {
+                    let bases: Vec<i16> = if v == "1" {
+                        vec![-208, -216, -224]
+                    } else {
+                        v.split(',').filter_map(|s| s.trim().parse().ok()).collect()
+                    };
+                    for base in bases {
+                        let k: String = (base..base + 8)
+                            .map(|b| match state.frames.current().stack.get_slot_kind(b) {
+                                Some(k) => format!("{:?}", k).chars().next().unwrap(),
+                                None => '-',
+                            })
+                            .collect();
+                        let bv = state
+                            .frames
+                            .current()
+                            .stack
+                            .get_slot(base)
+                            .map(|s| format!("{:?}/p{}[{},{}]", s.reg_type, s.precise, s.bounds.min, s.bounds.max))
+                            .unwrap_or_else(|| "-".into());
+                        eprintln!(
+                            "[cache-slots3] pc={} cid={} base={} kinds={} val={}",
+                            state.pc, cache_id, base, k, bv
+                        );
+                    }
+                }
             }
             // PHASE-1 VALIDATION (ZOVIA_DUMP_STATE_RANGE): the cached state's
             // faithful (insn_idx, first, last) — compare to box #15 [ZK refine]

@@ -1316,6 +1316,14 @@ fn stack_subsumed_by(
             // that has spilled `PtrToOwnedKptr` / `PtrToPacket` to
             // the same offset.
             if !stack_slot_type_subsumed_by(&new_ty, &old_ty) {
+                if crate::analysis::trace_pc_in_range(cur.pc)
+                    && std::env::var("ZOVIA_DUMP_STACK_MISS").ok().as_deref() == Some("1")
+                {
+                    eprintln!(
+                        "[stack_miss] pc={} frame={} off={} old_ty={:?} new_ty={:?} (slot-type)",
+                        cur.pc, frame_i, offset, old_ty, new_ty
+                    );
+                }
                 return false;
             }
 
@@ -1332,11 +1340,29 @@ fn stack_subsumed_by(
             if let (Some(old_s), Some(new_s)) = (old_slot, new_slot) {
                 if old_s.precise {
                     if !tnum_covers(&new_s.tnum, &old_s.tnum) {
+                        if crate::analysis::trace_pc_in_range(cur.pc)
+                            && std::env::var("ZOVIA_DUMP_STACK_MISS").ok().as_deref() == Some("1")
+                        {
+                            eprintln!(
+                                "[stack_miss] pc={} frame={} off={} old_tn={:?} new_tn={:?} (precise-tnum)",
+                                cur.pc, frame_i, offset, old_s.tnum, new_s.tnum
+                            );
+                        }
                         return false;
                     }
                     if !(old_s.bounds.min <= new_s.bounds.min
                         && new_s.bounds.max <= old_s.bounds.max)
                     {
+                        if crate::analysis::trace_pc_in_range(cur.pc)
+                            && std::env::var("ZOVIA_DUMP_STACK_MISS").ok().as_deref() == Some("1")
+                        {
+                            eprintln!(
+                                "[stack_miss] pc={} frame={} off={} old=[{},{}] new=[{},{}] (precise-bounds)",
+                                cur.pc, frame_i, offset,
+                                old_s.bounds.min, old_s.bounds.max,
+                                new_s.bounds.min, new_s.bounds.max
+                            );
+                        }
                         return false;
                     }
                 }
@@ -1386,6 +1412,11 @@ fn stack_subsumed_by(
                 _ => false,
             };
             if !iter_eq_modulo_depth {
+                if crate::analysis::trace_pc_in_range(cur.pc)
+                    && std::env::var("ZOVIA_DUMP_STACK_MISS").ok().as_deref() == Some("1")
+                {
+                    eprintln!("[stack_miss] pc={} frame={} off={} (iter-identity)", cur.pc, frame_i, offset);
+                }
                 return false;
             }
 
@@ -1407,13 +1438,20 @@ fn stack_subsumed_by(
                         _ => None,
                     };
 
-                    match (old_range, new_range) {
-                        // old has range but cur doesn't: old does NOT subsume cur
-                        (Some(_), None) => return false,
-                        // old has larger range than cur: old does NOT subsume cur
-                        (Some(old_r), Some(new_r)) if old_r > new_r => return false,
-                        // cur has range >= old, or both None: OK
-                        _ => {}
+                    let pkt_fail = matches!(
+                        (old_range, new_range),
+                        (Some(_), None)
+                    ) || matches!((old_range, new_range), (Some(o), Some(n)) if o > n);
+                    if pkt_fail {
+                        if crate::analysis::trace_pc_in_range(cur.pc)
+                            && std::env::var("ZOVIA_DUMP_STACK_MISS").ok().as_deref() == Some("1")
+                        {
+                            eprintln!(
+                                "[stack_miss] pc={} frame={} off={} old_rng={:?} new_rng={:?} (pkt-range)",
+                                cur.pc, frame_i, offset, old_range, new_range
+                            );
+                        }
+                        return false;
                     }
                 }
             }

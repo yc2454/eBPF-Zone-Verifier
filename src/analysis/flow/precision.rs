@@ -301,10 +301,17 @@ pub fn mark_chain_precision_backward_seeded(
                 for &slot_off in &stack_frontier {
                     if let Some(slot) = cur_frame.stack.get_slot_mut(slot_off) {
                         slot.precise = true;
-                        if slot_off == -248
-                            && std::env::var("ZOVIA_DBG_P248").ok().as_deref() == Some("1")
+                        // ZOVIA_DBG_PSLOT=<off> (generalizes the old
+                        // ZOVIA_DBG_P248): one line per lineage slot-precise
+                        // mark at that offset — sink info identifies the
+                        // demanding walk (1482/-312 chase 2026-07-16).
+                        if let Ok(v) = std::env::var("ZOVIA_DBG_PSLOT")
+                            && v.parse::<i16>().ok() == Some(slot_off)
                         {
-                            eprintln!("[prec-248] marked cid={:?} (cache pc={})", current_parent_id, s.pc);
+                            eprintln!(
+                                "[prec-slot] off={} marked cid={:?} (cache pc={}) sink_regs={:?} sink_slots={:?} hidx={}",
+                                slot_off, current_parent_id, s.pc, sink_regs, sink_slots, history_idx
+                            );
                         }
                     }
                 }

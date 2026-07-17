@@ -485,6 +485,18 @@ fn handle_standard_pruning(
             add_now,
             env.explored_states.get(&pc).map(|v| v.len()).unwrap_or(0)
         );
+        // Bucket identity map (1482 link): idx→cid so per-idx verdicts
+        // can be tied to [cache-slots3] add-time snapshots.
+        if std::env::var("ZOVIA_DUMP_BUCKET").ok().as_deref() == Some("1")
+            && let Some(v) = env.explored_states.get(&pc)
+        {
+            let ids: Vec<String> = v
+                .iter()
+                .enumerate()
+                .map(|(i, s)| format!("{}:{:?}", i, s.cache_id.unwrap_or(0)))
+                .collect();
+            eprintln!("[bucket] pc={} [{}]", pc, ids.join(" "));
+        }
     }
     if let Some(prev_states) = env.explored_states.get(&pc) {
         for (i, prev) in prev_states.iter().enumerate().rev() {
