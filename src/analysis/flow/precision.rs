@@ -166,6 +166,24 @@ pub fn mark_chain_precision_backward_seeded(
             // arm may have just added the other operand, which must
             // also propagate across the linked class.
             bt_sync_linked_regs(&mut frontier, &step_linked);
+            // ZOVIA_DBG_PWALK=LO:HI — per-step frontier dump for walks in
+            // a pc window (1482/-312 chase: diff vs kernel log_level-2
+            // mark_precise / backtrack_insn semantics).
+            if let Ok(v) = std::env::var("ZOVIA_DBG_PWALK")
+                && let Some((lo, hi)) = v.split_once(':')
+                && let (Ok(lo), Ok(hi)) = (lo.parse::<usize>(), hi.parse::<usize>())
+                && step_pc >= lo
+                && step_pc <= hi
+            {
+                let mut fr: Vec<String> = frontier.iter().map(|r| format!("{:?}", r)).collect();
+                fr.sort();
+                let mut sf: Vec<i16> = stack_frontier.iter().copied().collect();
+                sf.sort();
+                eprintln!(
+                    "[pwalk] pc={} {:?} regs={:?} slots={:?} (hidx={})",
+                    step_pc, instr_copy, fr, sf, history_idx
+                );
+            }
             // Mirror frontier marks into `precise_pcs` at every
             // history step the walker traverses. The widening site
             // checks (pc, scalar_id) regardless of whether a
@@ -387,6 +405,14 @@ pub fn propagate_precision(env: &mut VerifierEnv, cur: &State, old: &State) {
         })
         .collect();
     let Some(history_idx) = cur.history_idx else { return };
+    // ZOVIA_DBG_PSLOT companion: name the seeding HIT (which prune hit
+    // pulls which precise set into the arriving lineage).
+    if std::env::var("ZOVIA_DBG_PSLOT").is_ok() {
+        eprintln!(
+            "[prec-seed] hit_pc={} old_cid={:?} regs={:?} slots={:?} hidx={}",
+            cur.pc, old.cache_id, regs, slots, history_idx
+        );
+    }
     mark_chain_precision_backward_seeded(
         env,
         history_idx,
