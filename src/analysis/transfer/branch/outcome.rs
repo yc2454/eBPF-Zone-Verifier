@@ -120,6 +120,17 @@ fn condition_outcome_inner(
                             return Some(false);
                         }
                     }
+                    // Kernel is_scalar_branch_taken BPF_JEQ
+                    // (verifier.c:16810): `if (!tnum_overlap(t1, t2))
+                    // return 0;` — mutually-known bits disagreeing refute
+                    // equality even when the value ranges overlap. co-re
+                    // 354 seed: r1 = tnum{0,0xfff8} (low 3 bits known 0)
+                    // vs 0x14 (bit 2 set) — kernel resolves JNE
+                    // always-taken, zovia's bounds-only arms fell through
+                    // → the walk fork that extinguishes 2af5badd@709.
+                    if !tnum_overlap_imm(state, left, width, imm_val) {
+                        return Some(false);
+                    }
                     if min == max && min == imm_val {
                         Some(true)
                     } else if min > imm_val || max < imm_val {
@@ -135,6 +146,11 @@ fn condition_outcome_inner(
                         if smin > imm_s32 || smax < imm_s32 {
                             return Some(true);
                         }
+                    }
+                    // Kernel BPF_JNE (verifier.c:16836): `if
+                    // (!tnum_overlap(t1, t2)) return 1;`.
+                    if !tnum_overlap_imm(state, left, width, imm_val) {
+                        return Some(true);
                     }
                     if min > imm_val || max < imm_val {
                         Some(true)
@@ -392,6 +408,19 @@ fn u64_combined_to_s32(min: u64, max: u64) -> Option<(i64, i64)> {
         return None;
     }
     Some((lo_u32 as i32 as i64, hi_u32 as i32 as i64))
+}
+
+/// Kernel `tnum_overlap` (tnum.c:162): the mutually-known bits of the two
+/// tnums must agree, else the values can never be equal. Width-aware:
+/// jmp32 compares the subreg tnums (kernel is_scalar_branch_taken uses
+/// tnum_subreg(t) for is_jmp32).
+fn tnum_overlap_imm(state: &State, reg: Reg, width: Width, imm_val: u64) -> bool {
+    let t = match width {
+        Width::W32 => state.get_tnum(reg).trunc32(),
+        Width::W64 => state.get_tnum(reg),
+    };
+    let mu = !t.mask; // imm is fully known
+    (t.value & mu) == (imm_val & mu)
 }
 
 /// Get combined bounds from tnum and DBM, as unsigned values.
