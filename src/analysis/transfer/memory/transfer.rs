@@ -164,7 +164,20 @@ pub(crate) fn transfer_load(
         _ => {}
     }
 
-    state.set_tnum(dst, Tnum::unknown());
+    // Kernel check_mem_access tail (verifier.c:8291-8296): every
+    // sub-8-byte scalar READ zero-extends — "b/h/w load zero-extends,
+    // mark upper bits as known 0" via coerce_reg_to_size →
+    // reg->var_off = tnum_cast(var_off, size). A blanket
+    // Tnum::unknown() here left the upper bits unknown, so a later
+    // W32 branch refinement (__reg32_bound_offset analog, low-32
+    // scoped) could never recover them: to_lo_fib_no_log_co-re_v6
+    // r5 = u8 load @709 → `w5 != 6` fall-through @710 gave zovia
+    // tnum {6, ffffffff00000000} where the kernel has const 6 —
+    // the cached 762-state then MISSed on the tnum dim where the
+    // kernel HITs (probe #145 [ZK sv2] ip6680), diverging the add
+    // schedule at add #452 and extinguishing the 636-based goal
+    // lineage (0xf00d1f29 pc754).
+    state.set_tnum(dst, Tnum::unknown_bits(access_size as u32 * 8));
     state.pc += 1;
     vec![state]
 }
