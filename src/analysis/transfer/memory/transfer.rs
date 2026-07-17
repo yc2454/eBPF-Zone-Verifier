@@ -176,8 +176,15 @@ pub(crate) fn transfer_load(
     // the cached 762-state then MISSed on the tnum dim where the
     // kernel HITs (probe #145 [ZK sv2] ip6680), diverging the add
     // schedule at add #452 and extinguishing the 636-based goal
-    // lineage (0xf00d1f29 pc754).
-    state.set_tnum(dst, Tnum::unknown_bits(access_size as u32 * 8));
+    // lineage (0xf00d1f29 pc754). Guard on SCALAR dst like the kernel
+    // condition does — 32-bit ctx loads of rewritten pointer fields
+    // (skb->data etc.) leave a 64-bit pointer in dst and must not get
+    // a 32-bit-masked tnum.
+    if matches!(state.types.get(dst), RegType::ScalarValue) {
+        state.set_tnum(dst, Tnum::unknown_bits(access_size as u32 * 8));
+    } else {
+        state.set_tnum(dst, Tnum::unknown());
+    }
     state.pc += 1;
     vec![state]
 }
