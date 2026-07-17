@@ -1118,6 +1118,33 @@ fn run_worklist(
         if state.pc >= 185 && state.pc <= 200 && trace_pc_in_range(state.pc) {
             eprintln!("[INSN] ip={} pc={}", env.insn_processed, state.pc);
         }
+        // ZOVIA_DBG_REGVAL=RN:pc1,pc2,... — dump a register's tracked
+        // value pre-execution at the listed pcs (probe #143 companion:
+        // co-re w8-constness chase at the 352-460 ext-header loop).
+        {
+            static REGVAL: std::sync::OnceLock<Option<(Reg, Vec<usize>)>> =
+                std::sync::OnceLock::new();
+            let rv = REGVAL.get_or_init(|| {
+                let v = std::env::var("ZOVIA_DBG_REGVAL").ok()?;
+                let (rs, pcs) = v.split_once(':')?;
+                let idx: usize = rs.trim_start_matches(['R', 'r']).parse().ok()?;
+                let reg = Reg::ALL[idx + 1];
+                let pcs = pcs.split(',').filter_map(|p| p.parse().ok()).collect();
+                Some((reg, pcs))
+            });
+            if let Some((reg, pcs)) = rv
+                && pcs.contains(&state.pc)
+            {
+                let (lo, hi) = state.domain.get_interval(*reg);
+                let (ulo, uhi) = state.domain.get_u64_bounds(*reg);
+                eprintln!(
+                    "[regval] pc={} ip={} {:?} ivl=[{},{}] u=[{:#x},{:#x}] tn={:?} ty={:?} prec={}",
+                    state.pc, env.insn_processed, reg, lo, hi, ulo, uhi,
+                    state.get_tnum(*reg), state.types.get(*reg),
+                    state.is_reg_precise(*reg)
+                );
+            }
+        }
 
         // A.b PRUNING CHECK
         if pruning::should_prune(env, &mut state, config, prog) {
