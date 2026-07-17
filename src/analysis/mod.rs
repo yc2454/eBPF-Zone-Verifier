@@ -1621,10 +1621,28 @@ fn run_worklist(
             }
             crate::analysis::flow::scc::complete_dfs_branch(env, cur_parent_cache_id);
         }
+        // ZOVIA_DBG_PUSHLOG=1: kernel-comparable push stream. The kernel's
+        // push_stack fires once per NON-continued arm; zovia pushes every
+        // successor (the LAST-pushed is the continuation, popped right
+        // back). Print all but the final push of this fork ([ZK push]
+        // analog: at=branch pc, resume=arm pc). probe #140 companion.
+        let pushlog = std::env::var("ZOVIA_DBG_PUSHLOG").ok().as_deref() == Some("1");
+        let n_push = loop_back.len() + other.len();
+        let mut push_i = 0usize;
+        let mut plog = |pc: usize, at: usize, i: usize| {
+            if pushlog && i + 1 < n_push {
+                eprintln!(
+                    "[zpush] at={} resume={} ip={} jp={}",
+                    at, pc, env.insn_processed, env.jmps_processed
+                );
+            }
+        };
         for succ in loop_back {
             if pushdump_pc() == Some(succ.pc) {
                 pushdump("PUSH-lb", &succ);
             }
+            plog(succ.pc, cur_insn_pc, push_i);
+            push_i += 1;
             worklist.push_back(succ);
         }
         for succ in other.into_iter().rev() {
@@ -1637,6 +1655,8 @@ fn run_worklist(
             if pushdump_pc() == Some(succ.pc) {
                 pushdump("PUSH", &succ);
             }
+            plog(succ.pc, cur_insn_pc, push_i);
+            push_i += 1;
             worklist.push_back(succ);
         }
     }
