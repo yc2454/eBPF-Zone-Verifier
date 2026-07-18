@@ -52,6 +52,17 @@ pub(crate) fn handle_mov(state: &mut State, width: Width, dst: Reg, src: &Operan
             } else {
                 state.get_tnum(*r)
             };
+            // 3ab6@937 probe: every R3-dst mov in trace range — true pc,
+            // src tnum, post-mov tnum (does the const bail-out fire?).
+            if crate::analysis::trace_pc_in_range(state.pc)
+                && dst == crate::analysis::machine::reg::Reg::R3
+            {
+                eprintln!(
+                    "[mov-r3] pc={} w={:?} src={:?} src_ty={:?} src_tn={:?} post_tn={:?}",
+                    state.pc, width, r, state.types.get(*r),
+                    state.get_tnum(*r), t
+                );
+            }
             state.set_tnum(dst, t);
             // Kernel bcf mov const bail-out (verifier.c:16416-16421): when
             // the post-mov dst is tnum-const the kernel clears

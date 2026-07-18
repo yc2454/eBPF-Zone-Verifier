@@ -33,6 +33,13 @@ pub(crate) fn propagate_scalar_links(then_s: &mut State, else_s: &mut State, lef
 /// Tighten every scalar-linked register/slot in `state` to the bounds that
 /// `left` has *after* the branch constraint was applied.
 fn fanout_scalar_bounds(state: &mut State, left: Reg) {
+    // 3ab6@937 probe: id presence at the fanout entry.
+    if crate::analysis::trace_pc_in_range(state.pc) {
+        eprintln!(
+            "[fanout-entry] pc={} left={:?} scalar_id={:?}",
+            state.pc, left, state.scalar_id(left)
+        );
+    }
     let id = match state.scalar_id(left) {
         Some(id) => id,
         None => return,
@@ -46,6 +53,15 @@ fn fanout_scalar_bounds(state: &mut State, left: Reg) {
 
     let (lo, hi) = state.domain.get_interval(left);
     let tnum = state.get_tnum(left);
+    // 3ab6@937 probe: the tnum lifecycle at the crossing-1 fanout.
+    if crate::analysis::trace_pc_in_range(state.pc) {
+        eprintln!(
+            "[fanout] pc={} left={:?} ivl=[{},{}] tnum={:?} linked={:?} r9(id={:?} ty={:?} tn={:?})",
+            state.pc, left, lo, hi, tnum, linked,
+            state.scalar_id(Reg::R9), state.types.get(Reg::R9),
+            state.get_tnum(Reg::R9)
+        );
+    }
     // Kernel `BPF_ADD_CONST` delta of the narrowed base (verifier.c
     // `sync_linked_regs`): a linked reg `R == base + (R.off - left.off)`,
     // so propagate `left`'s range SHIFTED by that per-reg delta. `left.off`
@@ -89,7 +105,24 @@ fn fanout_scalar_bounds(state: &mut State, left: Reg) {
         }
         let r_tnum = state.get_tnum(r);
         if let Some(t) = r_tnum.intersect(tnum) {
+            let now_const = t.is_const();
             state.set_tnum(r, t);
+            // Kernel sync_linked_regs = copy_register_state(reg, known_reg)
+            // (verifier.c:17558) — the synced reg inherits the known reg's
+            // bcf_expr, which __mark_reg_known CLEARED when the branch made
+            // it const (:2500). Mirror: a linked reg synced to a tnum-const
+            // drops its stale symbolic binding, so its next reference (or a
+            // later spill/fill of it) materializes the bcf_val literal.
+            // Measured (dsr 0x3ab6225aafb79e84@937): the ==5 narrowing must
+            // wipe slot -0x130's spilled AND-chain expr so the pc-688
+            // re-fill restores an unbound const and crossing 2 records the
+            // kernel's folded `0x5 == 0x5`.
+            if now_const
+                && let Some(idx) = r.bcf_idx()
+                && let Some(bcf) = state.bcf.as_mut()
+            {
+                bcf.clear_reg(idx);
+            }
         }
     }
 
@@ -139,6 +172,13 @@ fn fanout_scalar_bounds(state: &mut State, left: Reg) {
             slot.bounds.max = new_max;
             if let Some(t) = slot.tnum.intersect(tnum) {
                 slot.tnum = t;
+                // Same copy_register_state mirror as the reg half: a slot
+                // synced to a tnum-const drops its spilled expr (kernel
+                // syncs the spilled_ptr with the known reg's cleared
+                // bcf_expr) — the next fill restores an unbound const.
+                if t.is_const() {
+                    slot.bcf_expr = None;
+                }
             }
         }
     }
