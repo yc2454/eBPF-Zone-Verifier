@@ -110,11 +110,24 @@ pub(crate) fn check_reg_readable_ex(
             if crate::analysis::transfer::branch::try_emit_path_unreachable_entry(env, state) {
                 log::info!(
                     target: "app",
-                    "[bcf] reactive path-unreachable: discharged !read_ok reject at pc {} for {:?} (cvc5 proof, kind=UNREACHABLE)",
+                    "[bcf] reactive path-unreachable: discharged !read_ok reject at pc {} for {:?} (cvc5 proof, kind=UNREACHABLE) — continuing path (check_reg_arg semantics)",
                     state.pc, reg
                 );
-                env.bcf_path_unreachable = true;
-                return false;
+                // Kernel check_reg_arg (verifier.c:4136-4140): a discharged
+                // !read_ok reject `return 0`s — the read check PASSES and
+                // the proven-unreachable path CONTINUES with the reg still
+                // NOT_INIT. Only the mem-access (:8319-8330) and call
+                // (:21225-21241) discharge sites prune on KIND_UNREACHABLE;
+                // check_reg_arg's hook ignores path_unreachable entirely.
+                // Measured (BTO chase, probe #147 [ZK push/pop/add] on
+                // from_wep_debug_v6 accepted_entrypoint): at the per-
+                // traversal pc-992 `R3 !read_ok` discharge the kernel walks
+                // on through 993..996 (add 996@ip10534, push 997→1003
+                // @10535) while zovia dropped the path at ip 10530 — the
+                // first post-horizon schedule divergence (adds #411+).
+                // No bcf_path_unreachable, no materialization: the kernel
+                // binds exprs only for inited regs.
+                return true;
             }
             env.fail(VerificationError::RegisterNotReadable { pc: state.pc, reg });
             false
