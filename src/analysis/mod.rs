@@ -844,9 +844,13 @@ fn run_worklist(
         if trace_pc_in_range(state.pc) {
             use crate::analysis::machine::reg::Reg;
             let (r2lo, r2hi) = state.domain.get_interval(Reg::R2);
+            // seam #3 fork-snapshot probe: R9's type at pop (pairs with
+            // the [WL_PUSH] R9 print; a type flip between them = the
+            // pushed snapshot mutated or the pop pairing is wrong).
             eprintln!(
-                "[WL_POP] pc={} parent_cache_id={:?} R2=[{}..{}]",
+                "[WL_POP] pc={} parent_cache_id={:?} R2=[{}..{}] R9={:?}",
                 state.pc, state.parent_cache_id, r2lo, r2hi,
+                state.types.get(Reg::R9),
             );
         }
         if pushdump_pc() == Some(state.pc) {
@@ -1016,10 +1020,28 @@ fn run_worklist(
             break;
         }
 
-        // A.a TYPE CONFLICT RESOLUTION
+        // A.a TYPE CONFLICT RESOLUTION (zone-mode only)
         // Demote conflicting registers to ScalarValue.
         // If they're later used as pointers, that will fail.
-        if state.pc < prog.instrs.len() - 1 {
+        //
+        // KERNEL-MODE SKIPS THIS: it is a merge-point mechanism with no
+        // kernel analog — the kernel's is_state_visited only COMPARES
+        // cur against cached states (regsafe/states_equal); it never
+        // mutates cur based on what the cache holds, and incompatible-
+        // type paths each verify independently under DFS. Measured
+        // (seam #3, from_wep_debug_v6 accepted_entrypoint): the pc-930
+        // arrival popped with R9=PtrToMapValue{off 76} and was demoted
+        // to ScalarValue[0,0] here because a cached sibling at 930
+        // held R9=PtrToCtx (types_compatible excludes ctx pairings) —
+        // the scalar-0 R9 then seeded the pc-992 reject's bcf mask
+        // (kernel excludes the const-off map-value ptr: reg_masks 0x87
+        // vs zovia's +R9), over-extending the demand backtrack (base
+        // pc 74 vs kernel's pc-371 state, [ZK refine] bt_empty=372)
+        // and children_unsafe-marking 36 ancestors incl. the pc-371
+        // checkpoint (kernel marks 17, base excluded) — blocking the
+        // kernel's post-treadmill 371 prune-HIT (adds diverge at
+        // #1025, k=21505:318 z=21517:394).
+        if !env.kernel_faithful_alu && state.pc < prog.instrs.len() - 1 {
             merging::resolve_type_conflicts(&env, &mut state);
         }
 
@@ -1691,9 +1713,11 @@ fn run_worklist(
         }
         for succ in other.into_iter().rev() {
             if trace_pc_in_range(succ.pc) {
+                use crate::analysis::machine::reg::Reg;
                 eprintln!(
-                    "[WL_PUSH] pc={} parent_cache_id={:?} (worklist_len_before={})",
-                    succ.pc, succ.parent_cache_id, worklist.len()
+                    "[WL_PUSH] pc={} parent_cache_id={:?} (worklist_len_before={}) ip={} R9={:?}",
+                    succ.pc, succ.parent_cache_id, worklist.len(),
+                    env.insn_processed, succ.types.get(Reg::R9),
                 );
             }
             if pushdump_pc() == Some(succ.pc) {
