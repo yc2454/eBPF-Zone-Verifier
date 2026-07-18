@@ -341,6 +341,21 @@ pub(crate) fn transfer_alu(
     // only; pointers don't zero-extend through this path).
     if width == Width::W32 && state.types.get(dst) == RegType::ScalarValue {
         state.domain.zext_32_into_64(dst);
+        // Kernel reg_bounds_sync analog, in kernel ORDER: the var_off
+        // (tnum) intersection runs AFTER zext_32_to_64, so the truncated
+        // 32-bit tnum's unsigned min/max meet the POST-zext 64-bit view
+        // ([0, 0xffffffff]) and never poison the pre-zext signed range.
+        // handle_add/handle_sub skip their in-handler sync for W32
+        // interval mode to preserve this ordering (bcc ksnoop
+        // 0x7b883057f2f77b41 — the s32=[-1,254] loop-guard bounds).
+        if matches!(op, AluOp::Add | AluOp::Sub) && state.domain.is_interval_mode() {
+            crate::analysis::transfer::alu::helpers::sync_tnum_to_bounds(&mut state, dst);
+        }
+        if std::env::var("ZOVIA_DBG_ADDIMM").ok().as_deref() == Some("1") {
+            let (s32lo, s32hi) = state.domain.get_s32_bounds(dst);
+            let (lo, hi) = state.domain.get_interval(dst);
+            eprintln!("[post-zext] dst={:?} ivl=[{},{}] s32=[{},{}]", dst, lo, hi, s32lo, s32hi);
+        }
     }
 
     // 7. Post-operation consistency check
