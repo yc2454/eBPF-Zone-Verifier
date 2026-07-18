@@ -121,6 +121,9 @@ pub fn record_state(
     // every cache entry adds memory without earning pruning back. On
     // cilium bpf_host's 2/15/2/17/2/38 sections this dominated RSS
     // (multi-GB peaks under --bcf vs <1 GB without).
+    // Keep just the cond-stream length for the refine positional cut
+    // (State::cached_path_conds_len doc).
+    state.cached_path_conds_len = state.bcf.as_ref().map(|b| b.path_conds.len());
     state.bcf = None;
 
     let states = env.explored_states.entry(pc).or_default();

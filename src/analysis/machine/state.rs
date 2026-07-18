@@ -139,6 +139,16 @@ pub struct State {
     /// `handle_*_pruning`. Set by `mark_path_children_unsafe`.
     pub children_unsafe: bool,
 
+    /// Snapshot of `bcf.path_conds.len()` taken at CACHING time, just
+    /// before `merging` strips `bcf` from cached states (memory). Refine
+    /// goal formation uses it as the POSITIONAL cond-cut: the kernel's
+    /// `bcf_track` records the suffix of the walk from the base state,
+    /// and the base's snapshot is a prefix of cur's cond stream (same
+    /// lineage) — so this length is the exact suffix start index. A pc
+    /// window is NOT equivalent when the path wraps a loop (bcc ksnoop
+    /// 0x7b883057f2f77b41: iteration-1 conds at pcs >= base_pc).
+    pub cached_path_conds_len: Option<usize>,
+
     /// SCC bookkeeping — mirror of kernel `bpf_verifier_state.{dfs_depth,
     /// branches, loop_entry}` (verifier.c v6.15 L1675+, L1885+). Drives
     /// the `force_exact` gate in `is_state_visited` that decides whether
@@ -412,6 +422,7 @@ impl State {
             types: TypeState::new_not_init(),
             domain,
             pc,
+            cached_path_conds_len: None,
             // Kernel: entry state first_insn_idx = subprog start (:24259),
             // last_insn_idx = -1 (:24260, no predecessor). Here the entry pc
             // IS the subprog start; last has no prev so we seed it to pc (the

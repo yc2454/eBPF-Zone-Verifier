@@ -473,13 +473,25 @@ fn try_bcf_refine_map(
         .history_idx
         .and_then(|hidx| crate::analysis::flow::precision::bcf_suffix_base_pc_and_cache_id(env, hidx, state.parent_cache_id, &target_regs));
     let base_pc = landed.map(|(pc, _)| pc);
+    // Positional cond-cut input (kernel bcf_track suffix semantics): the
+    // base state's own recorded path_conds length — its snapshot is a
+    // prefix of cur's stream (same lineage), so `len` = the exact index
+    // where the base→cur suffix begins. See try_refine_map_access.
+    let base_conds_len = landed.and_then(|(_, cid)| {
+        env.state_by_cache_id(cid).and_then(|(_, s)| {
+            // Cached states strip bcf at caching (merging.rs); the length
+            // survives in cached_path_conds_len.
+            s.cached_path_conds_len
+                .or_else(|| s.bcf.as_ref().map(|b| b.path_conds.len()))
+        })
+    });
     if bcf_debug {
         eprintln!("[REFINE] pc={} base={:?} insn_off={} size={} limit={} size_reg={:?} base_pc={:?} parent_cid={:?} history_idx={:?}",
                   state.pc, base, insn_off, size, map_limit, size_reg, base_pc,
                   state.parent_cache_id, state.history_idx);
     }
     let Some(ok) = crate::refinement::refine_map::try_refine_map_access(
-        state, base, insn_off, size, map_limit, size_reg, base_pc,
+        state, base, insn_off, size, map_limit, size_reg, base_pc, base_conds_len,
     ) else {
         if bcf_debug { eprintln!("[REFINE] pc={} try_refine_map_access -> None", state.pc); }
         return false;

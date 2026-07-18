@@ -193,6 +193,235 @@ pub fn try_prove_unreachable_no_rewrite(
     try_prove_unreachable_inner(state, base_pc, prev_insn_pc, false, None, false, None, None, false)
 }
 
+/// Kernel `bcf_track` replay-fold, extracted verbatim from the inline
+/// `do_fresh_var_rewrite && faithful_fold` block (2026-07-18) so the
+/// refine_map goal path can run the SAME pass. Pure extraction — the
+/// unreachable-class call site behavior is unchanged. See the block
+/// comment below for the 3-way bcf_reg_expr mirror semantics.
+pub(crate) fn faithful_fold_pass(sym: &mut SymbolicState, base_pc: Option<usize>) {
+    // Faithful bcf_reg_expr replay-fold. Single forward pass over
+    // path_conds (already in suffix order). For each scalar↔const
+    // branch with reg-backed LHS, apply the kernel's 3-way
+    // bcf_reg_expr decision keyed on a per-reg cache:
+    //   - reg already materialized in THIS pass → reuse its VAR
+    //     (`VAR op K`, no new bounds) — mirrors kernel's cached-expr
+    //     return at verifier.c:905;
+    //   - else if reg is a known constant → fold LHS to `bcf_val(K)`
+    //     literal (`Klhs op K`), no VAR, no bounds — mirrors the
+    //     `tnum_is_const → bcf_val` path at 910-912;
+    //   - else → fresh VAR + bound preds from the @branch range
+    //     snapshot, spliced BEFORE the branch (kernel order), cache it.
+    // Bound preds (is_branch=false) and non-reg-LHS branches pass
+    // through. Original LHS VARs of rewritten/folded branches are
+    // collected as orphaned and their now-dangling bound preds dropped.
+    use std::collections::{HashMap, HashSet};
+    // Re-mint fidelity (no_log 618296, 2026-05-30): key the per-reg
+    // materialization cache by (reg, materialize_pc) instead of reg
+    // alone, so a reg REDEFINED between two suffix references (e.g. R0
+    // null-checked at pc581, clobbered by the helper call at pc584, then
+    // null-checked again at pc585) gets a FRESH VAR per incarnation —
+    // mirroring the kernel resetting reg->bcf_expr=-1 on every def
+    // (verifier.c bcf_reg_expr). Without this zovia shares one VAR across
+    // both null-checks (kernel emits VAR3{JNE0}+VAR4{JEQ0}, two vars).
+    // Gated additive: only changes behaviour when materialize_pc differs.
+    // Value = (natural-form expr slot, nat_is_64): a 64-bit-materialized
+    // reg caches its 64-bit VAR and EXTRACTs for a jmp32 compare; a
+    // 32-bit-fit reg caches its branch-width var (legacy).
+    let mut fresh_var_for_reg: HashMap<(usize, Option<usize>), (u32, bool)> = HashMap::new();
+    let mut newly_orphaned: HashSet<u32> = HashSet::new();
+    let mut new_conds: Vec<u32> = Vec::with_capacity(sym.path_conds.len() + 8);
+    let mut new_pcs: Vec<usize> = Vec::with_capacity(sym.path_conds.len() + 8);
+    let mut new_is_branch: Vec<bool> = Vec::with_capacity(sym.path_conds.len() + 8);
+    let mut new_narrowed: Vec<Option<(u64, u8, bool, Option<usize>)>> =
+        Vec::with_capacity(sym.path_conds.len() + 8);
+    let mut new_lhs_meta: Vec<Option<(usize, Option<usize>, bool, RegBounds, RegBounds)>> =
+        Vec::with_capacity(sym.path_conds.len() + 8);
+    let path_conds_snapshot = sym.path_conds.clone();
+    let pcs_snapshot = sym.path_cond_pcs.clone();
+    let is_branch_snapshot = sym.path_cond_is_branch.clone();
+    let narrowed_snapshot = sym.path_cond_narrowed_const.clone();
+    let lhs_meta_snapshot = sym.path_cond_lhs_meta.clone();
+    for i in 0..path_conds_snapshot.len() {
+        let pred_slot = path_conds_snapshot[i];
+        let pc = pcs_snapshot[i];
+        let is_branch = is_branch_snapshot[i];
+        let narrowed = narrowed_snapshot[i];
+        let lhs_meta = lhs_meta_snapshot[i];
+        // Only branches with a reg-backed scalar LHS are foldable.
+        let Some((lhs_reg, lhs_pc, jmp32, lhs_bounds, pre_bounds)) = lhs_meta else {
+            new_conds.push(pred_slot);
+            new_pcs.push(pc);
+            new_is_branch.push(is_branch);
+            new_narrowed.push(narrowed);
+            new_lhs_meta.push(lhs_meta);
+            continue;
+        };
+        if !is_branch {
+            new_conds.push(pred_slot);
+            new_pcs.push(pc);
+            new_is_branch.push(is_branch);
+            new_narrowed.push(narrowed);
+            new_lhs_meta.push(lhs_meta);
+            continue;
+        }
+        // Extract (op, arg0=lhs, arg1=rhs) from the predicate expr.
+        let (op_with_class, arg0, arg1) = match sym.expr_at(pred_slot) {
+            Some(e) if e.args.len() == 2 => (e.code, e.args[0], e.args[1]),
+            _ => {
+                new_conds.push(pred_slot);
+                new_pcs.push(pc);
+                new_is_branch.push(is_branch);
+                new_narrowed.push(narrowed);
+                new_lhs_meta.push(lhs_meta);
+                continue;
+            }
+        };
+        let op = op_with_class & crate::refinement::bcf::BCF_OP_MASK;
+        // Old LHS var refs become orphaned once we swap the LHS.
+        for v in sym.collect_vars(arg0) {
+            newly_orphaned.insert(v);
+        }
+        // PRE-NARROW materialization (no_log 618296): the kernel's
+        // bcf_reg_expr materializes a reg at its FIRST reference using
+        // the range as of ENTERING that insn — i.e. BEFORE the branch's
+        // own narrowing. zovia's `lhs_bounds` is post-narrow (the taken
+        // side), so a reload/null reg narrowed to a const by its own
+        // first-reference branch (R1 reload ==6 @729; R0 null @581/585)
+        // wrongly folds to a `K op K` literal. Using the pre-narrow
+        // range keeps it a VAR{bound} the kernel-faithful way (reload →
+        // VAR2{JLE0xff,JEQ6}; nulls → VAR{JNE0}/VAR{JEQ0}). Gated.
+        // Carried conds (pc < base, e.g. R2's !=6 recorded at pc530 but
+        // materialized at the base) reflect the reg's FINAL narrowed
+        // range carried into the suffix → post-narrow `lhs_bounds`
+        // ([7,255]→JGE7). In-suffix branches (pc ≥ base, e.g. reload R1
+        // ==6 @729, R0 nulls @581/585) are materialized AT their own
+        // branch → the range ENTERING it, i.e. pre-narrow `pre_bounds`
+        // ([0,255]→VAR{JLE0xff}, not folded). Mirrors kernel bcf_reg_expr
+        // first-reference-range semantics. Gated.
+        // Default ON (all-faithful mirror 2026-06-12); kill-switch =0.
+        let prenarrow_on =
+            crate::common::config::bcf_mirror_knob("ZOVIA_BCF_FOLD_PRENARROW", true);
+        // In-suffix branches (pc ≥ base) materialize the reg AT their own
+        // branch, so they use the range ENTERING it — PRE-narrow
+        // `pre_bounds` — mirroring kernel bcf_reg_expr, which runs before
+        // reg_set_min_max narrows (the branch's own narrowing is the
+        // recorded COND, not a bound pred). This is correct for both the
+        // reload R1==6 @729 (→ VAR{JLE0xff}, not folded to K6) AND the
+        // proto switch w2 @506 (u8 load → ULE(w2,0xff) bound + JSLE(w2,5)
+        // branch cond, NOT ULE(w2,5)). Carried conds (pc < base) reflect
+        // the reg's FINAL narrowed range carried into the suffix →
+        // post-narrow `lhs_bounds`.
+        // NB: this uniform per-branch rule canNOT recover from_nat 23a1dc's
+        // r0 bounds, because r0's narrowing (`if w0==0` @445) is itself a
+        // pre-window carried narrowing in the kernel (whose window opens at
+        // pc 504, the w0==0 jump target) — r0 enters the window already
+        // narrowed (umax=0xffffffff00000000). zovia's replay window opens
+        // earlier (includes 445), so r0's first ref is the 445 branch
+        // (pre-narrow = unbounded). The real fix is replay-base placement
+        // (open at 504), NOT a per-branch pre/post toggle: r0 and w2 need
+        // OPPOSITE bound-timing under one window, so no single rule serves
+        // both. (Reverted a const-distinguisher that fixed r0 but
+        // regressed w2's umax 0xff→5.)
+        let use_pre = prenarrow_on
+            && base_pc.map(|bp| pc >= bp).unwrap_or(false);
+        let mat_bounds = if use_pre { &pre_bounds } else { &lhs_bounds };
+        // Re-mint cache key: under the flag, key by (reg, materialize_pc)
+        // so a redefined reg (call/reload between references) gets a fresh
+        // VAR per incarnation (kernel resets reg->bcf_expr on def). Flag
+        // off → reg-only key (legacy behaviour, keeps the 12 working
+        // discharges byte-stable until VM-gated).
+        let key = if prenarrow_on { (lhs_reg, lhs_pc) } else { (lhs_reg, None) };
+        if let Some(&(fv, nat_is_64)) = fresh_var_for_reg.get(&key) {
+            // CACHED: reuse the reg's already-materialized VAR. A 64-bit
+            // natural form is EXTRACTed for a jmp32 compare (kernel
+            // bcf_reg_expr → expr32 of the cached 64-bit expr).
+            let cmp = if nat_is_64 && jmp32 { sym.expr32(fv) } else { fv };
+            let new_pred = sym.add_pred(op, cmp, arg1);
+            new_conds.push(new_pred);
+        } else if let Some(kval) = mat_bounds.const_val {
+            // UNCACHED + const (at first-reference range): fold LHS to a
+            // bcf_val literal (kernel's tnum_is_const → bcf_val path).
+            let lit = sym.add_val(kval, jmp32);
+            let new_pred = sym.add_pred(op, lit, arg1);
+            new_conds.push(new_pred);
+        } else if mat_bounds.fit_u32() || mat_bounds.fit_s32() {
+            // UNCACHED + fits 32: legacy path — branch-width VAR + bounds.
+            // (Kernel's VAR_U32/VAR_S32 peels to a 32-bit var under a
+            // jmp32 compare, matching add_var_bits(jmp32) here.)
+            let fresh = sym.add_var_bits(jmp32);
+            fresh_var_for_reg.insert(key, (fresh, false));
+            let bound_pred_slots = sym.bound_reg_emit_preds(fresh, mat_bounds, jmp32);
+            for bp in bound_pred_slots {
+                new_conds.push(bp);
+                new_pcs.push(pc);
+                new_is_branch.push(false);
+                new_narrowed.push(None);
+                new_lhs_meta.push(None);
+            }
+            let new_pred = sym.add_pred(op, fresh, arg1);
+            new_conds.push(new_pred);
+        } else {
+            // UNCACHED + non-const + high bits set: the reg does NOT fit
+            // u32/s32, so the kernel materializes a 64-BIT VAR (bcf_var
+            // (false)) with 64-bit bound-preds and EXTRACTs [31:0] for a
+            // jmp32 compare (verifier.c bcf_reg_expr VAR_64 path). The old
+            // code made a branch-width (32-bit) var, DROPPING the reg's
+            // 64-bit ULE/JSLE conjuncts (from_nat 23a1dc: r0 from
+            // skb_load_bytes, w0==0 → umax=0xffffffff00000000,
+            // smax=0x7fffffff00000000 — the two missing bounds on V0).
+            let v64 = sym.add_var_bits(false);
+            fresh_var_for_reg.insert(key, (v64, true));
+            let bound_pred_slots = sym.bound_reg_emit_preds(v64, mat_bounds, false);
+            for bp in bound_pred_slots {
+                new_conds.push(bp);
+                new_pcs.push(pc);
+                new_is_branch.push(false);
+                new_narrowed.push(None);
+                new_lhs_meta.push(None);
+            }
+            let cmp = if jmp32 { sym.expr32(v64) } else { v64 };
+            let new_pred = sym.add_pred(op, cmp, arg1);
+            new_conds.push(new_pred);
+        }
+        new_pcs.push(pc);
+        new_is_branch.push(true);
+        new_narrowed.push(narrowed);
+        new_lhs_meta.push(lhs_meta);
+    }
+    sym.path_conds = new_conds;
+    sym.path_cond_pcs = new_pcs;
+    sym.path_cond_is_branch = new_is_branch;
+    sym.path_cond_narrowed_const = new_narrowed;
+    sym.path_cond_lhs_meta = new_lhs_meta;
+    // Drop bound preds whose only-referenced VARs are now orphaned
+    // (the original live-state VARs replaced by fresh VARs / folds).
+    if !newly_orphaned.is_empty() {
+        let mut kept_conds = Vec::with_capacity(sym.path_conds.len());
+        let mut kept_pcs = Vec::with_capacity(sym.path_conds.len());
+        let mut kept_is_branch = Vec::with_capacity(sym.path_conds.len());
+        let mut kept_narrowed = Vec::with_capacity(sym.path_conds.len());
+        let mut kept_lhs_meta = Vec::with_capacity(sym.path_conds.len());
+        for i in 0..sym.path_conds.len() {
+            let drop = !sym.path_cond_is_branch[i] && {
+                let vars = sym.collect_vars(sym.path_conds[i]);
+                !vars.is_empty() && vars.is_subset(&newly_orphaned)
+            };
+            if !drop {
+                kept_conds.push(sym.path_conds[i]);
+                kept_pcs.push(sym.path_cond_pcs[i]);
+                kept_is_branch.push(sym.path_cond_is_branch[i]);
+                kept_narrowed.push(sym.path_cond_narrowed_const[i]);
+                kept_lhs_meta.push(sym.path_cond_lhs_meta[i]);
+            }
+        }
+        sym.path_conds = kept_conds;
+        sym.path_cond_pcs = kept_pcs;
+        sym.path_cond_is_branch = kept_is_branch;
+        sym.path_cond_narrowed_const = kept_narrowed;
+        sym.path_cond_lhs_meta = kept_lhs_meta;
+    }
+}
+
 fn try_prove_unreachable_inner(
     state: &State,
     base_pc: Option<usize>,
@@ -562,227 +791,7 @@ fn try_prove_unreachable_inner(
     } // end do_fresh_var_rewrite
 
     if do_fresh_var_rewrite && faithful_fold {
-        // Faithful bcf_reg_expr replay-fold. Single forward pass over
-        // path_conds (already in suffix order). For each scalar↔const
-        // branch with reg-backed LHS, apply the kernel's 3-way
-        // bcf_reg_expr decision keyed on a per-reg cache:
-        //   - reg already materialized in THIS pass → reuse its VAR
-        //     (`VAR op K`, no new bounds) — mirrors kernel's cached-expr
-        //     return at verifier.c:905;
-        //   - else if reg is a known constant → fold LHS to `bcf_val(K)`
-        //     literal (`Klhs op K`), no VAR, no bounds — mirrors the
-        //     `tnum_is_const → bcf_val` path at 910-912;
-        //   - else → fresh VAR + bound preds from the @branch range
-        //     snapshot, spliced BEFORE the branch (kernel order), cache it.
-        // Bound preds (is_branch=false) and non-reg-LHS branches pass
-        // through. Original LHS VARs of rewritten/folded branches are
-        // collected as orphaned and their now-dangling bound preds dropped.
-        use std::collections::{HashMap, HashSet};
-        // Re-mint fidelity (no_log 618296, 2026-05-30): key the per-reg
-        // materialization cache by (reg, materialize_pc) instead of reg
-        // alone, so a reg REDEFINED between two suffix references (e.g. R0
-        // null-checked at pc581, clobbered by the helper call at pc584, then
-        // null-checked again at pc585) gets a FRESH VAR per incarnation —
-        // mirroring the kernel resetting reg->bcf_expr=-1 on every def
-        // (verifier.c bcf_reg_expr). Without this zovia shares one VAR across
-        // both null-checks (kernel emits VAR3{JNE0}+VAR4{JEQ0}, two vars).
-        // Gated additive: only changes behaviour when materialize_pc differs.
-        // Value = (natural-form expr slot, nat_is_64): a 64-bit-materialized
-        // reg caches its 64-bit VAR and EXTRACTs for a jmp32 compare; a
-        // 32-bit-fit reg caches its branch-width var (legacy).
-        let mut fresh_var_for_reg: HashMap<(usize, Option<usize>), (u32, bool)> = HashMap::new();
-        let mut newly_orphaned: HashSet<u32> = HashSet::new();
-        let mut new_conds: Vec<u32> = Vec::with_capacity(sym.path_conds.len() + 8);
-        let mut new_pcs: Vec<usize> = Vec::with_capacity(sym.path_conds.len() + 8);
-        let mut new_is_branch: Vec<bool> = Vec::with_capacity(sym.path_conds.len() + 8);
-        let mut new_narrowed: Vec<Option<(u64, u8, bool, Option<usize>)>> =
-            Vec::with_capacity(sym.path_conds.len() + 8);
-        let mut new_lhs_meta: Vec<Option<(usize, Option<usize>, bool, RegBounds, RegBounds)>> =
-            Vec::with_capacity(sym.path_conds.len() + 8);
-        let path_conds_snapshot = sym.path_conds.clone();
-        let pcs_snapshot = sym.path_cond_pcs.clone();
-        let is_branch_snapshot = sym.path_cond_is_branch.clone();
-        let narrowed_snapshot = sym.path_cond_narrowed_const.clone();
-        let lhs_meta_snapshot = sym.path_cond_lhs_meta.clone();
-        for i in 0..path_conds_snapshot.len() {
-            let pred_slot = path_conds_snapshot[i];
-            let pc = pcs_snapshot[i];
-            let is_branch = is_branch_snapshot[i];
-            let narrowed = narrowed_snapshot[i];
-            let lhs_meta = lhs_meta_snapshot[i];
-            // Only branches with a reg-backed scalar LHS are foldable.
-            let Some((lhs_reg, lhs_pc, jmp32, lhs_bounds, pre_bounds)) = lhs_meta else {
-                new_conds.push(pred_slot);
-                new_pcs.push(pc);
-                new_is_branch.push(is_branch);
-                new_narrowed.push(narrowed);
-                new_lhs_meta.push(lhs_meta);
-                continue;
-            };
-            if !is_branch {
-                new_conds.push(pred_slot);
-                new_pcs.push(pc);
-                new_is_branch.push(is_branch);
-                new_narrowed.push(narrowed);
-                new_lhs_meta.push(lhs_meta);
-                continue;
-            }
-            // Extract (op, arg0=lhs, arg1=rhs) from the predicate expr.
-            let (op_with_class, arg0, arg1) = match sym.expr_at(pred_slot) {
-                Some(e) if e.args.len() == 2 => (e.code, e.args[0], e.args[1]),
-                _ => {
-                    new_conds.push(pred_slot);
-                    new_pcs.push(pc);
-                    new_is_branch.push(is_branch);
-                    new_narrowed.push(narrowed);
-                    new_lhs_meta.push(lhs_meta);
-                    continue;
-                }
-            };
-            let op = op_with_class & crate::refinement::bcf::BCF_OP_MASK;
-            // Old LHS var refs become orphaned once we swap the LHS.
-            for v in sym.collect_vars(arg0) {
-                newly_orphaned.insert(v);
-            }
-            // PRE-NARROW materialization (no_log 618296): the kernel's
-            // bcf_reg_expr materializes a reg at its FIRST reference using
-            // the range as of ENTERING that insn — i.e. BEFORE the branch's
-            // own narrowing. zovia's `lhs_bounds` is post-narrow (the taken
-            // side), so a reload/null reg narrowed to a const by its own
-            // first-reference branch (R1 reload ==6 @729; R0 null @581/585)
-            // wrongly folds to a `K op K` literal. Using the pre-narrow
-            // range keeps it a VAR{bound} the kernel-faithful way (reload →
-            // VAR2{JLE0xff,JEQ6}; nulls → VAR{JNE0}/VAR{JEQ0}). Gated.
-            // Carried conds (pc < base, e.g. R2's !=6 recorded at pc530 but
-            // materialized at the base) reflect the reg's FINAL narrowed
-            // range carried into the suffix → post-narrow `lhs_bounds`
-            // ([7,255]→JGE7). In-suffix branches (pc ≥ base, e.g. reload R1
-            // ==6 @729, R0 nulls @581/585) are materialized AT their own
-            // branch → the range ENTERING it, i.e. pre-narrow `pre_bounds`
-            // ([0,255]→VAR{JLE0xff}, not folded). Mirrors kernel bcf_reg_expr
-            // first-reference-range semantics. Gated.
-            // Default ON (all-faithful mirror 2026-06-12); kill-switch =0.
-            let prenarrow_on =
-                crate::common::config::bcf_mirror_knob("ZOVIA_BCF_FOLD_PRENARROW", true);
-            // In-suffix branches (pc ≥ base) materialize the reg AT their own
-            // branch, so they use the range ENTERING it — PRE-narrow
-            // `pre_bounds` — mirroring kernel bcf_reg_expr, which runs before
-            // reg_set_min_max narrows (the branch's own narrowing is the
-            // recorded COND, not a bound pred). This is correct for both the
-            // reload R1==6 @729 (→ VAR{JLE0xff}, not folded to K6) AND the
-            // proto switch w2 @506 (u8 load → ULE(w2,0xff) bound + JSLE(w2,5)
-            // branch cond, NOT ULE(w2,5)). Carried conds (pc < base) reflect
-            // the reg's FINAL narrowed range carried into the suffix →
-            // post-narrow `lhs_bounds`.
-            // NB: this uniform per-branch rule canNOT recover from_nat 23a1dc's
-            // r0 bounds, because r0's narrowing (`if w0==0` @445) is itself a
-            // pre-window carried narrowing in the kernel (whose window opens at
-            // pc 504, the w0==0 jump target) — r0 enters the window already
-            // narrowed (umax=0xffffffff00000000). zovia's replay window opens
-            // earlier (includes 445), so r0's first ref is the 445 branch
-            // (pre-narrow = unbounded). The real fix is replay-base placement
-            // (open at 504), NOT a per-branch pre/post toggle: r0 and w2 need
-            // OPPOSITE bound-timing under one window, so no single rule serves
-            // both. (Reverted a const-distinguisher that fixed r0 but
-            // regressed w2's umax 0xff→5.)
-            let use_pre = prenarrow_on
-                && base_pc.map(|bp| pc >= bp).unwrap_or(false);
-            let mat_bounds = if use_pre { &pre_bounds } else { &lhs_bounds };
-            // Re-mint cache key: under the flag, key by (reg, materialize_pc)
-            // so a redefined reg (call/reload between references) gets a fresh
-            // VAR per incarnation (kernel resets reg->bcf_expr on def). Flag
-            // off → reg-only key (legacy behaviour, keeps the 12 working
-            // discharges byte-stable until VM-gated).
-            let key = if prenarrow_on { (lhs_reg, lhs_pc) } else { (lhs_reg, None) };
-            if let Some(&(fv, nat_is_64)) = fresh_var_for_reg.get(&key) {
-                // CACHED: reuse the reg's already-materialized VAR. A 64-bit
-                // natural form is EXTRACTed for a jmp32 compare (kernel
-                // bcf_reg_expr → expr32 of the cached 64-bit expr).
-                let cmp = if nat_is_64 && jmp32 { sym.expr32(fv) } else { fv };
-                let new_pred = sym.add_pred(op, cmp, arg1);
-                new_conds.push(new_pred);
-            } else if let Some(kval) = mat_bounds.const_val {
-                // UNCACHED + const (at first-reference range): fold LHS to a
-                // bcf_val literal (kernel's tnum_is_const → bcf_val path).
-                let lit = sym.add_val(kval, jmp32);
-                let new_pred = sym.add_pred(op, lit, arg1);
-                new_conds.push(new_pred);
-            } else if mat_bounds.fit_u32() || mat_bounds.fit_s32() {
-                // UNCACHED + fits 32: legacy path — branch-width VAR + bounds.
-                // (Kernel's VAR_U32/VAR_S32 peels to a 32-bit var under a
-                // jmp32 compare, matching add_var_bits(jmp32) here.)
-                let fresh = sym.add_var_bits(jmp32);
-                fresh_var_for_reg.insert(key, (fresh, false));
-                let bound_pred_slots = sym.bound_reg_emit_preds(fresh, mat_bounds, jmp32);
-                for bp in bound_pred_slots {
-                    new_conds.push(bp);
-                    new_pcs.push(pc);
-                    new_is_branch.push(false);
-                    new_narrowed.push(None);
-                    new_lhs_meta.push(None);
-                }
-                let new_pred = sym.add_pred(op, fresh, arg1);
-                new_conds.push(new_pred);
-            } else {
-                // UNCACHED + non-const + high bits set: the reg does NOT fit
-                // u32/s32, so the kernel materializes a 64-BIT VAR (bcf_var
-                // (false)) with 64-bit bound-preds and EXTRACTs [31:0] for a
-                // jmp32 compare (verifier.c bcf_reg_expr VAR_64 path). The old
-                // code made a branch-width (32-bit) var, DROPPING the reg's
-                // 64-bit ULE/JSLE conjuncts (from_nat 23a1dc: r0 from
-                // skb_load_bytes, w0==0 → umax=0xffffffff00000000,
-                // smax=0x7fffffff00000000 — the two missing bounds on V0).
-                let v64 = sym.add_var_bits(false);
-                fresh_var_for_reg.insert(key, (v64, true));
-                let bound_pred_slots = sym.bound_reg_emit_preds(v64, mat_bounds, false);
-                for bp in bound_pred_slots {
-                    new_conds.push(bp);
-                    new_pcs.push(pc);
-                    new_is_branch.push(false);
-                    new_narrowed.push(None);
-                    new_lhs_meta.push(None);
-                }
-                let cmp = if jmp32 { sym.expr32(v64) } else { v64 };
-                let new_pred = sym.add_pred(op, cmp, arg1);
-                new_conds.push(new_pred);
-            }
-            new_pcs.push(pc);
-            new_is_branch.push(true);
-            new_narrowed.push(narrowed);
-            new_lhs_meta.push(lhs_meta);
-        }
-        sym.path_conds = new_conds;
-        sym.path_cond_pcs = new_pcs;
-        sym.path_cond_is_branch = new_is_branch;
-        sym.path_cond_narrowed_const = new_narrowed;
-        sym.path_cond_lhs_meta = new_lhs_meta;
-        // Drop bound preds whose only-referenced VARs are now orphaned
-        // (the original live-state VARs replaced by fresh VARs / folds).
-        if !newly_orphaned.is_empty() {
-            let mut kept_conds = Vec::with_capacity(sym.path_conds.len());
-            let mut kept_pcs = Vec::with_capacity(sym.path_conds.len());
-            let mut kept_is_branch = Vec::with_capacity(sym.path_conds.len());
-            let mut kept_narrowed = Vec::with_capacity(sym.path_conds.len());
-            let mut kept_lhs_meta = Vec::with_capacity(sym.path_conds.len());
-            for i in 0..sym.path_conds.len() {
-                let drop = !sym.path_cond_is_branch[i] && {
-                    let vars = sym.collect_vars(sym.path_conds[i]);
-                    !vars.is_empty() && vars.is_subset(&newly_orphaned)
-                };
-                if !drop {
-                    kept_conds.push(sym.path_conds[i]);
-                    kept_pcs.push(sym.path_cond_pcs[i]);
-                    kept_is_branch.push(sym.path_cond_is_branch[i]);
-                    kept_narrowed.push(sym.path_cond_narrowed_const[i]);
-                    kept_lhs_meta.push(sym.path_cond_lhs_meta[i]);
-                }
-            }
-            sym.path_conds = kept_conds;
-            sym.path_cond_pcs = kept_pcs;
-            sym.path_cond_is_branch = kept_is_branch;
-            sym.path_cond_narrowed_const = kept_narrowed;
-            sym.path_cond_lhs_meta = kept_lhs_meta;
-        }
+        faithful_fold_pass(&mut sym, base_pc);
     }
 
     if std::env::var("ZOVIA_BCF_DUMP_PATH_COND_PCS").is_ok() {

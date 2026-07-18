@@ -525,6 +525,25 @@ impl SymbolicState {
     /// kernel's expected entry (e.g. `0x5edc48abe49fbee5` for
     /// `calico_tc_main` in `clang-15_-O1_felix_bin_bpf_to_wep_debug_co-re.o`).
     /// See `feedback_bytematch_revised_2026-05-21.md`.
+    /// Keep exactly the path-cond entries at the given (sorted) indices.
+    /// The POSITIONAL analog of `filter_path_conds_from_pc` — the kernel's
+    /// `bcf_track` emits br_conds only along the walk suffix from the base
+    /// state to cur, which is a recording-order slice, not a pc window
+    /// (they differ when the path wraps a loop; bcc ksnoop 0x7b883057).
+    pub fn retain_path_conds_by_index(&mut self, kept: &[usize]) {
+        debug_assert_eq!(self.path_conds.len(), self.path_cond_pcs.len());
+        debug_assert_eq!(self.path_conds.len(), self.path_cond_is_branch.len());
+        fn take<T: Clone>(v: &mut Vec<T>, kept: &[usize]) {
+            let old = std::mem::take(v);
+            *v = kept.iter().filter_map(|&i| old.get(i).cloned()).collect();
+        }
+        take(&mut self.path_conds, kept);
+        take(&mut self.path_cond_pcs, kept);
+        take(&mut self.path_cond_is_branch, kept);
+        take(&mut self.path_cond_narrowed_const, kept);
+        take(&mut self.path_cond_lhs_meta, kept);
+    }
+
     pub fn filter_path_conds_from_pc(
         &mut self,
         base_pc: usize,
