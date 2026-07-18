@@ -490,12 +490,60 @@ fn try_bcf_refine_map(
                   state.pc, base, insn_off, size, map_limit, size_reg, base_pc,
                   state.parent_cache_id, state.history_idx);
     }
-    let Some(ok) = crate::refinement::refine_map::try_refine_map_access(
+    let legacy_ok = crate::refinement::refine_map::try_refine_map_access(
         state, base, insn_off, size, map_limit, size_reg, base_pc, base_conds_len,
-    ) else {
+    );
+    // Kernel bcf_track replay-rebuild variant (ADDITIVE): re-execute
+    // base→reject with a fresh bcf so the path conds AND the refine
+    // predicate come from ONE replay expr table — the kernel's actual
+    // goal-formation semantics. Required for loop-wrapping suffixes where
+    // the live-state goal keeps pre-base chains and over-spanning conds
+    // (bcc ksnoop 0x7b883057f2f77b41 @521 — see replay_to_reject doc).
+    // base_pc=None: the replayed sym's path_conds ARE exactly the suffix,
+    // no filtering wanted. Dedupe by cond_hash before pushing.
+    // Never nest replays: a mid-replay access failure runs the legacy
+    // refine (needed for the replayed path to continue past its own
+    // discharged accesses) but must not spawn a recursive re-execution.
+    let mut replay_variants: Vec<crate::refinement::refine_stack::RefineOk> = Vec::new();
+    if !env.replay_mode {
+        if let Some((_, cid)) = landed {
+            // Two anchor shapes, both additive:
+            // - plain (anchor = the base cache entry itself): matches the
+            //   kernel when the base's regs weren't cache-mutated;
+            // - parent-anchored (execute from the base's parent, bcf reset
+            //   at the base boundary): rebuilds pristine operand bounds
+            //   where caching widened them (kernel replays st->parent
+            //   snapshots, which are never widened).
+            for anchor_at_parent in [false, true] {
+                if let Some(rst) = crate::analysis::transfer::branch::replay_to_reject(
+                    env, cid, anchor_at_parent,
+                ) {
+                    if let Some(ok) = crate::refinement::refine_map::try_refine_map_access(
+                        &rst, base, insn_off, size, map_limit, size_reg, None, None,
+                    ) {
+                        if bcf_debug {
+                            eprintln!(
+                                "[REFINE] pc={} replay-variant(parent={}) proof_bytes={}",
+                                state.pc, anchor_at_parent, ok.proof_bytes.len()
+                            );
+                        }
+                        replay_variants.push(ok);
+                    }
+                }
+            }
+        }
+    }
+    let attempts: Vec<(bool, _)> = legacy_ok
+        .into_iter()
+        .map(|o| (false, o))
+        .chain(replay_variants.into_iter().map(|o| (true, o)))
+        .collect();
+    if attempts.is_empty() {
         if bcf_debug { eprintln!("[REFINE] pc={} try_refine_map_access -> None", state.pc); }
         return false;
-    };
+    }
+    let mut emitted = false;
+    for (is_replay_variant, ok) in attempts {
     if bcf_debug { eprintln!("[REFINE] pc={} SUCCESS proof_bytes={}", state.pc, ok.proof_bytes.len()); }
     let entry = crate::refinement::bundle::RefineEntry::new(
         ok.goal_root,
@@ -523,7 +571,19 @@ fn try_bcf_refine_map(
             env.bcf_proofs.iter().any(|e| e.cond_hash == entry.cond_hash),
         );
     }
-    env.bcf_proofs.push(entry);
+    // Legacy entries push unconditionally (pre-existing behavior — bundle
+    // bytes for every currently-passing object stay identical). The
+    // replay variant is ADDITIVE and dedupes by canonical hash: on
+    // straight-line suffixes it coincides with the legacy goal and must
+    // not double the bundle.
+    if !is_replay_variant
+        || !env.bcf_proofs.iter().any(|e| e.cond_hash == entry.cond_hash)
+    {
+        env.bcf_proofs.push(entry);
+    }
+    emitted = true;
+    } // end for attempts
+    let _ = emitted;
     // Mirror kernel `bcf_refine` parent-marking (verifier.c:24904-24921):
     // every cached ancestor on this refinement's backtrack suffix is no
     // longer prune-safe, because a later arrival that would otherwise

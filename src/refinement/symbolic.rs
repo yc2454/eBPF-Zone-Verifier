@@ -1110,9 +1110,10 @@ impl SymbolicState {
                 // emits orphaned bound-preds the kernel doesn't.
                 if std::env::var("ZOVIA_DBG_MAT").ok().as_deref() == Some("1") {
                     eprintln!(
-                        "[mat] reg=r{} pc={} const={:?} smin={:#x} smax={:#x} umin={:#x} umax={:#x}",
+                        "[mat] reg=r{} pc={} const={:?} smin={:#x} smax={:#x} umin={:#x} umax={:#x} s32=[{},{}] u32=[{:#x},{:#x}]",
                         reg, self.current_pc, bounds.const_val,
-                        bounds.smin, bounds.smax, bounds.umin, bounds.umax
+                        bounds.smin, bounds.smax, bounds.umin, bounds.umax,
+                        bounds.s32_min, bounds.s32_max, bounds.u32_min, bounds.u32_max
                     );
                     // One-shot caller identification for the orphan-pair
                     // signature (b809 chase): print a backtrace for the

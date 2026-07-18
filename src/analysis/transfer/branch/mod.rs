@@ -893,6 +893,187 @@ fn try_prove_unreachable_via_replay(
     goals
 }
 
+/// Kernel `bcf_track` replay-rebuild for REFINE-kind rejects (map/stack
+/// bounds): re-execute the base→reject instruction path from the cached
+/// base state with a FRESH bcf, and return the state ARRIVED at the
+/// reject insn (the reject insn itself is NOT executed — it is the
+/// failing access whose refine predicate the caller builds). The kernel
+/// builds path conds AND the refine cond from this ONE replay expr table
+/// (bcf_refine tail resets every reg's bcf_expr; bcf_track re-executes
+/// with lazy bcf_reg_expr materialization) — so pre-base value chains
+/// rematerialize as fresh VARs with replay-time bounds, and the refine
+/// predicate's operand exprs are coherent with the path conds. The
+/// live-state goal path CANNOT reproduce this on loop-wrapping suffixes:
+/// bcc ksnoop c20-O1 (kernel MISS 0x7b883057f2f77b41 @521) — the base is
+/// the loop-guard state (kernel first=581/cached@560); the pc-window
+/// cond filter over-keeps iteration-1 crossings (pcs 571-581 >= 560) and
+/// the live `(v4 + -1)` chain differs from the kernel's fresh-var form.
+/// Plain replay only (no reset-rung ladder — the kernel's refine goal is
+/// the plain base→reject walk); START-PUSH mirrored from
+/// try_prove_unreachable_via_replay.
+pub(crate) fn replay_to_reject(
+    env: &mut VerifierEnv,
+    base_cid: u32,
+    // Anchor the EXECUTION one cache level earlier (the base's parent
+    // cache entry) and reset the bcf at the base boundary. The kernel's
+    // bcf_track replays from the pristine `st->parent` snapshot; zovia's
+    // explored-cache entries are MUTATED at caching (mark_all_scalars_
+    // imprecise + loop-header widening), so replaying with the cache
+    // entry's regs materializes WIDENED operand bounds (bcc ksnoop: the
+    // guard LHS minted [0,0xffffffff] where the kernel goal has the
+    // pristine [-1,254] pair). Executing from the parent anchor rebuilds
+    // the regs (the suffix's own loads/ALUs), while the bcf reset keeps
+    // the recorded conds starting at the base — the kernel goal shape.
+    anchor_at_parent: bool,
+) -> Option<State> {
+    let base_state = env.state_by_cache_id(base_cid).map(|(_, s)| s.clone())?;
+    let base_hidx = base_state.history_idx;
+
+    let (exec_state, exec_hidx, reset_suffix_from_base) = if anchor_at_parent {
+        let parent_cid = base_state.parent_cache_id?;
+        let parent_state = env.state_by_cache_id(parent_cid).map(|(_, s)| s.clone())?;
+        let parent_hidx = parent_state.history_idx;
+        if parent_hidx == base_hidx {
+            return None; // no distinct anchor — the plain variant covers it
+        }
+        (parent_state, parent_hidx, true)
+    } else {
+        (base_state, base_hidx, false)
+    };
+
+    let reject_bc = env.current_step_idx?;
+    let mut path: Vec<(usize, Instr)> = Vec::new();
+    let mut cur = Some(reject_bc);
+    let mut budget: usize = 200_000;
+    // Suffix length AFTER the (bcf-)base — counted when the backward walk
+    // passes base_hidx (only meaningful under anchor_at_parent).
+    let mut suffix_len: Option<usize> = None;
+    while let Some(idx) = cur {
+        if Some(idx) == exec_hidx {
+            break;
+        }
+        if reset_suffix_from_base && Some(idx) == base_hidx {
+            suffix_len = Some(path.len());
+        }
+        budget = budget.checked_sub(1)?;
+        let bc = env.history.get(idx)?;
+        path.push((bc.pc, bc.instr.clone()));
+        cur = bc.parent_idx;
+    }
+    if path.is_empty() {
+        return None;
+    }
+    if reset_suffix_from_base && suffix_len.is_none() {
+        // The base breadcrumb is not on the parent→reject chain — bail
+        // rather than record a wrong-window goal.
+        return None;
+    }
+    path.reverse(); // forward order: first-suffix insn .. reject insn
+    // Forward index of the first insn AFTER the base = where the bcf
+    // resets (the base boundary; under anchor_at_parent only).
+    let reset_at: Option<usize> = suffix_len.map(|sl| path.len() - sl);
+    if std::env::var("ZOVIA_BCF_REPLAY_DEBUG").ok().as_deref() == Some("1") {
+        eprintln!(
+            "[replay-refine] STRUCT base_cid={} base_hidx={:?} stopped_at_base={} path[0]={} path[last]={} len={}",
+            base_cid, base_hidx, cur.is_some(), path[0].0, path[path.len() - 1].0, path.len()
+        );
+    }
+    let reject_pc = path[path.len() - 1].0;
+    let n_exec = path.len() - 1; // never execute the reject insn itself
+    if n_exec == 0 {
+        // The base is the immediate parent of the reject insn — the
+        // replayed state IS the base (fresh bcf, no conds). Still valid:
+        // the refine pred materializes fresh from the base regs.
+        let mut st = exec_state;
+        st.reset_bcf_for_replay();
+        st.pc = reject_pc;
+        return Some(st);
+    }
+
+    let dbg = std::env::var("ZOVIA_BCF_REPLAY_DEBUG").ok().as_deref() == Some("1");
+    let saved_error = env.error.take();
+    let mut base_state = exec_state;
+    base_state.reset_bcf_for_replay();
+    // START-PUSH (kernel record_path_cond at bcf_track replay start,
+    // verifier.c:24499/:20968): the base checkpoint's creating branch,
+    // evaluated on the base state's post-branch regs. Skipped under
+    // anchor_at_parent — the mid-path bcf reset defines the cond window
+    // there, and the guard (the base's next insn) is executed and
+    // recorded by the replay itself.
+    if !reset_suffix_from_base && let Some((_, cached)) = env.state_by_cache_id(base_cid)
+        && let Some(hidx) = cached.history_idx
+        && let Some(bc) = env.history.get(hidx)
+        && let Instr::If { width, left, op, right, target } = bc.instr.clone()
+        && matches!(
+            base_state.types.get(left),
+            crate::analysis::machine::reg_types::RegType::ScalarValue
+        )
+        && match &right {
+            Operand::Reg(r) => matches!(
+                base_state.types.get(*r),
+                crate::analysis::machine::reg_types::RegType::ScalarValue
+            ),
+            _ => true,
+        }
+    {
+        let prev_pc = bc.pc;
+        if let Some((op_then, op_else)) = cmp_op_to_bcf_pair(op) {
+            let taken = path[0].0 != prev_pc + 1;
+            let _ = target;
+            let op_byte = if taken { op_then } else { op_else };
+            let pre_b =
+                crate::analysis::transfer::alu::helpers::bcf_reg_bounds(&base_state, left);
+            record_path_cond_for_side(
+                &mut base_state, width, left, op, op_byte, &right, prev_pc, None, pre_b,
+            );
+        }
+    }
+    env.error = None;
+    env.replay_mode = true;
+    let mut holder: Option<State> = Some(base_state);
+    for i in 0..n_exec {
+        let pc = path[i].0;
+        let instr = path[i].1.clone();
+        let mut st = match holder.take() {
+            Some(s) => s,
+            None => break,
+        };
+        st.pc = pc;
+        if Some(i) == reset_at {
+            // Base boundary (anchor_at_parent): fresh bcf BEFORE the first
+            // suffix insn — its cond (the guard) records into it with the
+            // execution-rebuilt (pristine) operand bounds.
+            st.reset_bcf_for_replay();
+        }
+        let succ = crate::analysis::transfer::transfer(env, st, &instr);
+        let next_pc = path[i + 1].0;
+        holder = succ.into_iter().find(|s| s.pc == next_pc);
+        if dbg
+            && std::env::var("ZOVIA_DBG_REPLAY_S32").ok().as_deref() == Some("1")
+            && let Some(h) = holder.as_ref()
+        {
+            let (s32lo, s32hi) = h.domain.get_s32_bounds(crate::analysis::machine::reg::Reg::R1);
+            let (lo, hi) = h.domain.get_interval(crate::analysis::machine::reg::Reg::R1);
+            eprintln!(
+                "[replay-s32] i={} pc={} r1 ivl=[{},{}] s32=[{},{}]",
+                i, pc, lo, hi, s32lo, s32hi
+            );
+        }
+        if holder.is_none() && dbg {
+            eprintln!(
+                "[replay-refine] DIED i={} pc={} instr={:?} want_next={} env_err={:?}",
+                i, pc, instr, next_pc, env.error
+            );
+        }
+        if holder.is_none() {
+            break;
+        }
+    }
+    env.replay_mode = false;
+    env.error = saved_error;
+    holder
+}
+
 /// Emission census (ZOVIA_BCF_CENSUS=1, diagnosis-only): one line per bundle
 /// push ATTEMPT, tagged with the emission-class that produced the goal, so the
 /// per-class hash sets can be intersected offline against a kernel load's
