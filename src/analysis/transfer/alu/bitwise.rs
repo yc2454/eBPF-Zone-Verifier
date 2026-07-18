@@ -35,6 +35,16 @@ pub(crate) fn handle_mov(state: &mut State, width: Width, dst: Reg, src: &Operan
                 *c as u64
             };
             state.set_tnum(dst, Tnum::constant(v));
+            // Kernel bcf mov const bail-out (verifier.c:16416-16421 /
+            // :15239): a mov whose result is tnum-const CLEARS
+            // dst->bcf_expr instead of binding — the const materializes
+            // as a bcf_val literal at its next reference. Also wipes any
+            // stale dst binding.
+            if let Some(d) = dst.bcf_idx()
+                && let Some(bcf) = state.bcf.as_mut()
+            {
+                bcf.clear_reg(d);
+            }
         }
         Operand::Reg(r) => {
             let t = if width == Width::W32 {
@@ -43,12 +53,23 @@ pub(crate) fn handle_mov(state: &mut State, width: Width, dst: Reg, src: &Operan
                 state.get_tnum(*r)
             };
             state.set_tnum(dst, t);
-            // BCF symbolic mirror — W32 mov needs to chain ZEXT(EXTRACT_LO_32(src))
-            // for downstream ALU/branch ops to see the kernel-shape expression.
-            // W64 mov shares src's full cached expr (handled by the catch-all
-            // below via ptr_const_off propagation pathways; for scalars the
-            // tnum is already copied).
-            if width == Width::W32 && dst != *r {
+            // Kernel bcf mov const bail-out (verifier.c:16416-16421): when
+            // the post-mov dst is tnum-const the kernel clears
+            // `dst_reg->bcf_expr = -1` and does NOT copy the src chain —
+            // the next reference materializes `bcf_val(K)` (the fold).
+            // Gate on TNUM-const exactly (not zovia's wider interval
+            // const — that over-folds where the kernel keeps the chain).
+            // Measured (dsr twin 0x3ab6225aafb79e84 @937): `r3 = r9` with
+            // r9 tnum-const 5 between the two `if w3 != 0x5` crossings —
+            // the kernel's crossing-2 obligation carries the folded
+            // `0x5 == 0x5`; zovia's copied chain kept it unfolded.
+            if state.get_tnum(dst).is_const() {
+                if let Some(d) = dst.bcf_idx()
+                    && let Some(bcf) = state.bcf.as_mut()
+                {
+                    bcf.clear_reg(d);
+                }
+            } else if width == Width::W32 && dst != *r {
                 emit_bcf_mov_w32_reg(state, dst, *r);
             } else if width == Width::W64 && dst != *r {
                 // W64 mov: dst.cache = src.cache. Pull src's cached 64-bit
