@@ -98,6 +98,31 @@ pub(crate) fn transfer_load(
             .get_slot(slot_off)
             .is_some_and(|s| s.source_reg.is_some());
         if state.fill_at(frame_level, dst, slot_off, size) {
+            // Kernel check_mem_access tail (verifier.c:8292-8296) runs
+            // AFTER the PTR_TO_STACK dispatch too: every sub-8-byte
+            // scalar READ zero-extends — coerce_reg_to_size does
+            // `var_off = tnum_cast(var_off, size)` (upper bits known 0).
+            // The generic-load tail below mirrors it for non-stack
+            // loads; this fill early-return skipped it, so e.g. a u8
+            // read of a STACK_MISC byte kept tnum UNKNOWN where the
+            // kernel has (0;0xff). Measured: clang-17 to_hep_debug
+            // pc2115 `w3 = *(u8*)(r10-0x37)` — the pc-2124 narrow
+            // re-spill cached the unbound tnum and the pc-2133 arrival
+            // MISSed its narrow-spill candidate on the fp-264
+            // precise-tnum dim where the kernel regsafe-HITs (first
+            // add-stream divergence at add #11016; the 0x30d4c783
+            // trio's poisoned-base root).
+            if access_size < 8 && matches!(state.types.get(dst), RegType::ScalarValue) {
+                let m = (1u64 << (access_size as u32 * 8)) - 1;
+                let t = state.get_tnum(dst);
+                state.set_tnum(
+                    dst,
+                    crate::domains::tnum::Tnum {
+                        value: t.value & m,
+                        mask: t.mask & m,
+                    },
+                );
+            }
             // Kernel-faithful: spill/fill saves and restores the full
             // bpf_reg_state. zovia's slot doesn't carry ptr_const_off or
             // var_off_contributor, so previously these stayed STALE
