@@ -491,7 +491,7 @@ fn try_bcf_refine_map(
                   state.parent_cache_id, state.history_idx);
     }
     let legacy_ok = crate::refinement::refine_map::try_refine_map_access(
-        state, base, insn_off, size, map_limit, size_reg, base_pc, base_conds_len,
+        state, base, insn_off, size, map_limit, size_reg, base_pc, base_conds_len, None,
     );
     // Kernel bcf_track replay-rebuild variant (ADDITIVE): re-execute
     // base→reject with a fresh bcf so the path conds AND the refine
@@ -514,20 +514,66 @@ fn try_bcf_refine_map(
             //   at the base boundary): rebuilds pristine operand bounds
             //   where caching widened them (kernel replays st->parent
             //   snapshots, which are never widened).
-            for anchor_at_parent in [false, true] {
-                if let Some(rst) = crate::analysis::transfer::branch::replay_to_reject(
-                    env, cid, anchor_at_parent,
-                ) {
-                    if let Some(ok) = crate::refinement::refine_map::try_refine_map_access(
-                        &rst, base, insn_off, size, map_limit, size_reg, None, None,
+            // Variant order fixed: the two fix-#17 shapes FIRST (bundle
+            // entry order — existing bundles stay prefix-stable), then the
+            // slot-share shapes (kernel bcf_track bt slot-demand
+            // materialization; bcc ksnoop 0x357a84611c9e93b9 — a loop-
+            // invariant stack slot filled per iteration shares ONE var),
+            // then the ancestor-cache LADDER: the kernel's backtrack_states
+            // walks parent STATES and its base freely crosses call/loop
+            // boundaries — measured on bcc ksnoop c20-Os/-O2 (output_trace
+            // kept as a subprogram): the kernel bases for the @580/@583
+            // goals sit in the CALLER's arg-copy loop (base_first
+            // 532/543/554/565…, one per iteration) while zovia's bt lands
+            // inside the callee, so no rung-0 replay can record the
+            // caller-side guard conds (folded `0xd u<= 0xe` + u8-guard
+            // pair). One replay per ancestor rung offers each boundary;
+            // additive + hash-deduped like the rung-0 shapes. Deep rungs
+            // run the slot-share shapes only (multi-iteration windows
+            // re-fill loop-invariant slots; kernel shares ONE var).
+            // Pre-solve hash dedupe keeps the ladder's cvc5 cost bounded
+            // to novel goals.
+            let mut rung_cids: Vec<u32> = vec![cid];
+            {
+                let mut cur =
+                    env.state_by_cache_id(cid).and_then(|(_, s)| s.parent_cache_id);
+                while let Some(c) = cur {
+                    if rung_cids.len() >= 12 {
+                        break;
+                    }
+                    rung_cids.push(c);
+                    cur = env.state_by_cache_id(c).and_then(|(_, s)| s.parent_cache_id);
+                }
+            }
+            let mut known: std::collections::HashSet<u64> =
+                env.bcf_proofs.iter().map(|e| e.cond_hash).collect();
+            for (ri, rcid) in rung_cids.iter().enumerate() {
+                let variants: &[(bool, bool)] = if ri == 0 {
+                    &[(false, false), (true, false), (false, true), (true, true)]
+                } else {
+                    &[(false, true), (true, true)]
+                };
+                for &(anchor_at_parent, share_slot_vars) in variants {
+                    if let Some(rst) = crate::analysis::transfer::branch::replay_to_reject(
+                        env, *rcid, anchor_at_parent, share_slot_vars,
                     ) {
-                        if bcf_debug {
-                            eprintln!(
-                                "[REFINE] pc={} replay-variant(parent={}) proof_bytes={}",
-                                state.pc, anchor_at_parent, ok.proof_bytes.len()
-                            );
+                        if let Some(ok) = crate::refinement::refine_map::try_refine_map_access(
+                            &rst, base, insn_off, size, map_limit, size_reg, None, None,
+                            Some(&known),
+                        ) {
+                            if bcf_debug {
+                                eprintln!(
+                                    "[REFINE] pc={} replay-variant(rung={} parent={} share={}) proof_bytes={}",
+                                    state.pc, ri, anchor_at_parent, share_slot_vars,
+                                    ok.proof_bytes.len()
+                                );
+                            }
+                            known.insert(crate::refinement::canonical_hash::hash_expr(
+                                ok.goal_root,
+                                &ok.sym.exprs,
+                            ));
+                            replay_variants.push(ok);
                         }
-                        replay_variants.push(ok);
                     }
                 }
             }

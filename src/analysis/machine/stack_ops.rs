@@ -693,6 +693,39 @@ impl State {
             // (check_stack_read_fixed_off:5934). `None` (== kernel -1)
             // clears, so the next use lazy-materializes a fresh expr.
             restore_slot_bcf_expr(self, dst, spilled.bcf_expr);
+            // Replay slot-share variant (kernel bcf_track bt slot-demand
+            // materialization): the first fill of an expr-less spilled
+            // non-const scalar mints the VAR into the SLOT so every later
+            // fill of this offset reuses it — the kernel's bt walk demands
+            // the SLOT (not the transient reg) and materializes it once;
+            // each fill then carries the one expr via copy_register_state.
+            // Measured on bcc ksnoop c20-O1: kernel goal 0x357a84611c9e93b9
+            // reuses one var for `[r10-0x98]` across two loop iterations
+            // (sole delta vs zovia's 0x86a47b06bd690958 twin). Kernel
+            // `!tnum_is_const` guard mirrored; replay_share_slot_vars is
+            // set only inside slot-share replay variants.
+            if spilled.bcf_expr.is_none()
+                && matches!(spilled.reg_type, RegType::ScalarValue)
+                && self.domain.get_fixed_value(dst).is_none()
+                && !self.get_tnum(dst).is_const()
+                && self
+                    .bcf
+                    .as_ref()
+                    .is_some_and(|b| b.replay_share_slot_vars)
+                && let Some(idx) = dst.bcf_idx()
+            {
+                let pc = self.pc;
+                let bounds = bcf_reg_bounds(self, dst);
+                let expr = self.bcf.as_mut().map(|b| {
+                    b.set_current_pc(pc);
+                    b.reg_expr(idx, &bounds, false)
+                });
+                if let Some(e) = expr
+                    && let Some(slot) = self.frames.get_mut(level).stack.get_slot_mut(offset)
+                {
+                    slot.bcf_expr = Some(e);
+                }
+            }
         } else if let Some(tn) = narrowed_tnum {
             // Narrowing read of a wider spill whose tnum pins (some of)
             // the bits we're loading (any byte offset within the wider

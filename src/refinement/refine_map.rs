@@ -47,6 +47,12 @@ pub fn try_refine_map_access(
     size_reg: Option<Reg>,
     base_pc: Option<usize>,
     base_conds_len: Option<usize>,
+    // Pre-solve dedupe (replay-ladder cost control): when set, the built
+    // goal's canonical hash is computed BEFORE the cvc5 solve and the
+    // attempt bails if the hash is already known (it would be dropped at
+    // push time anyway — replay variants dedupe by cond_hash). Purely an
+    // optimization: bundle output is identical with or without it.
+    skip_hashes: Option<&std::collections::HashSet<u64>>,
 ) -> Option<super::refine_stack::RefineOk> {
     let bcf_ref = state.bcf.as_ref()?;
     let mut sym: SymbolicState = (**bcf_ref).clone();
@@ -258,13 +264,20 @@ pub fn try_refine_map_access(
     if std::env::var("ZOVIA_BCF_DUMP_SMT").is_ok() {
         eprintln!("---- [bcf] SMT-LIB to cvc5 (map) ----\n{}\n---- end ----", smt);
     }
+    // Goal root built before the solve so the canonical hash is available
+    // for the pre-solve dedupe; `sym` is local, ordering is inert.
+    let goal_root = build_goal_root(&mut sym, oob);
+    if let Some(skip) = skip_hashes
+        && skip.contains(&crate::refinement::canonical_hash::hash_expr(goal_root, &sym.exprs))
+    {
+        return None;
+    }
     match solver::solve(&smt) {
         Ok(bytes) => {
             debug!(
                 "[bcf] map-OOB refinement: cvc5 accepted ({} bytes)",
                 bytes.len()
             );
-            let goal_root = build_goal_root(&mut sym, oob);
             Some(super::refine_stack::RefineOk { proof_bytes: bytes, goal_root, sym })
         }
         Err(e) => {

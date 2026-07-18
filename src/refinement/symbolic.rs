@@ -206,6 +206,21 @@ pub struct SymbolicState {
     /// operand bounds per cond (giving the kernel goal its `u>= K` / duplicate
     /// bound conjuncts). Default false → normal recording/reconstruction unchanged.
     pub replay_emit_bounds: bool,
+    /// Replay-scoped (set by `replay_to_reject` slot-share variants only):
+    /// the first fill of a spilled non-const scalar whose slot carries no
+    /// expr mints the fresh VAR into the SLOT, so every later fill of the
+    /// same offset shares it. Mirrors the kernel's `bcf_track` demand
+    /// materialization: the backward `bt` walk transfers a reg demand into
+    /// the stack slot, the demanded slot materializes ONE var, and each
+    /// forward fill carries it via `copy_register_state`
+    /// (check_stack_read_fixed_off, verifier.c:5948 — `bcf_expr` copied
+    /// verbatim). Measured: bcc ksnoop c20-O1 kernel goal
+    /// 0x357a84611c9e93b9 @598 reuses ONE var for the loop-invariant
+    /// `[r10-0x98]` filled at .text 569 in BOTH iterations; the lazy
+    /// at-use mint made a fresh var per iteration (zovia twin
+    /// 0x86a47b06bd690958, sole delta). Default false → all existing
+    /// emissions byte-stable.
+    pub replay_share_slot_vars: bool,
 }
 
 impl SymbolicState {

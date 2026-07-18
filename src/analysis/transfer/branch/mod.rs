@@ -925,6 +925,12 @@ pub(crate) fn replay_to_reject(
     // the regs (the suffix's own loads/ALUs), while the bcf reset keeps
     // the recorded conds starting at the base — the kernel goal shape.
     anchor_at_parent: bool,
+    // Slot-share variant (ADDITIVE, kernel bcf_track bt slot-demand
+    // materialization): first fill of an expr-less spilled scalar mints
+    // the VAR into the SLOT so later fills of the same offset share it
+    // (see SymbolicState::replay_share_slot_vars). false preserves the
+    // fix-#17 variants byte-for-byte.
+    share_slot_vars: bool,
 ) -> Option<State> {
     let base_state = env.state_by_cache_id(base_cid).map(|(_, s)| s.clone())?;
     let base_hidx = base_state.history_idx;
@@ -986,6 +992,9 @@ pub(crate) fn replay_to_reject(
         // the refine pred materializes fresh from the base regs.
         let mut st = exec_state;
         st.reset_bcf_for_replay();
+        if share_slot_vars && let Some(b) = st.bcf.as_mut() {
+            b.replay_share_slot_vars = true;
+        }
         st.pc = reject_pc;
         return Some(st);
     }
@@ -994,6 +1003,11 @@ pub(crate) fn replay_to_reject(
     let saved_error = env.error.take();
     let mut base_state = exec_state;
     base_state.reset_bcf_for_replay();
+    // Slot-share flag rides the replay bcf (mid-path reset_at resets keep
+    // it: reset_for_replay leaves the flag untouched and the bcf is Some).
+    if share_slot_vars && let Some(b) = base_state.bcf.as_mut() {
+        b.replay_share_slot_vars = true;
+    }
     // START-PUSH (kernel record_path_cond at bcf_track replay start,
     // verifier.c:24499/:20968): the base checkpoint's creating branch,
     // evaluated on the base state's post-branch regs. Skipped under
