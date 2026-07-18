@@ -139,6 +139,23 @@ fn record_path_cond_for_side(
             None => bcf.add_val(0, jmp32),
         },
     };
+    // Micro-probe (3ab6225a@937 crossing-2 fold chase, 2026-07-18):
+    // at in-trace-range branch pcs, print the LHS materialization
+    // decision — cached-vs-fresh, the bounds' const-ness, and the
+    // resulting cmp_l expr kind — to answer why the pc-694 second
+    // `w3 != 5` crossing records unfolded where the kernel folds.
+    if crate::analysis::trace_pc_in_range(src_pc) {
+        let cmp_l_kind = match bcf.expr_at(cmp_l) {
+            Some(e) => format!("code={:#04x} nargs={}", e.code, e.args.len()),
+            None => "?".into(),
+        };
+        eprintln!(
+            "[rpc] src_pc={} side_op={:#04x} l_idx={} was_cached_at={:?} lhs_bounds(const={:?} u=[{:#x},{:#x}]) pre_const={:?} narrow={} cmp_l({})",
+            src_pc, op_byte_for_side, l_idx, lhs_materialize_pc,
+            lhs_bounds.const_val, lhs_bounds.umin, lhs_bounds.umax,
+            pre_lhs_bounds.const_val, narrow_for_side.is_some(), cmp_l_kind,
+        );
+    }
     // PATH B (ZOVIA_BCF_REPLAY): mirror the kernel's `bcf_bound_reg`, which
     // emits an operand's bound conjuncts INSIDE `record_path_cond` — BEFORE the
     // branch cond is pushed, in umin/umax/smin/smax order, and ONLY when the reg

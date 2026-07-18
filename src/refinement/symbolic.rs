@@ -874,6 +874,18 @@ impl SymbolicState {
     /// happened inside or outside a fresh kernel `bcf_track` replay
     /// starting at base_pc.
     pub fn bind_reg(&mut self, reg: usize, idx: u32) {
+        // 3ab6@937 probe: name the caller that binds R3 while
+        // current_pc==661 (the const reg that should stay unbound).
+        if std::env::var("ZOVIA_DBG_MAT").ok().as_deref() == Some("1")
+            && reg == 3
+            && self.current_pc == 661
+        {
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static B: AtomicU32 = AtomicU32::new(0);
+            if B.fetch_add(1, Ordering::Relaxed) < 2 {
+                eprintln!("[bind-bt-661] {}", std::backtrace::Backtrace::force_capture());
+            }
+        }
         self.reg_expr[reg] = Some(idx);
         self.reg_expr_pc[reg] = Some(self.current_pc);
     }
@@ -1086,6 +1098,15 @@ impl SymbolicState {
                     // One-shot caller identification for the orphan-pair
                     // signature (b809 chase): print a backtrace for the
                     // first few matching materializations.
+                    // 3ab6@937 chase: also fire on the pc-661 R3 re-mint
+                    // (the const reg that should NOT re-bind).
+                    if reg == 3 && self.current_pc == 661 {
+                        use std::sync::atomic::{AtomicU32, Ordering};
+                        static M: AtomicU32 = AtomicU32::new(0);
+                        if M.fetch_add(1, Ordering::Relaxed) < 2 {
+                            eprintln!("[mat-bt-661] {}", std::backtrace::Backtrace::force_capture());
+                        }
+                    }
                     if reg == 0 && bounds.smin == -4095 {
                         use std::sync::atomic::{AtomicU32, Ordering};
                         static N: AtomicU32 = AtomicU32::new(0);
