@@ -298,7 +298,7 @@ fn reject_atomic_on_typed_ptr(env: &mut VerifierEnv, state: &State, base: Reg) -
 
 /// Transfer function for Endian (byte swap) instructions.
 fn transfer_endian(
-    _env: &VerifierEnv,
+    env: &VerifierEnv,
     mut state: State,
     dst: Reg,
     op: EndianOp,
@@ -319,6 +319,25 @@ fn transfer_endian(
     // 1. Types: Endian ops destroy pointers -> Scalar
     state.types.set(dst, RegType::ScalarValue);
 
+    // Kernel check_alu_op BPF_END/byte-swap arm (verifier.c:16509):
+    // `check_reg_arg(env, insn->dst_reg, DST_OP)` — DST_OP is
+    // mark_reg_unknown. The swap result carries NO bounds/tnum: no
+    // adjust_scalar call, no width mask, no zext_32_to_64 — even for
+    // the LE-host-identity le64. Measured (0x30d4c783 trio, clang-17
+    // to_hep_debug pc402 `r4 = be16 r4` → pc404 `if w4 == 0x800`):
+    // the kernel's queried goal records v0 with high32-UNKNOWN bound
+    // preds (u<= 0xffffffff00000800 pair) + extract32(v0)==0x800
+    // UNFOLDED — r4 is not tnum-const at the crossing because the be16
+    // left it fully unknown. zovia's [0,0xffff] model made r4 fully
+    // const after the ==0x800 narrowing → record-time fold
+    // `0x800==0x800` → wrong canonical hash (never discharged). Zone
+    // mode keeps the precise model below.
+    if env.kernel_faithful_alu {
+        state.domain.forget(dst);
+        state.set_tnum(dst, crate::domains::tnum::Tnum::unknown());
+        state.clear_scalar_id(dst);
+        state.precise_regs.remove(&dst);
+    } else {
     match op {
         EndianOp::ToLe => {
             match size {
@@ -358,6 +377,7 @@ fn transfer_endian(
     if width == Width::W32 {
         state.domain.apply_and_imm(dst, 0xFFFF_FFFF);
     }
+    } // end !kernel_faithful_alu (zone-mode precise model)
 
     // BCF symbolic mirror for BPF_END. Kernel `check_alu_op` BPF_END
     // (verifier.c:16396) does `check_reg_arg(dst, SRC_OP)` then
