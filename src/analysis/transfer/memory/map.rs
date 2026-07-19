@@ -545,6 +545,17 @@ fn try_bcf_refine_map(
                     cur = env.state_by_cache_id(c).and_then(|(_, s)| s.parent_cache_id);
                 }
             }
+            if bcf_debug {
+                let rung_desc: Vec<String> = rung_cids
+                    .iter()
+                    .map(|c| {
+                        env.state_by_cache_id(*c)
+                            .map(|(_, s)| format!("cid={} pc={} first={:?}", c, s.pc, s.first_insn_idx))
+                            .unwrap_or_else(|| format!("cid={} <gone>", c))
+                    })
+                    .collect();
+                eprintln!("[REFINE-RUNGS] pc={} rungs=[{}]", state.pc, rung_desc.join(" | "));
+            }
             let mut known: std::collections::HashSet<u64> =
                 env.bcf_proofs.iter().map(|e| e.cond_hash).collect();
             for (ri, rcid) in rung_cids.iter().enumerate() {

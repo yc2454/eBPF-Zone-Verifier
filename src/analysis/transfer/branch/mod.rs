@@ -1062,6 +1062,16 @@ pub(crate) fn replay_to_reject(
         let succ = crate::analysis::transfer::transfer(env, st, &instr);
         let next_pc = path[i + 1].0;
         holder = succ.into_iter().find(|s| s.pc == next_pc);
+        if std::env::var("ZOVIA_DBG_REPLAY_R6").ok().as_deref() == Some("1")
+            && (539..=546).contains(&pc)
+            && let Some(h) = holder.as_ref()
+        {
+            let (lo, hi) = h.domain.get_interval(crate::analysis::machine::reg::Reg::R6);
+            eprintln!(
+                "[replay-r6] base_cid={} anchor_parent={} i={} pc={} r6=[{},{}] frames={}",
+                base_cid, anchor_at_parent, i, pc, lo, hi, h.frames.current_level()
+            );
+        }
         if dbg
             && std::env::var("ZOVIA_DBG_REPLAY_S32").ok().as_deref() == Some("1")
             && let Some(h) = holder.as_ref()
