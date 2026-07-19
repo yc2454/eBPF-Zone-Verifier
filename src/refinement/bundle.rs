@@ -137,6 +137,29 @@ fn read_bundle_raw(path: &Path) -> Vec<(u64, u32, Vec<u8>, Vec<u8>)> {
 /// proof converged is lost once section B (with its own proof) is
 /// analyzed. `main` clears the sidecar once per object before analysis,
 /// so cross-run staleness is not a concern. Returns total bytes written.
+/// Count BCF_VAR exprs in a SERIALIZED goal payload (root u32, count u32,
+/// then per-expr: code u8, vlen u8, params u16, args u32×vlen). Returns
+/// None on a malformed payload (caller drops it — a goal we can't parse
+/// is a goal the kernel checker can't either).
+fn parse_goal_var_count(goal: &[u8]) -> Option<usize> {
+    use crate::refinement::bcf::{BCF_OP_MASK, BCF_VAR};
+    if goal.len() < 8 {
+        return None;
+    }
+    let n = u32::from_le_bytes(goal.get(4..8)?.try_into().ok()?) as usize;
+    let mut off = 8usize;
+    let mut vars = 0usize;
+    for _ in 0..n {
+        let code = *goal.get(off)?;
+        let vlen = *goal.get(off + 1)? as usize;
+        off += 4 + 4 * vlen;
+        if (code & BCF_OP_MASK) == BCF_VAR {
+            vars += 1;
+        }
+    }
+    Some(vars)
+}
+
 pub fn write_bundle(path: &Path, entries: &[RefineEntry]) -> io::Result<usize> {
     // First pass: serialize per-entry payloads (held in memory; bundles are
     // small — single-digit MB at most — so no streaming concerns).
@@ -147,8 +170,15 @@ pub fn write_bundle(path: &Path, entries: &[RefineEntry]) -> io::Result<usize> {
         proof: Vec<u8>,
     }
     // Pre-existing entries from earlier sections of this same object.
+    // The kernel-checkability filters below also apply here: a stale
+    // oversized entry merged from a prior sidecar bricks the bundle just
+    // the same (bcf_bundle_prevalidate is all-or-nothing).
     let mut serialized: Vec<Serialized> = read_bundle_raw(path)
         .into_iter()
+        .filter(|(_, _, goal, _)| {
+            goal.len() <= 24 * 1024
+                && parse_goal_var_count(goal).is_some_and(|n| n <= 128)
+        })
         .map(|(cond_hash, kind, goal, proof)| Serialized {
             cond_hash,
             kind,
@@ -184,7 +214,22 @@ pub fn write_bundle(path: &Path, entries: &[RefineEntry]) -> io::Result<usize> {
             continue; // already have this exact goal — skip duplicate
         }
         let goal = serialize_goal(e.goal_root, &e.goal_exprs);
-        if goal.len() > MAX_GOAL_BYTES {
+        // Kernel checker var cap (bcf_checker.c:1115 BCF_MAX_VAR_MAP =
+        // 128): a goal with more variables fails bcf_check_proof during
+        // bcf_bundle_prevalidate and the kernel rejects the WHOLE bundle
+        // with -EINVAL before verification. Measured: bcc ksnoop c20-Os
+        // at 6b05832 — deep-window replay goals reached 147-341 vars and
+        // the 5.9MB bundle EINVAL'd (zero discharge queries). Kernel-
+        // queried goals are far smaller; drop what the checker can't map.
+        let nvars = e
+            .goal_exprs
+            .iter()
+            .filter(|x| {
+                (x.code & crate::refinement::bcf::BCF_OP_MASK)
+                    == crate::refinement::bcf::BCF_VAR
+            })
+            .count();
+        if goal.len() > MAX_GOAL_BYTES || nvars > 128 {
             dropped_oversized += 1;
             seen.remove(&e.cond_hash);
             continue;

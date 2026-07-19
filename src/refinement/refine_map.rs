@@ -267,6 +267,26 @@ pub fn try_refine_map_access(
     // Goal root built before the solve so the canonical hash is available
     // for the pre-solve dedupe; `sym` is local, ordering is inert.
     let goal_root = build_goal_root(&mut sym, oob);
+    // Kernel checker cap: bcf_check_proof's var-equivalence map holds at
+    // most BCF_MAX_VAR_MAP = 128 variables (bcf_checker.c:1115); an entry
+    // whose goal exceeds it FAILS bcf_bundle_prevalidate and the kernel
+    // rejects the WHOLE bundle with -EINVAL before any verification.
+    // Measured: bcc ksnoop c20-Os — 50 deep-rung ladder goals reached up
+    // to 341 vars and the 5.9MB bundle EINVAL'd at load (zero discharge
+    // queries; the 1eda1b4 bundle loaded normally). Kernel-queried goals
+    // are small; anything past the cap is dead weight that bricks the
+    // bundle — drop it before wasting a solve.
+    {
+        use crate::refinement::bcf::{BCF_OP_MASK, BCF_VAR};
+        let nvars = sym
+            .exprs
+            .iter()
+            .filter(|e| (e.code & BCF_OP_MASK) == BCF_VAR)
+            .count();
+        if nvars > 128 {
+            return None;
+        }
+    }
     if let Some(skip) = skip_hashes
         && skip.contains(&crate::refinement::canonical_hash::hash_expr(goal_root, &sym.exprs))
     {
