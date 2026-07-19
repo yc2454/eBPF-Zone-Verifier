@@ -584,14 +584,37 @@ fn try_bcf_refine_map(
             let mut known: std::collections::HashSet<u64> =
                 env.bcf_proofs.iter().map(|e| e.cond_hash).collect();
             for (ri, rcid) in rung_cids.iter().enumerate() {
-                let variants: &[(bool, bool)] = if ri == 0 {
-                    &[(false, false), (true, false), (false, true), (true, true)]
+                // Third tuple slot = reset_at_crossing (see replay_to_reject):
+                // the kernel's base can be a checkpoint on the CURRENT
+                // lineage whose segment starts at a LATER re-arrival at the
+                // rung's pc (zovia may never have cached there — adds are
+                // cadence-gated). Offer the last two crossings per rung,
+                // share-only, plain-anchor (ADDITIVE; crossings absent →
+                // replay_to_reject bails to None).
+                let variants: &[(bool, bool, Option<usize>)] = if ri == 0 {
+                    &[
+                        (false, false, None),
+                        (true, false, None),
+                        (false, true, None),
+                        (true, true, None),
+                        (false, true, Some(1)),
+                        (false, true, Some(2)),
+                        (false, true, Some(3)),
+                        (false, true, Some(4)),
+                    ]
                 } else {
-                    &[(false, true), (true, true)]
+                    &[
+                        (false, true, None),
+                        (true, true, None),
+                        (false, true, Some(1)),
+                        (false, true, Some(2)),
+                        (false, true, Some(3)),
+                        (false, true, Some(4)),
+                    ]
                 };
-                for &(anchor_at_parent, share_slot_vars) in variants {
+                for &(anchor_at_parent, share_slot_vars, crossing) in variants {
                     if let Some(rst) = crate::analysis::transfer::branch::replay_to_reject(
-                        env, *rcid, anchor_at_parent, share_slot_vars,
+                        env, *rcid, anchor_at_parent, share_slot_vars, crossing, None,
                     ) {
                         if let Some(ok) = crate::refinement::refine_map::try_refine_map_access(
                             &rst, base, insn_off, size, map_limit, size_reg, None, None,
@@ -599,8 +622,8 @@ fn try_bcf_refine_map(
                         ) {
                             if bcf_debug {
                                 eprintln!(
-                                    "[REFINE] pc={} replay-variant(rung={} parent={} share={}) proof_bytes={}",
-                                    state.pc, ri, anchor_at_parent, share_slot_vars,
+                                    "[REFINE] pc={} replay-variant(rung={} parent={} share={} cross={:?}) proof_bytes={}",
+                                    state.pc, ri, anchor_at_parent, share_slot_vars, crossing,
                                     ok.proof_bytes.len()
                                 );
                             }
@@ -609,6 +632,46 @@ fn try_bcf_refine_map(
                                 &ok.sym.exprs,
                             ));
                             replay_variants.push(ok);
+                        }
+                    }
+                }
+            }
+            // Deep-path crossing cuts: the kernel base can be a segment
+            // start (a per-iteration checkpoint pc) EARLIER than any
+            // on-lineage cache of that pc — reachable only by cutting a
+            // DEEP rung's long path at crossings of the OTHER rungs' pcs
+            // (bcc ksnoop c20-Os e33c: base = iter-0x28's 504-segment,
+            // one iteration before the only 504-cache's creation). One
+            // replay per (distinct rung pc × last-4 crossings) on the
+            // deepest rung's path; share-only; hash-dedupe bounds cost.
+            if let Some(&deep_cid) = rung_cids.last() {
+                let mut cut_pcs: Vec<usize> = rung_cids
+                    .iter()
+                    .filter_map(|c| env.state_by_cache_id(*c).map(|(_, s)| s.pc))
+                    .collect();
+                cut_pcs.sort_unstable();
+                cut_pcs.dedup();
+                for cut_pc in cut_pcs {
+                    for k in 1..=4usize {
+                        if let Some(rst) = crate::analysis::transfer::branch::replay_to_reject(
+                            env, deep_cid, false, true, Some(k), Some(cut_pc),
+                        ) {
+                            if let Some(ok) = crate::refinement::refine_map::try_refine_map_access(
+                                &rst, base, insn_off, size, map_limit, size_reg, None, None,
+                                Some(&known),
+                            ) {
+                                if bcf_debug {
+                                    eprintln!(
+                                        "[REFINE] pc={} deep-cut(pc={} k={}) proof_bytes={}",
+                                        state.pc, cut_pc, k, ok.proof_bytes.len()
+                                    );
+                                }
+                                known.insert(crate::refinement::canonical_hash::hash_expr(
+                                    ok.goal_root,
+                                    &ok.sym.exprs,
+                                ));
+                                replay_variants.push(ok);
+                            }
                         }
                     }
                 }

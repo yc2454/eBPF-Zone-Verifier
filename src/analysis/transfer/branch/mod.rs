@@ -1006,6 +1006,26 @@ pub(crate) fn replay_to_reject(
     // (see SymbolicState::replay_share_slot_vars). false preserves the
     // fix-#17 variants byte-for-byte.
     share_slot_vars: bool,
+    // Reset-at-crossing variant (ADDITIVE, plain-anchor only): reset the
+    // bcf at the k-th-FROM-LAST re-arrival at the anchor's pc within the
+    // path (k = the value; 1 = last crossing) and re-record the boundary
+    // branch — the kernel's base is a checkpoint on the CURRENT lineage
+    // whose segment starts at that crossing, a state zovia may never have
+    // cached (adds are cadence-gated). Measured: bcc ksnoop c20-Os
+    // kretprobe @580 (kernel MISS 0xe33c4ae0e8b9f5dd) — the kernel base
+    // is a fresh 504-checkpoint on the arg-NULL lineage two loop
+    // iterations before its reject; zovia's only 504-cache (cid 33) is
+    // from an old lineage, so its plain replay ran root-length (4671B)
+    // where the kernel window is 818B. None = no crossing reset (all
+    // existing variants byte-stable).
+    reset_at_crossing: Option<usize>,
+    // Override the pc whose crossings define the reset cut (default: the
+    // anchor's own pc). Lets a DEEP rung's long path be cut at another
+    // rung-pc's crossings — the kernel base can be a segment start at a
+    // checkpoint pc EARLIER than any cache of that pc on the lineage
+    // (bcc ksnoop c20-Os e33c: base = iter-0x28's 504-segment; zovia's
+    // only on-lineage 504-cache was created one iteration later).
+    crossing_pc: Option<usize>,
 ) -> Option<State> {
     let base_state = env.state_by_cache_id(base_cid).map(|(_, s)| s.clone())?;
     let base_hidx = base_state.history_idx;
@@ -1052,7 +1072,26 @@ pub(crate) fn replay_to_reject(
     path.reverse(); // forward order: first-suffix insn .. reject insn
     // Forward index of the first insn AFTER the base = where the bcf
     // resets (the base boundary; under anchor_at_parent only).
-    let reset_at: Option<usize> = suffix_len.map(|sl| path.len() - sl);
+    let mut reset_at: Option<usize> = suffix_len.map(|sl| path.len() - sl);
+    // Reset-at-crossing (plain anchor only): pick the k-th-from-last
+    // re-arrival at the anchor pc. Requires the boundary to have a
+    // preceding insn in the path (i > 0) so the boundary branch can be
+    // re-recorded.
+    let mut crossing_engaged = false;
+    if let Some(k) = reset_at_crossing {
+        if anchor_at_parent {
+            return None; // combination undefined — plain shapes only
+        }
+        let anchor_pc = crossing_pc.unwrap_or(exec_state.pc);
+        let crossings: Vec<usize> = (1..path.len().saturating_sub(1))
+            .filter(|&i| path[i].0 == anchor_pc)
+            .collect();
+        if crossings.len() < k {
+            return None;
+        }
+        reset_at = Some(crossings[crossings.len() - k]);
+        crossing_engaged = true;
+    }
     if std::env::var("ZOVIA_BCF_REPLAY_DEBUG").ok().as_deref() == Some("1") {
         eprintln!(
             "[replay-refine] STRUCT base_cid={} base_hidx={:?} stopped_at_base={} path[0]={} path[last]={} len={}",
@@ -1089,7 +1128,8 @@ pub(crate) fn replay_to_reject(
     // anchor_at_parent — the mid-path bcf reset defines the cond window
     // there, and the guard (the base's next insn) is executed and
     // recorded by the replay itself.
-    if !reset_suffix_from_base && let Some((_, cached)) = env.state_by_cache_id(base_cid)
+    if !reset_suffix_from_base && !crossing_engaged
+        && let Some((_, cached)) = env.state_by_cache_id(base_cid)
         && let Some(hidx) = cached.history_idx
         && let Some(bc) = env.history.get(hidx)
         && let Instr::If { width, left, op, right, target } = bc.instr.clone()
@@ -1133,6 +1173,29 @@ pub(crate) fn replay_to_reject(
             // suffix insn — its cond (the guard) records into it with the
             // execution-rebuilt (pristine) operand bounds.
             st.reset_bcf_for_replay();
+            if share_slot_vars && let Some(b) = st.bcf.as_mut() {
+                b.replay_share_slot_vars = true;
+            }
+            // Crossing boundary: the branch INTO the crossing (path[i-1])
+            // already executed and its cond was wiped by the reset —
+            // re-record it on the post-branch state, the kernel's
+            // START-PUSH analog for a mid-lineage base (record_path_cond
+            // at bcf_track replay start, verifier.c:24499/:20968).
+            // record_path_cond_for_side itself skips non-scalar operands.
+            if crossing_engaged
+                && i > 0
+                && let Instr::If { width, left, op, right, target: _ } = &path[i - 1].1
+                && let Some((op_then, op_else)) = cmp_op_to_bcf_pair(*op)
+            {
+                let prev_pc = path[i - 1].0;
+                let taken = pc != prev_pc + 1;
+                let op_byte = if taken { op_then } else { op_else };
+                let pre_b =
+                    crate::analysis::transfer::alu::helpers::bcf_reg_bounds(&st, *left);
+                record_path_cond_for_side(
+                    &mut st, *width, *left, *op, op_byte, right, prev_pc, None, pre_b,
+                );
+            }
         }
         let succ = crate::analysis::transfer::transfer(env, st, &instr);
         let next_pc = path[i + 1].0;
