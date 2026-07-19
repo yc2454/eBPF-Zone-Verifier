@@ -588,6 +588,20 @@ fn try_bcf_refine_map(
         if bcf_debug { eprintln!("[REFINE] pc={} try_refine_map_access -> None", state.pc); }
         return false;
     }
+    // Kernel bcf_refine TRACKING-mode guard (verifier.c:25153-25157): during
+    // bcf_track's replay, a nested refine only runs refine_cb (the state
+    // refinement, so the replayed path continues) and returns BEFORE the
+    // bundle-discharge attempt AND before the parents children_unsafe
+    // marking loop. Zovia's mid-replay refines previously pushed entries
+    // and marked ancestors from REPLAY states — side effects the kernel
+    // never has; the ladder's extra replays amplified them until they
+    // perturbed later goal formation (bcc ksnoop c20-O1: kernel-FOUND
+    // 0x008689dd63b62e27 stopped being formed). Refine outcome (continue
+    // past the access) is preserved; only the emission side effects are
+    // gated.
+    if env.replay_mode {
+        return true;
+    }
     let mut emitted = false;
     for (is_replay_variant, ok) in attempts {
     if bcf_debug { eprintln!("[REFINE] pc={} SUCCESS proof_bytes={}", state.pc, ok.proof_bytes.len()); }
