@@ -164,6 +164,8 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
 
         for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
             state.domain.forget(r);
+            state.ptr_const_off.remove(&r);
+            state.var_off_contributor.remove(&r);
         }
 
         // tail-called program may rewrite packet contents, so any packet
@@ -749,6 +751,19 @@ pub(crate) fn transfer_call(env: &mut VerifierEnv, mut state: State, helper: u32
             state.domain.forget(r);
             state.set_tnum(r, Tnum::unknown());
             state.clear_scalar_id(r);
+        }
+        // Kernel check_helper_call resets ALL caller-saved regs r0-r5 via
+        // mark_reg_not_init (verifier.c:12370-12373) — the whole
+        // bpf_reg_state, including ptr_reg->off; R0's return type is then
+        // re-marked with off=0 (mark_reg_known_zero). Zovia's side-maps
+        // survived the call: bcc ksnoop c20-O2 pc 583 (kernel MISS
+        // 0x0e93b012fb58f713) — `r0 += 0xf08` at .text 160 left
+        // ptr_const_off[r0]=0xf08 across the map_lookup at .text 547, so
+        // `r4 = r0` (.text 578) copied it and the refine threshold came
+        // out 0x30a0 (16296 − 0xf08) where the kernel emits 0x3fa8.
+        for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+            state.ptr_const_off.remove(&r);
+            state.var_off_contributor.remove(&r);
         }
         // BCF symbolic-state caller-saved clear (β+ Step 0): mirror the
         // domain/tnum/id clears above.

@@ -416,8 +416,12 @@ fn transfer_kfunc_proto(
                 fail.domain.forget(r);
                 fail.set_tnum(r, Tnum::unknown());
                 fail.clear_scalar_id(r);
+                fail.ptr_const_off.remove(&r);
+                fail.var_off_contributor.remove(&r);
             }
         }
+        fail.ptr_const_off.remove(&Reg::R0);
+        fail.var_off_contributor.remove(&Reg::R0);
         fail.pc += 1;
 
         // Success branch: push the lock, run the existing
@@ -439,8 +443,12 @@ fn transfer_kfunc_proto(
                 state.domain.forget(r);
                 state.set_tnum(r, Tnum::unknown());
                 state.clear_scalar_id(r);
+                state.ptr_const_off.remove(&r);
+                state.var_off_contributor.remove(&r);
             }
         }
+        state.ptr_const_off.remove(&Reg::R0);
+        state.var_off_contributor.remove(&Reg::R0);
         state.pc += 1;
         return vec![state, fail];
     }
@@ -466,11 +474,18 @@ fn transfer_kfunc_proto(
             state.domain.forget(r);
             state.set_tnum(r, Tnum::unknown());
             state.clear_scalar_id(r);
+            state.ptr_const_off.remove(&r);
+            state.var_off_contributor.remove(&r);
         }
     }
+    // Same caller-saved side-map scrub as the helper path (kernel
+    // check_kfunc_call caller_saved reset, verifier.c:14536): R0 is
+    // wholly redefined by the kfunc return.
     state.domain.forget(Reg::R0);
     state.set_tnum(Reg::R0, Tnum::unknown());
     state.clear_scalar_id(Reg::R0);
+    state.ptr_const_off.remove(&Reg::R0);
+    state.var_off_contributor.remove(&Reg::R0);
 
     state.pc += 1;
     vec![state]
