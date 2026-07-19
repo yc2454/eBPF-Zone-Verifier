@@ -34,9 +34,34 @@ impl std::fmt::Display for FrameLevel {
     }
 }
 
+/// Caller R6-R9 bcf reg-expr bindings, snapshotted at frame push.
+///
+/// Kernel analog: `bcf_expr` is a field of `struct bpf_reg_state`
+/// (bpf_verifier.h:207) — per-reg, PER-FRAME. The callee frame's regs
+/// are a separate array, so callee writes to r6-r9 never touch the
+/// caller's bindings, and `prepare_func_exit` discards the callee frame
+/// wholesale (only r0's reg state copies back, verifier.c:11708).
+/// Zovia's `SymbolicState` reg table is flat across frames, so the
+/// caller's bindings must be saved at push and restored at pop.
+///
+/// Always-equal on compare: the kernel's `states_equal`/`regsafe` never
+/// reads `bcf_expr`, so the snapshot must not perturb the derived
+/// `CallFrame` equality used by pruning.
+#[derive(Clone, Debug, Default)]
+pub struct BcfCalleeSavedRegSnap(pub Option<[(Option<u32>, Option<usize>); 4]>);
+
+impl PartialEq for BcfCalleeSavedRegSnap {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+impl Eq for BcfCalleeSavedRegSnap {}
+
 /// A saved call frame (caller's state when entering a subfunction).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CallFrame {
+    /// See [`BcfCalleeSavedRegSnap`]. `None` when the caller had no bcf.
+    pub caller_bcf_reg_snap: BcfCalleeSavedRegSnap,
     pub return_pc: usize,
     pub stack: StackState,
     pub frame_depth: u16,
@@ -114,6 +139,7 @@ pub struct CallFrame {
 impl Default for CallFrame {
     fn default() -> Self {
         CallFrame {
+            caller_bcf_reg_snap: BcfCalleeSavedRegSnap(None),
             return_pc: 0,
             stack: StackState::default(),
             frame_depth: 0,
@@ -308,6 +334,7 @@ impl FrameStack {
         callback_helper: Option<u32>,
     ) -> FrameLevel {
         let frame = CallFrame {
+            caller_bcf_reg_snap: BcfCalleeSavedRegSnap(None),
             return_pc,
             stack: StackState::default(),
             frame_depth: 0,

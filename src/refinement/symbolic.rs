@@ -943,6 +943,15 @@ impl SymbolicState {
         self.reg_expr_pc[reg] = None;
     }
 
+    /// Restore a previously-snapshotted `(expr, materialize_pc)` binding
+    /// verbatim (subprog-exit caller-reg restore — kernel `bcf_expr` is
+    /// per-frame `bpf_reg_state`; see `CallFrame::caller_bcf_reg_snap`).
+    /// Unlike `bind_reg`, does NOT restamp the materialization pc.
+    pub fn restore_reg_binding(&mut self, reg: usize, binding: (Option<u32>, Option<usize>)) {
+        self.reg_expr[reg] = binding.0;
+        self.reg_expr_pc[reg] = binding.1;
+    }
+
     /// Kernel-mirror `bcf_alu` early bail-out (verifier.c:15220-15223):
     /// when an ALU op's post-narrowing value is a known constant, kernel
     /// clears `dst_reg->bcf_expr = -1` and returns without materializing

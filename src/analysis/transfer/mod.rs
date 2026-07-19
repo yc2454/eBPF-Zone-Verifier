@@ -762,6 +762,34 @@ fn transfer_exit(env: &mut VerifierEnv, mut state: State) -> Vec<State> {
         state.domain = frame.caller_domain;
         state.tnums = frame.caller_tnums;
 
+        // Restore the caller's R6-R9 bcf reg-expr bindings (kernel:
+        // bcf_expr rides bpf_reg_state per-frame; the callee frame is
+        // discarded at prepare_func_exit and the caller's regs — exprs
+        // included — come back untouched). R0 keeps the CALLEE's binding
+        // (caller->regs[BPF_REG_0] = *r0, verifier.c:11708). R1-R5 clear:
+        // the caller's were scratched at the call insn
+        // (clear_caller_saved_regs, verifier.c:11378 → mark_reg_not_init).
+        if let Some(b) = state.bcf.as_mut() {
+            if let Some(snap) = frame.caller_bcf_reg_snap.0 {
+                for (i, r) in [Reg::R6, Reg::R7, Reg::R8, Reg::R9].iter().enumerate() {
+                    if let Some(idx) = r.bcf_idx() {
+                        b.restore_reg_binding(idx, snap[i]);
+                    }
+                }
+            } else {
+                for r in [Reg::R6, Reg::R7, Reg::R8, Reg::R9] {
+                    if let Some(idx) = r.bcf_idx() {
+                        b.clear_reg(idx);
+                    }
+                }
+            }
+            for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+                if let Some(idx) = r.bcf_idx() {
+                    b.clear_reg(idx);
+                }
+            }
+        }
+
         // Global-subprog isolation: restore the caller's rcu_read_depth
         // snapshot taken at push time. The body's bpf_rcu_read_lock /
         // _unlock calls are local to the global subprog's analysis and
@@ -868,6 +896,31 @@ fn cb_exit_propagate(env: &VerifierEnv, mut state: State) -> Vec<State> {
     state.types = frame.caller_types;
     state.domain = frame.caller_domain;
     state.tnums = frame.caller_tnums;
+
+    // Caller bcf reg bindings: R6-R9 from the push-time snapshot (per-frame
+    // bcf_expr, see transfer_exit's pop above); R0-R5 clear — the helper
+    // call that entered this callback scratches caller-saved regs
+    // (check_helper_call mark_reg_not_init, verifier.c:12370-12373).
+    if let Some(b) = state.bcf.as_mut() {
+        if let Some(snap) = frame.caller_bcf_reg_snap.0 {
+            for (i, r) in [Reg::R6, Reg::R7, Reg::R8, Reg::R9].iter().enumerate() {
+                if let Some(idx) = r.bcf_idx() {
+                    b.restore_reg_binding(idx, snap[i]);
+                }
+            }
+        } else {
+            for r in [Reg::R6, Reg::R7, Reg::R8, Reg::R9] {
+                if let Some(idx) = r.bcf_idx() {
+                    b.clear_reg(idx);
+                }
+            }
+        }
+        for r in [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+            if let Some(idx) = r.bcf_idx() {
+                b.clear_reg(idx);
+            }
+        }
+    }
 
     // Helper return value lives in R0; bounds depend on helper kind.
     state.types.set(Reg::R0, RegType::ScalarValue);

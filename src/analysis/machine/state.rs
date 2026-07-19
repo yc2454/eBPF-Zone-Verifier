@@ -1156,6 +1156,15 @@ impl State {
         }
         for frame in self.frames.iter_mut() {
             frame.stack.reset_bcf_for_replay();
+            // Caller bcf-binding snapshots index the PRE-replay expr arena
+            // state; restoring them into the fresh replay table would
+            // resurrect stale exprs. Kernel bcf_track starts with every
+            // frame's reg bcf_expr = -1 (verifier.c:24644) — a mid-replay
+            // pop then leaves the caller's regs uncached, materializing
+            // fresh from their restored bounds. Match that by wiping the
+            // snapshots.
+            frame.caller_bcf_reg_snap =
+                crate::analysis::machine::frame_stack::BcfCalleeSavedRegSnap(None);
         }
     }
 
@@ -1182,7 +1191,33 @@ impl State {
             self.domain.clone(),
             self.tnums.clone(),
         );
+        self.snapshot_caller_bcf_regs();
         self.mark_callee_entry_regs();
+    }
+
+    /// Save the caller's R6-R9 bcf reg-expr bindings into the just-pushed
+    /// frame. Kernel `bcf_expr` lives in `bpf_reg_state` (bpf_verifier.h:207)
+    /// — per-reg, per-frame — so the caller's bindings survive the callee
+    /// untouched and return at `prepare_func_exit` (the callee frame is
+    /// discarded wholesale; only r0's reg state copies back). Zovia's flat
+    /// `SymbolicState` reg table needs the explicit save/restore. Measured:
+    /// bcc ksnoop c20-Os @580 (kernel MISS 0xaab73ef68faa346f) — the callee's
+    /// `r6 = r2` (map-ptr chain) left a const-0 expr on the flat r6 slot, so
+    /// the caller's post-return loop guard `if r6 > 0xe` folded `0x0 u<= 0xe`
+    /// where the kernel (fresh materialization from the caller's own reg,
+    /// r6=12) folds `0xc u<= 0xe` — the sole token delta vs the kernel goal.
+    fn snapshot_caller_bcf_regs(&mut self) {
+        let snap = self.bcf.as_ref().map(|b| {
+            let mut arr = [(None, None); 4];
+            for (i, r) in [Reg::R6, Reg::R7, Reg::R8, Reg::R9].iter().enumerate() {
+                if let Some(idx) = r.bcf_idx() {
+                    arr[i] = (b.get_reg(idx), b.get_reg_pc(idx));
+                }
+            }
+            arr
+        });
+        self.frames.current_mut().caller_bcf_reg_snap =
+            crate::analysis::machine::frame_stack::BcfCalleeSavedRegSnap(snap);
     }
 
     /// Kernel `setup_func_entry` (verifier.c:11068-11100): "callee cannot
@@ -1208,6 +1243,12 @@ impl State {
             self.clear_scalar_id_off(r);
             self.ptr_const_off.remove(&r);
             self.precise_regs.remove(&r);
+            // Callee frame regs start with fresh bpf_reg_state — bcf_expr
+            // included (init_func_state zeroes the frame). The caller's
+            // R6-R9 bindings were snapshotted in snapshot_caller_bcf_regs.
+            if let (Some(idx), Some(b)) = (r.bcf_idx(), self.bcf.as_mut()) {
+                b.clear_reg(idx);
+            }
         }
     }
 
@@ -1239,6 +1280,7 @@ impl State {
         // Kernel setup_func_entry applies to callback frames too (all
         // callee entries go through it; set_callee_state_cb only fills
         // R1-R5). See mark_callee_entry_regs.
+        self.snapshot_caller_bcf_regs();
         self.mark_callee_entry_regs();
     }
 
