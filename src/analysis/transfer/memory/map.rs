@@ -490,6 +490,29 @@ fn try_bcf_refine_map(
                   state.pc, base, insn_off, size, map_limit, size_reg, base_pc,
                   state.parent_cache_id, state.history_idx);
     }
+    // e33c chase (2026-07-19): tag each reject with whether its history
+    // window crossed the null-map-skip landing (combined pc 551 = std 547).
+    // The kernel goal e33c has a mid-window map-lookup-null conjunct; if NO
+    // zovia 580-reject lineage crosses 551, the null-branch never reaches
+    // this reject (exploration/pruning) rather than a base-window gap.
+    if std::env::var("ZOVIA_DBG_NULLSCAN").ok().as_deref() == Some("1") {
+        let mut cur = state.history_idx;
+        let mut steps = 0;
+        let mut valnull = 0usize; // 498 -> 515 taken (loaded value == 0, continue loop)
+        let mut prev_pc: Option<usize> = None;
+        while let Some(idx) = cur {
+            if steps > 600 { break; }
+            if let Some(bc) = env.history.get(idx) {
+                // walking BACKWARD: child (prev_pc) is 515 and current is 498 => taken edge
+                if bc.pc == 498 && prev_pc == Some(515) { valnull += 1; }
+                prev_pc = Some(bc.pc);
+                cur = bc.parent_idx;
+            } else { break; }
+            steps += 1;
+        }
+        eprintln!("[nullscan] pc={} hidx={:?} valnull_498_515={} steps={}",
+                  state.pc, state.history_idx, valnull, steps);
+    }
     let legacy_ok = crate::refinement::refine_map::try_refine_map_access(
         state, base, insn_off, size, map_limit, size_reg, base_pc, base_conds_len, None,
     );

@@ -617,6 +617,37 @@ fn handle_standard_pruning(
             match state_subsumed_by(state, prev, live_regs, frame_live_slots, frame_live_regs, config, force_exact) {
                 Ok(()) => {
                     zhit_seq(pc, state, prev);
+                    // e33c chase: does this HIT prune a VALUE-NULL lineage
+                    // (history crossed 498->515, the loaded-value-null skip)?
+                    // The kernel does no subsumption at the Os Loop A (all
+                    // candidates active); if zovia prunes value-null states
+                    // here, that's why e33c's null-window never reaches 580.
+                    if std::env::var("ZOVIA_DBG_VNHIT").ok().as_deref() == Some("1")
+                        && matches!(pc, 494 | 515 | 516)
+                    {
+                        let mut cur = state.history_idx;
+                        let mut prev_pc: Option<usize> = None;
+                        let mut vn = 0usize;
+                        let mut steps = 0;
+                        while let Some(idx) = cur {
+                            if steps > 600 { break; }
+                            if let Some(bc) = env.history.get(idx) {
+                                if bc.pc == 498 && prev_pc == Some(515) { vn += 1; }
+                                prev_pc = Some(bc.pc);
+                                cur = bc.parent_idx;
+                            } else { break; }
+                            steps += 1;
+                        }
+                        if vn > 0 {
+                            eprintln!("[vnhit] pc={} prev_idx={} prev.branches={} prev.cache_id={:?} prev.first_insn_idx={} prev.hidx={:?} cur.hidx={:?} cur_valnull={} prev_r6={:?} cur_r6={:?} prev_r7={:?} cur_r7={:?}",
+                                pc, i, prev.branches, prev.cache_id, prev.first_insn_idx,
+                                prev.history_idx, state.history_idx, vn,
+                                prev.domain.get_interval(crate::analysis::machine::reg::Reg::R6),
+                                state.domain.get_interval(crate::analysis::machine::reg::Reg::R6),
+                                prev.domain.get_interval(crate::analysis::machine::reg::Reg::R7),
+                                state.domain.get_interval(crate::analysis::machine::reg::Reg::R7));
+                        }
+                    }
                     if crate::analysis::trace_pc_in_range(pc) {
                         eprintln!(
                             "[SUBSUM_HIT] pc={} prev_idx={} cache_id={:?} (standard)",
