@@ -1182,6 +1182,33 @@ impl State {
             self.domain.clone(),
             self.tnums.clone(),
         );
+        self.mark_callee_entry_regs();
+    }
+
+    /// Kernel `setup_func_entry` (verifier.c:11068-11100): "callee cannot
+    /// access r0, r6 - r9 for reading and has to write into its own stack
+    /// before reading from it" — `init_func_state` zeroes the callee frame
+    /// and `set_callee_state_cb` copies R1-R5 only; R0/R6-R9 start
+    /// NOT_INIT in the callee. Zovia's flat view leaked the caller's
+    /// R6-R9 into the callee, so two callee states reached from different
+    /// call sites carried DIFFERENT caller R7/R8 values and the
+    /// subsumption Types check MISSed where the kernel HITs (both sides
+    /// NOT_INIT). Measured: bcc ksnoop c20-Os output_trace exit
+    /// (combined 603) — kernel prunes at the exit (add stream 1107:257
+    /// pop), zovia walked the whole return chain and its add cadence
+    /// shifted (adds at 565 vs kernel 567), hiding the deep-iteration
+    /// goal bases. The caller's values return at pop via the saved
+    /// caller_types/domain/tnums (transfer_exit restores them wholesale).
+    fn mark_callee_entry_regs(&mut self) {
+        for r in [Reg::R0, Reg::R6, Reg::R7, Reg::R8, Reg::R9] {
+            self.types.set(r, crate::analysis::machine::reg_types::RegType::NotInit);
+            self.domain.forget(r);
+            self.set_tnum(r, crate::domains::tnum::Tnum::unknown());
+            self.clear_scalar_id(r);
+            self.clear_scalar_id_off(r);
+            self.ptr_const_off.remove(&r);
+            self.precise_regs.remove(&r);
+        }
     }
 
     /// Variant of `push_frame` for global-subprog calls. The kernel
@@ -1209,6 +1236,10 @@ impl State {
             self.tnums.clone(),
             helper,
         );
+        // Kernel setup_func_entry applies to callback frames too (all
+        // callee entries go through it; set_callee_state_cb only fills
+        // R1-R5). See mark_callee_entry_regs.
+        self.mark_callee_entry_regs();
     }
 
     /// Pop the current frame, returning it owned. Returns None at main.

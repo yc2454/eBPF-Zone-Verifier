@@ -149,6 +149,15 @@ pub(super) fn state_subsumed_by(
     old: &State,
     live_regs: &HashSet<Reg>,
     frame_live_slots: &[Option<HashSet<i16>>],
+    // Per-frame live mask for the caller-frame compare (kernel
+    // states_equal: `insn_idx = frame_insn_idx(old, i)` — the frame's
+    // CALLSITE insn for non-top frames — then func_states_equal masks
+    // every reg by `insn_aux_data[insn_idx].live_regs_before`,
+    // verifier.c:20069-20085/:20131-20137). Index k = the mask for
+    // frames[k].caller_types (saved at frames[k]'s callsite =
+    // return_pc - 1). `None` = mask unknown → fall back to the legacy
+    // r6-r9 set (the sound, stricter direction).
+    frame_live_regs: &[Option<HashSet<Reg>>],
     config: &VerifierConfig,
     force_exact: bool,
 ) -> Result<(), SubsumptionMissReason> {
@@ -273,8 +282,53 @@ pub(super) fn state_subsumed_by(
     // two states that differ only in caller-frame r6-r9 values get pruned
     // against each other, hiding bugs that manifest after return.
     let saved = callee_saved_regs();
-    for (cur_frame, old_frame) in cur.frames.iter().zip(old.frames.iter()) {
-        if !types_subsumed_by(&cur_frame.caller_types, &old_frame.caller_types, &saved) {
+    for (k, (cur_frame, old_frame)) in cur.frames.iter().zip(old.frames.iter()).enumerate() {
+        // Kernel func_states_equal masks the frame's regs by the static
+        // live set at the frame's own insn (callsite for caller frames,
+        // verifier.c:20081 `(1 << i) & live_regs`). A callee-saved reg
+        // that is DEAD after this callsite's return (bcc ksnoop -Os:
+        // R7 at the output_trace call in the first-loop exit stub —
+        // return lands on the caller's `exit`) must not block the hit;
+        // one that IS live after return (the arg-copy loop callsite,
+        // r7 += 8 downstream) is compared, exactly as before.
+        // Net-kernel semantics for caller-frame regs: the compare mask is
+        // live_regs_before[callsite] (func_states_equal, :20081), but the
+        // kernel's clean_verifier_state has ALREADY marked dead regs in
+        // completed cached states NOT_INIT via DYNAMIC read marks — and a
+        // caller frame's r0-r5 can never be read after a state inside the
+        // callee (they are scratched at return; the callee reads its OWN
+        // r1-r5 copies), so cached caller-frame args are always cleaned
+        // and never block (regsafe: rold NOT_INIT → safe). The static
+        // equivalent: intersect the callsite live set with the
+        // callee-saved regs. Measured: bcc ksnoop -Os exit-stub callsite
+        // (combined 520, live = the blanket r1-r5 pseudo-call use set) —
+        // caller R5 is PtrToMapValue on the 514-path candidate and
+        // NotInit on the 547-fill-path arrival; the kernel HITs (candidate
+        // r5 cleaned), zovia blocked on it.
+        let masked: HashSet<Reg>;
+        let mask: &HashSet<Reg> = match frame_live_regs.get(k).and_then(|m| m.as_ref()) {
+            Some(live) => {
+                masked = live.intersection(&saved).copied().collect();
+                &masked
+            }
+            None => &saved,
+        };
+        let dump_cf = |which: &str| {
+            if std::env::var("ZOVIA_DUMP_CALLERFRAME_MISS").ok().as_deref() == Some("1") {
+                for &r in mask {
+                    let (clo, chi) = cur_frame.caller_domain.get_interval(r);
+                    let (olo, ohi) = old_frame.caller_domain.get_interval(r);
+                    eprintln!(
+                        "[cf_miss] pc={} frame={} rp={} which={} reg={:?} cur={:?} [{},{}] old={:?} [{},{}]",
+                        cur.pc, k, cur_frame.return_pc, which, r,
+                        cur_frame.caller_types.get(r), clo, chi,
+                        old_frame.caller_types.get(r), olo, ohi
+                    );
+                }
+            }
+        };
+        if !types_subsumed_by(&cur_frame.caller_types, &old_frame.caller_types, mask) {
+            dump_cf("types");
             return Err(SubsumptionMissReason::CallerFrame);
         }
         if !config.skip_dbm_check
@@ -283,14 +337,16 @@ pub(super) fn state_subsumed_by(
                 &old_frame.caller_domain,
                 &cur_frame.caller_types,
                 &old_frame.caller_types,
-                &saved,
+                mask,
                 &HashSet::new(),
                 false,
             )
         {
+            dump_cf("domain");
             return Err(SubsumptionMissReason::CallerFrame);
         }
-        if !caller_tnum_subsumed_by(cur_frame, old_frame, &saved) {
+        if !caller_tnum_subsumed_by(cur_frame, old_frame, mask) {
+            dump_cf("tnum");
             return Err(SubsumptionMissReason::CallerFrame);
         }
     }

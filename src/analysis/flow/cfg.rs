@@ -299,6 +299,15 @@ fn visit_insn(pc: usize, prog: &Program, env: &mut VerifierEnv) -> Result<Vec<us
             Ok(succs)
         }
         Instr::CallRel { target } => {
+            // 0. Mark the CALL insn itself as a prune point — kernel
+            //    visit_func_call_insn: `if (visit_callee) {
+            //    mark_prune_point(env, t); ... }` (pseudo-calls only).
+            //    Measured on bcc ksnoop c20-Os: kernel add
+            //    1149:266:542 sits AT the arg-loop `call output_trace`
+            //    insn; without this mark zovia's outer gate skipped 542
+            //    and the add slid one insn into the callee entry
+            //    (1150:267:554), shifting every downstream counter.
+            init_explored_state(env, pc);
             // 1. Push the Function Entry (The Call)
             succs.push(*target);
             init_explored_state(env, *target);

@@ -131,6 +131,22 @@ fn dbg_skip_pc(pc: usize) {
 /// cached states cur descends from. A prev state whose cache_id is in this
 /// set is a true loop-ANCESTOR of cur; one that is not (but is co-active) is
 /// a SIBLING. Bounded by a budget to guard against a malformed cycle.
+/// Kernel `same_callsites` (verifier.c:2107-2119): equal frame depth and
+/// an identical callsite chain. Combined with the `insn_idx ^ callsite`
+/// explored_state() bucketing (:2099-2105) this makes callee states cached
+/// from different call sites mutually invisible in the pruning scan.
+/// zovia keys explored_states by pc alone, so the scan applies this as an
+/// explicit per-candidate filter (equivalent modulo the kernel's rare
+/// hash-collision noise). return_pc is zovia's callsite analog (call insn
+/// + 1, consistent on both sides of the comparison; main frame = 0).
+fn same_callsites(a: &State, b: &State) -> bool {
+    a.frames.depth() == b.frames.depth()
+        && a.frames
+            .iter()
+            .zip(b.frames.iter())
+            .all(|(x, y)| x.return_pc == y.return_pc)
+}
+
 fn collect_ancestor_ids(env: &VerifierEnv, state: &State) -> HashSet<u32> {
     let mut set = HashSet::new();
     let mut next = state.parent_cache_id;
@@ -155,6 +171,7 @@ fn handle_loop_pruning(
     prog: &Program,
     live_regs: &HashSet<Reg>,
     frame_live_slots: &[Option<HashSet<i16>>],
+    frame_live_regs: &[Option<HashSet<Reg>>],
     config: &VerifierConfig,
 ) -> bool {
     // Loops without conditional exits are infinite - let complexity limit catch them
@@ -237,6 +254,21 @@ fn handle_loop_pruning(
         let mut add_now = would_add_new_state_base(env, state, pc);
         let mut cm: Vec<usize> = Vec::new();
         for (i, prev) in prev_states.iter().enumerate().rev() {
+            // Kernel explored_state() buckets by `insn_idx ^ callsite`
+            // (verifier.c:2099-2105) + same_callsites (:2107): a callee
+            // state cached from a DIFFERENT call site lives in a different
+            // hash bucket and is INVISIBLE to this arrival's scan — no
+            // dampener, no miss counting, no eviction interplay. Measured
+            // on bcc ksnoop c20-Os (output_trace kept as a subprogram):
+            // add streams bit-identical for 63 adds, then at ip=1102 the
+            // kernel adds at pc 560 (its scan sees no active candidate —
+            // the active 560-state came from another call site) while
+            // zovia's pc-keyed bucket surfaced that state → loop_dampener
+            // → NOCACHE → the deep-iteration goal bases never exist.
+            if !same_callsites(prev, state) {
+                dbg_skip_pc(pc);
+                continue;
+            }
             // Kernel children_unsafe (bcf_refine, verifier.c:24580-81).
             if prev.children_unsafe {
                 if add_now {
@@ -330,7 +362,7 @@ fn handle_loop_pruning(
                 m.push(i);
                 continue;
             }
-            match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
+            match state_subsumed_by(state, prev, live_regs, frame_live_slots, frame_live_regs, config, force_exact) {
                 Ok(()) => {
                     zhit_seq(pc, state, prev);
                     if crate::analysis::trace_pc_in_range(pc) {
@@ -439,6 +471,7 @@ fn handle_standard_pruning(
     pc: usize,
     live_regs: &HashSet<Reg>,
     frame_live_slots: &[Option<HashSet<i16>>],
+    frame_live_regs: &[Option<HashSet<Reg>>],
     config: &VerifierConfig,
 ) -> bool {
     let mut hit_idx: Option<usize> = None;
@@ -500,6 +533,13 @@ fn handle_standard_pruning(
     }
     if let Some(prev_states) = env.explored_states.get(&pc) {
         for (i, prev) in prev_states.iter().enumerate().rev() {
+            // Kernel `insn_idx ^ callsite` bucketing (verifier.c:2099) —
+            // cross-callsite candidates are invisible; see the twin
+            // filter in handle_loop_pruning's scan above.
+            if !same_callsites(prev, state) {
+                dbg_skip_pc(pc);
+                continue;
+            }
             // Kernel children_unsafe (bcf_refine, verifier.c:24580-81):
             // a path-unreachable refinement marked this cached ancestor
             // not-prune-safe. Don't let it subsume a later arrival.
@@ -574,7 +614,7 @@ fn handle_standard_pruning(
             // pins RANGE_WITHIN regardless of read-mark completeness.
             let force_exact =
                 iter_next_pc || crate::analysis::flow::scc::incomplete_read_marks(env, prev);
-            match state_subsumed_by(state, prev, live_regs, frame_live_slots, config, force_exact) {
+            match state_subsumed_by(state, prev, live_regs, frame_live_slots, frame_live_regs, config, force_exact) {
                 Ok(()) => {
                     zhit_seq(pc, state, prev);
                     if crate::analysis::trace_pc_in_range(pc) {
@@ -969,6 +1009,25 @@ pub fn should_prune(
     // kernel blocks on — from_nat_fib pc1375 fp-24 ZERO-vs-MISC).
     let nframes = state.frames.depth();
     let frame_live_slots: Vec<Option<HashSet<i16>>> = vec![None; nframes];
+    // Kernel per-frame reg-live mask for the caller-frame compare
+    // (states_equal: frame_insn_idx(i) = the frame's CALLSITE insn;
+    // func_states_equal masks by insn_aux_data[..].live_regs_before —
+    // verifier.c:20069-20085/:20131-20137). frames[k].caller_types was
+    // saved at frames[k]'s callsite = return_pc - 1; return_pc == 0 =
+    // the main frame (no callsite) -> None (legacy r6-r9 fallback).
+    let frame_live_regs: Vec<Option<HashSet<Reg>>> = state
+        .frames
+        .iter()
+        .map(|f| {
+            if f.return_pc == 0 {
+                None
+            } else {
+                env.insn_aux_data
+                    .get(f.return_pc - 1)
+                    .map(|a| a.live_regs.clone())
+            }
+        })
+        .collect();
 
     // Kernel-faithful infinite-loop trap (verifier.c v6.15 L19114-L19127,
     // `is_state_visited`'s inf-loop check). For any cached state at this
@@ -1206,7 +1265,7 @@ pub fn should_prune(
     {
         let is_may_goto = matches!(prog.instrs[pc], Instr::MayGoto { .. });
         if is_may_goto
-            && may_goto_range_within_prune(state, prev_states, &live_regs, &frame_live_slots, config)
+            && may_goto_range_within_prune(state, prev_states, &live_regs, &frame_live_slots, &frame_live_regs, config)
         {
             env.pruning_stats.may_goto_range_within_hits += 1;
             return true;
@@ -1214,9 +1273,9 @@ pub fn should_prune(
     }
 
     let pruned = if in_loop {
-        handle_loop_pruning(env, state, pc, prog, &live_regs, &frame_live_slots, config)
+        handle_loop_pruning(env, state, pc, prog, &live_regs, &frame_live_slots, &frame_live_regs, config)
     } else {
-        handle_standard_pruning(env, state, pc, &live_regs, &frame_live_slots, config)
+        handle_standard_pruning(env, state, pc, &live_regs, &frame_live_slots, &frame_live_regs, config)
     };
     pruned
 }
@@ -1388,6 +1447,7 @@ fn may_goto_range_within_prune(
     prev_states: &[State],
     live_regs: &HashSet<Reg>,
     frame_live_slots: &[Option<HashSet<i16>>],
+    frame_live_regs: &[Option<HashSet<Reg>>],
     config: &VerifierConfig,
 ) -> bool {
     // Build a precision-stripped clone of `cur` once. State carries
@@ -1419,7 +1479,7 @@ fn may_goto_range_within_prune(
         // pass force_exact=false so domain_subsumed_by keeps its NOT_EXACT
         // semantics for non-precise regs (the relaxed clone has cleared
         // precise_regs anyway).
-        if state_subsumed_by(&relaxed, prev, live_regs, frame_live_slots, config, false).is_ok() {
+        if state_subsumed_by(&relaxed, prev, live_regs, frame_live_slots, frame_live_regs, config, false).is_ok() {
             return true;
         }
     }
