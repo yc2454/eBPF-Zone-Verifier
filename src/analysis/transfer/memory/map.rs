@@ -545,6 +545,31 @@ fn try_bcf_refine_map(
                     cur = env.state_by_cache_id(c).and_then(|(_, s)| s.parent_cache_id);
                 }
             }
+            // Kernel backtrack_states walks the CURRENT descent's parent
+            // states (st->parent of the live state) — on post-marking
+            // instances those are the FRESH caches of this lineage, which
+            // the landed cache's stored creation-time ancestry can skip
+            // entirely. Measured: bcc ksnoop c20-O2 kretprobe @682 (kernel
+            // MISS 0x8ad35a53d2c7d5e6) — reject parent_cid=146 (fresh)
+            // while the demand walk landed at fossil cid=26; the kernel
+            // base's 660-byte window falls between fossil rungs 0 (226B)
+            // and 1 (705B). Offer one rung per dynamic-ancestry cache as
+            // well (ADDITIVE, appended after the fossil rungs so existing
+            // bundle order is prefix-stable); stop where the dynamic chain
+            // joins the fossil one. Deep-rung policy (share-only) + the
+            // pre-solve hash dedupe bound the extra cvc5 cost.
+            if let Some(pcid) = state.parent_cache_id {
+                let mut cur = Some(pcid);
+                let mut extra = 0;
+                while let Some(c) = cur {
+                    if extra >= 12 || rung_cids.contains(&c) {
+                        break;
+                    }
+                    rung_cids.push(c);
+                    extra += 1;
+                    cur = env.state_by_cache_id(c).and_then(|(_, s)| s.parent_cache_id);
+                }
+            }
             if bcf_debug {
                 let rung_desc: Vec<String> = rung_cids
                     .iter()

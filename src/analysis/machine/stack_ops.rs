@@ -634,6 +634,19 @@ impl State {
         }
 
         if sizes_match && is_aligned {
+            // Pre-fill capture for the slot-share adoption below: when the
+            // fill TARGET itself is the live copy of this slot's value
+            // (same scalar id — e.g. a loop-invariant refilled into the
+            // same reg each iteration), its binding and id are clobbered
+            // by the restore sequence before the share block runs.
+            let pre_fill_dst_binding: Option<u32> = if spilled.scalar_id.is_some()
+                && self.scalar_ids.get(&dst).copied() == spilled.scalar_id
+            {
+                dst.bcf_idx()
+                    .and_then(|ri| self.bcf.as_ref().and_then(|b| b.get_reg(ri)))
+            } else {
+                None
+            };
             // Preserve type and bounds
             self.types.set(dst, spilled.reg_type);
             self.tnums.insert(dst, spilled.tnum);
@@ -714,12 +727,61 @@ impl State {
                     .is_some_and(|b| b.replay_share_slot_vars)
                 && let Some(idx) = dst.bcf_idx()
             {
-                let pc = self.pc;
-                let bounds = bcf_reg_bounds(self, dst);
-                let expr = self.bcf.as_mut().map(|b| {
-                    b.set_current_pc(pc);
-                    b.reg_expr(idx, &bounds, false)
+                // Kernel demand-through-copy: the bt walk traces a COPY of
+                // this slot's value (same scalar id — fills copy the id via
+                // copy_register_state) back THROUGH its fill into the SLOT,
+                // so the slot and every live copy share ONE var. If a reg
+                // already materialized the value earlier in this replay
+                // (the anchor-held copy, minted lazily at its first use),
+                // ADOPT that expr for the slot instead of minting a second
+                // var. Measured: bcc ksnoop c20-O2 kretprobe @682 (kernel
+                // MISS 0x8ad35a53d2c7d5e6) — the kernel goal shares v1
+                // across ALL THREE loop-iteration equalities including the
+                // anchor-held first use; zovia's twin 4d22ca4445163d06
+                // shared only from the first in-window fill on (sole
+                // delta).
+                let adopted: Option<u32> = pre_fill_dst_binding.or_else(|| {
+                    spilled.scalar_id.and_then(|sid| {
+                        Reg::ALL.iter().find_map(|&r| {
+                            if r != dst && self.scalar_ids.get(&r) == Some(&sid) {
+                                r.bcf_idx()
+                                    .and_then(|ri| self.bcf.as_ref().and_then(|b| b.get_reg(ri)))
+                            } else {
+                                None
+                            }
+                        })
+                    })
                 });
+                if std::env::var("ZOVIA_BCF_REPLAY_DEBUG").ok().as_deref() == Some("1") {
+                    let dst_bind = dst
+                        .bcf_idx()
+                        .and_then(|ri| self.bcf.as_ref().and_then(|b| b.get_reg(ri)));
+                    let ids: Vec<String> = crate::analysis::machine::reg::Reg::ALL
+                        .iter()
+                        .filter_map(|&r| {
+                            self.scalar_ids.get(&r).map(|id| format!("{:?}={}", r, id))
+                        })
+                        .collect();
+                    eprintln!(
+                        "[slot-share] pc={} off={} spilled_id={:?} dst={:?} post_dst_bind={:?} pre_fill_binding={:?} adopted={:?} ids=[{}]",
+                        self.pc, offset, spilled.scalar_id, dst, dst_bind, pre_fill_dst_binding, adopted,
+                        ids.join(" ")
+                    );
+                }
+                let pc = self.pc;
+                let expr = if let Some(e) = adopted {
+                    if let Some(b) = self.bcf.as_mut() {
+                        b.set_current_pc(pc);
+                        b.bind_reg(idx, e);
+                    }
+                    Some(e)
+                } else {
+                    let bounds = bcf_reg_bounds(self, dst);
+                    self.bcf.as_mut().map(|b| {
+                        b.set_current_pc(pc);
+                        b.reg_expr(idx, &bounds, false)
+                    })
+                };
                 if let Some(e) = expr
                     && let Some(slot) = self.frames.get_mut(level).stack.get_slot_mut(offset)
                 {

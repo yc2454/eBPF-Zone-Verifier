@@ -201,6 +201,81 @@ fn record_path_cond_for_side(
     // different cached PC than the originator).
     let narrow_now = narrow_for_side.map(|(k, op_b, j32, _)| (k, op_b, j32, lhs_materialize_pc));
     bcf.add_cond_at_narrowed(pred, src_pc, narrow_now, Some((l_idx, lhs_materialize_pc, jmp32, lhs_bounds.clone(), pre_lhs_bounds.clone())));
+
+    // Share-replay demand-through-copy (kernel bcf_track): a reg freshly
+    // materialized at this branch whose VALUE is a copy of a stack slot
+    // (same scalar id — fills copy the id via copy_register_state) is, in
+    // the kernel's BACKWARD bt walk, demanded THROUGH its defining fill
+    // into the SLOT — so the slot and every copy share ONE var, even when
+    // the fill happened before the replay window. Mirror it forward:
+    // stamp the fresh binding onto expr-less slots spilling the same id,
+    // so later in-window fills restore the SAME var instead of minting a
+    // second one. Measured: bcc ksnoop c20-O2 kretprobe @682 (kernel MISS
+    // 0x8ad35a53d2c7d5e6) — kernel shares v1 across all three
+    // loop-iteration equalities incl. the anchor-held first use (r3 is
+    // clobbered by `r3 = -1` each iteration, so no live reg carries the
+    // copy at the next fill); zovia's twin 4d22ca4445163d06 shared only
+    // from the first in-window fill on.
+    if state.bcf.as_ref().is_some_and(|b| b.replay_share_slot_vars) {
+        // No was-uncached gate: the copy's binding may predate this branch
+        // (start-push materialization, in-window fill, earlier read) — the
+        // kernel's backward demand unifies the copy with its source slot
+        // in every one of those cases.
+        let mut props: Vec<(u32, u32)> = Vec::new();
+        if lhs_bounds.const_val.is_none()
+            && let Some(id) = state.scalar_id(left)
+            && let Some(e) = state.bcf.as_ref().and_then(|b| b.get_reg(l_idx))
+        {
+            props.push((id, e));
+        }
+        if let Operand::Reg(r) = right
+            && state.domain.get_fixed_value(*r).is_none()
+            && let Some(ri) = r.bcf_idx()
+            && let Some(id) = state.scalar_id(*r)
+            && let Some(e) = state.bcf.as_ref().and_then(|b| b.get_reg(ri))
+        {
+            props.push((id, e));
+        }
+        let dbg_ss = std::env::var("ZOVIA_BCF_REPLAY_DEBUG").ok().as_deref() == Some("1");
+        if dbg_ss && src_pc >= 655 && src_pc <= 660 {
+            let rdiag = if let Operand::Reg(r) = right {
+                format!(
+                    "uncached={} fixed={:?} id={:?} bind={:?}",
+                    rhs_was_uncached,
+                    state.domain.get_fixed_value(*r),
+                    state.scalar_id(*r),
+                    r.bcf_idx().and_then(|ri| state.bcf.as_ref().and_then(|b| b.get_reg(ri)))
+                )
+            } else {
+                "imm".into()
+            };
+            eprintln!(
+                "[prop] src_pc={} left={:?}(uncached={} const={:?} id={:?}) right={:?}({}) props={}",
+                src_pc, left, lhs_was_uncached, lhs_bounds.const_val,
+                state.scalar_id(left), right, rdiag, props.len()
+            );
+        }
+        for (id, e) in props {
+            for frame in state.frames.iter_mut() {
+                let offs: Vec<i16> = frame.stack.slot_offsets();
+                for off in offs {
+                    if let Some(slot) = frame.stack.get_slot_mut(off)
+                        && slot.bcf_expr.is_none()
+                        && slot.scalar_id == Some(id)
+                        && matches!(
+                            slot.reg_type,
+                            crate::analysis::machine::reg_types::RegType::ScalarValue
+                        )
+                    {
+                        slot.bcf_expr = Some(e);
+                        if dbg_ss {
+                            eprintln!("[prop] STAMP src_pc={} id={} expr={} off={}", src_pc, id, e, off);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Transfer function for conditional branch instructions.
