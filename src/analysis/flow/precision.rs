@@ -76,8 +76,19 @@ pub fn mark_chain_precision_backward_seeded(
     if sink_regs.is_empty() && sink_slots.is_empty() {
         return;
     }
-    let mut frontier: HashSet<Reg> = HashSet::new();
-    frontier.extend(sink_regs.iter().copied());
+    // Frame-indexed frontier — kernel `bt->reg_masks[bt->frame]`
+    // (verifier.c:4423-4431 bt_set_frame_reg). The old flat HashSet<Reg>
+    // let a CALLEE's write sever the CALLER's demand: Os ksnoop
+    // output_trace's first insn `r6 = r2` (combined pc 554) rewrote the
+    // caller-frame R6 demand into the callee's R2 arg lineage, so the
+    // 504-loop checkpoint (cid=33 twin, kernel cand first=507) never got
+    // r6 marked precise → imprecise-skip HIT at the r6=16 revisit where
+    // the kernel REGFAILs r6 [24,24]p1 vs [16,16] → e33c's value-null
+    // window died (probe163 [ZK eq504]/REGFAIL + [pwalk] pc=554, s17).
+    // Seed at the sink state's call depth (kernel bt_init(bt, st->curframe)).
+    let start_depth = env.history.get(history_idx).map(|s| s.depth).unwrap_or(0);
+    let mut frontier: HashSet<(usize, Reg)> = HashSet::new();
+    frontier.extend(sink_regs.iter().map(|&r| (start_depth, r)));
 
     // Stack-slot precision frontier. Mirrors the kernel's bt->stack_masks
     // (__mark_chain_precision): when the backward walk crosses a register
@@ -91,8 +102,9 @@ pub fn mark_chain_precision_backward_seeded(
     // sites) stayed imprecise → loose stacksafe → proto arms merged.
     // Tracks byte offsets (the same key `stack_subsumed_by`/`get_slot`
     // use). Validated calico-19 19/19 + cilium-17 17/17 (2026-05-30).
-    let mut stack_frontier: HashSet<i16> = HashSet::new();
-    stack_frontier.extend(sink_slots.iter().copied());
+    // Frame-indexed like the reg frontier (kernel bt->stack_masks[frame]).
+    let mut stack_frontier: HashSet<(usize, i16)> = HashSet::new();
+    stack_frontier.extend(sink_slots.iter().map(|&o| (start_depth, o)));
 
     let caller_saved = [Reg::R0, Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5];
 
@@ -137,14 +149,59 @@ pub fn mark_chain_precision_backward_seeded(
             let parent_idx = step.parent_idx;
             let instr_copy = step.instr;
             let step_pc = step.pc;
+            let step_depth = step.depth;
             let step_linked = step.linked_regs.clone();
             let step_stack_access = step.stack_access;
+            // Cross-frame transfers — kernel `backtrack_insn`'s subprog
+            // arms, which act on the frame-indexed bt masks:
+            match &instr_copy {
+                // Backward across a subprog RETURN (caller → callee):
+                // the caller's R0 demand transfers to the callee's R0
+                // (verifier.c BPF_EXIT arm, r0_precise + bt_subprog_enter);
+                // "r6-r9 and stack slots will stay set in caller frame
+                // bitmasks until we return back from callee(s)".
+                crate::ast::Instr::Exit => {
+                    if step_depth >= 1 && frontier.remove(&(step_depth - 1, Reg::R0)) {
+                        frontier.insert((step_depth, Reg::R0));
+                    }
+                }
+                // Backward across the static subprog CALL (callee →
+                // caller): callee-frame r1-r5 demands transfer to the
+                // caller frame (verifier.c bt_set_frame_reg(bt->frame-1)
+                // + bt_subprog_exit); the kernel asserts no other
+                // callee-frame demands remain — drop the frame.
+                crate::ast::Instr::CallRel { .. } => {
+                    let callee = step_depth + 1;
+                    for r in [Reg::R1, Reg::R2, Reg::R3, Reg::R4, Reg::R5] {
+                        if frontier.remove(&(callee, r)) {
+                            frontier.insert((step_depth, r));
+                        }
+                    }
+                    frontier.retain(|&(fd, _)| fd <= step_depth);
+                    stack_frontier.retain(|&(fd, _)| fd <= step_depth);
+                }
+                _ => {}
+            }
+            // Depth-scoped application of the per-insn effects: all reg
+            // and slot writes act ONLY on the step's own frame (kernel
+            // bt->reg_masks[bt->frame]) — a callee-body write must not
+            // touch caller-frame demands (the flat-set bug this fixes).
+            let mut fr_d: HashSet<Reg> = frontier
+                .iter()
+                .filter(|&&(fd, _)| fd == step_depth)
+                .map(|&(_, r)| r)
+                .collect();
+            let mut sf_d: HashSet<i16> = stack_frontier
+                .iter()
+                .filter(|&&(fd, _)| fd == step_depth)
+                .map(|&(_, o)| o)
+                .collect();
             // Kernel `bt_sync_linked_regs` (verifier.c L4116-4147),
             // called BEFORE the per-insn backtrack (L4187): if any reg
             // in this conditional's recorded id-linked class is
             // already precise, all become precise. Mirrors the
             // forward `collect_linked_regs`/`push_insn_history`.
-            bt_sync_linked_regs(&mut frontier, &step_linked);
+            bt_sync_linked_regs(&mut fr_d, &step_linked);
             // Stack spill/fill precision transfer.
             // MUST run BEFORE update_frontier: update_frontier
             // unconditionally `frontier.remove(dst)` on a Load, so a
@@ -155,17 +212,21 @@ pub fn mark_chain_precision_backward_seeded(
             // `_ => {}` in update_frontier, so a spill adding src to the
             // reg frontier here is not disturbed by the later call.
             update_stack_frontier(
-                &mut frontier,
-                &mut stack_frontier,
+                &mut fr_d,
+                &mut sf_d,
                 &instr_copy,
                 step_stack_access,
             );
-            update_frontier(&mut frontier, &instr_copy, &caller_saved);
+            update_frontier(&mut fr_d, &instr_copy, &caller_saved);
             // Kernel `bt_sync_linked_regs` is invoked AGAIN after
             // `backtrack_insn` (L4440) — the conditional-jump BPF_X
             // arm may have just added the other operand, which must
             // also propagate across the linked class.
-            bt_sync_linked_regs(&mut frontier, &step_linked);
+            bt_sync_linked_regs(&mut fr_d, &step_linked);
+            frontier.retain(|&(fd, _)| fd != step_depth);
+            frontier.extend(fr_d.iter().map(|&r| (step_depth, r)));
+            stack_frontier.retain(|&(fd, _)| fd != step_depth);
+            stack_frontier.extend(sf_d.iter().map(|&o| (step_depth, o)));
             // ZOVIA_DBG_PWALK=LO:HI — per-step frontier dump for walks in
             // a pc window (1482/-312 chase: diff vs kernel log_level-2
             // mark_precise / backtrack_insn semantics).
@@ -175,9 +236,11 @@ pub fn mark_chain_precision_backward_seeded(
                 && step_pc >= lo
                 && step_pc <= hi
             {
-                let mut fr: Vec<String> = frontier.iter().map(|r| format!("{:?}", r)).collect();
+                let mut fr: Vec<String> =
+                    frontier.iter().map(|(d, r)| format!("f{}:{:?}", d, r)).collect();
                 fr.sort();
-                let mut sf: Vec<i16> = stack_frontier.iter().copied().collect();
+                let mut sf: Vec<String> =
+                    stack_frontier.iter().map(|(d, o)| format!("f{}:{}", d, o)).collect();
                 sf.sort();
                 eprintln!(
                     "[pwalk] pc={} {:?} regs={:?} slots={:?} (hidx={})",
@@ -193,7 +256,7 @@ pub fn mark_chain_precision_backward_seeded(
             // cached state exists at step_pc, fall back to the
             // current state's id which is the closest ground
             // truth for the path.
-            for &r in &frontier {
+            for &(_, r) in &frontier {
                 env.precise_pcs.insert((step_pc, r));
             }
             current_history = parent_idx;
@@ -300,7 +363,7 @@ pub fn mark_chain_precision_backward_seeded(
             if let Some((_, s)) =
                 current_parent_id.and_then(|id| env.state_by_cache_id_mut(id))
             {
-                for &r in &frontier {
+                for &(_, r) in &frontier {
                     // ZOVIA_DBG_PREG=<RegDebug>:<cid> — who marks this reg
                     // precise on this cached state (1482/-312 chase level N+1).
                     if let Ok(v) = std::env::var("ZOVIA_DBG_PREG")
@@ -342,7 +405,7 @@ pub fn mark_chain_precision_backward_seeded(
                 // frame's stack; the per-byte spill stores the value only
                 // at the slot's first byte (stack_ops.rs:148).
                 let cur_frame = s.frames.current_mut();
-                for &slot_off in &stack_frontier {
+                for &(_, slot_off) in &stack_frontier {
                     if let Some(slot) = cur_frame.stack.get_slot_mut(slot_off) {
                         slot.precise = true;
                         // ZOVIA_DBG_PSLOT=<off> (generalizes the old
@@ -367,7 +430,7 @@ pub fn mark_chain_precision_backward_seeded(
             // (pc, reg) facts in the env so widening sites can
             // still consult them, even after the specific cached
             // state that recorded the mark is gone.
-            for &r in &frontier {
+            for &(_, r) in &frontier {
                 env.precise_pcs.insert((pc, r));
             }
             for r in marked {
